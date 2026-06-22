@@ -1,0 +1,15 @@
+services:
+  printspy:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - printspy-data:/data
+      # Optional: mount config file
+      # - ./config.yaml:/etc/printspy/config.yaml
+    environment:
+      - PRINTSPY_PORT=8080
+    restart: unless-stopped
+
+volumes:
+  printspy-data:

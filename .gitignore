@@ -1,0 +1,4 @@
+printspy
+*.db
+/data/
+config.yaml
