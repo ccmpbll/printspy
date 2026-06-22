@@ -13,6 +13,7 @@ type PrinterPlugin interface {
 	Connect(ctx context.Context) error
 	GetStatus(ctx context.Context) (*models.PrinterStatus, error)
 	GetWebcamURL() string
+	GetSnapshotURL() string
 	GetThumbnailURL(ctx context.Context) string
 }
 

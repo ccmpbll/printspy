@@ -1,11 +1,32 @@
 const POLL_INTERVAL = 3000;
 let printers = [];
+let pollCounter = 0;
+
+function getWebcamMode(printerId) {
+    return localStorage.getItem(`webcam-mode-${printerId}`) || 'snapshot';
+}
+
+function toggleWebcamMode(printerId) {
+    const current = getWebcamMode(printerId);
+    const next = current === 'snapshot' ? 'live' : 'snapshot';
+    localStorage.setItem(`webcam-mode-${printerId}`, next);
+    renderDashboard();
+}
+
+function webcamSrc(printerId) {
+    const mode = getWebcamMode(printerId);
+    if (mode === 'live') {
+        return `/api/webcam/${printerId}`;
+    }
+    return `/api/snapshot/${printerId}?t=${pollCounter}`;
+}
 
 async function fetchPrinters() {
     try {
         const resp = await fetch('/api/printers');
         if (!resp.ok) return;
         printers = await resp.json();
+        pollCounter++;
         renderDashboard();
     } catch (e) {
         // server unreachable, keep showing last state
@@ -95,11 +116,16 @@ function renderPrintingBody(cfg, status) {
             </div>`;
     }
 
+    const wcMode = getWebcamMode(cfg.id);
+    const wcLabel = wcMode === 'live' ? 'LIVE' : 'SNAP';
+    const wcBtnClass = wcMode === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
+
     return `
         <div class="webcam-container">
-            <img src="/api/webcam/${cfg.id}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-live').style.display='none'">
+            <img src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none'">
             <div class="webcam-placeholder" style="display:none">No camera</div>
-            <div class="webcam-live"><span class="dot"></span> LIVE</div>
+            <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcLabel}</div>
+            <button class="${wcBtnClass}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
         </div>
         <div class="thumbnail-container">
             <img src="/api/thumbnail/${cfg.id}" alt="Thumbnail" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
@@ -161,11 +187,16 @@ function renderIdleBody(cfg, status, state) {
                      state === 'error' ? 'Printer reported an error' :
                      'Ready for next job';
 
+    const wcMode = getWebcamMode(cfg.id);
+    const wcLabel = wcMode === 'live' ? 'LIVE' : 'SNAP';
+    const wcBtnClass = wcMode === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
+
     return `
         <div class="webcam-container webcam-idle">
-            <img src="/api/webcam/${cfg.id}" alt="Webcam" onload="this.parentElement.classList.remove('webcam-collapsed')" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-live').style.display='none';this.parentElement.classList.add('webcam-collapsed')">
+            <img src="${webcamSrc(cfg.id)}" alt="Webcam" onload="this.parentElement.classList.remove('webcam-collapsed')" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';this.parentElement.classList.add('webcam-collapsed')">
             <div class="webcam-placeholder" style="display:none">No camera</div>
-            <div class="webcam-live"><span class="dot"></span> LIVE</div>
+            <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcLabel}</div>
+            <button class="${wcBtnClass}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
         </div>
         <div class="printer-stats">
             <div class="idle-message">${stateMsg}</div>

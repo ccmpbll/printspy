@@ -29,6 +29,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/printers", h.handlePrinters)
 	mux.HandleFunc("/api/printers/", h.handlePrinterByID)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
+	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
 }
 
@@ -248,6 +249,45 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+}
+
+func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/snapshot/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid printer id", http.StatusBadRequest)
+		return
+	}
+
+	snapshotURL := h.poller.GetSnapshotURL(id)
+	if snapshotURL == "" {
+		http.Error(w, "no webcam configured", http.StatusNotFound)
+		return
+	}
+
+	printer, err := h.db.GetPrinter(id)
+	if err != nil {
+		http.Error(w, "printer not found", http.StatusNotFound)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, snapshotURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("X-Api-Key", printer.APIKey)
+
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	io.Copy(w, resp.Body)
 }
 
 func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {

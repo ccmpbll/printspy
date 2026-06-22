@@ -110,6 +110,15 @@ func (p *Poller) GetWebcamURL(id int64) string {
 	return ""
 }
 
+func (p *Poller) GetSnapshotURL(id int64) string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if pp, ok := p.printers[id]; ok {
+		return pp.plugin.GetSnapshotURL()
+	}
+	return ""
+}
+
 func (p *Poller) GetThumbnailURL(ctx context.Context, id int64) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

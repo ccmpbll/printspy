@@ -88,6 +88,11 @@ func (p *Plugin) GetWebcamURL() string {
 	return base + "/webcam/?action=stream"
 }
 
+func (p *Plugin) GetSnapshotURL() string {
+	base := strings.TrimRight(p.config.URL, "/")
+	return base + "/webcam/?action=snapshot"
+}
+
 func (p *Plugin) GetThumbnailURL(ctx context.Context) string {
 	jobData, err := p.doGet(ctx, "/api/job")
 	if err != nil {
