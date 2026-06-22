@@ -220,13 +220,17 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("X-Api-Key", printer.APIKey)
 
+	log.Printf("[webcam:%d] proxying stream from %s", id, webcamURL)
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
+		log.Printf("[webcam:%d] connection failed: %v", id, err)
 		http.Error(w, "failed to connect to webcam", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+
+	log.Printf("[webcam:%d] connected, status=%d content-type=%s", id, resp.StatusCode, resp.Header.Get("Content-Type"))
 
 	for _, header := range []string{"Content-Type", "Cache-Control", "Connection"} {
 		if v := resp.Header.Get(header); v != "" {
@@ -280,10 +284,15 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
+		log.Printf("[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
 		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
+	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache, no-store")

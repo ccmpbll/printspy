@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -34,8 +35,13 @@ func New(config models.PrinterConfig) *Plugin {
 func (p *Plugin) Type() string { return "octoprint" }
 
 func (p *Plugin) Connect(ctx context.Context) error {
-	_, err := p.doGet(ctx, "/api/version")
-	return err
+	data, err := p.doGet(ctx, "/api/version")
+	if err != nil {
+		log.Printf("[octoprint:%s] connection failed: %v", p.config.URL, err)
+		return err
+	}
+	log.Printf("[octoprint:%s] connected: %s", p.config.URL, string(data))
+	return nil
 }
 
 func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
@@ -45,6 +51,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 
 	printerData, err := p.doGet(ctx, "/api/printer?exclude=sd")
 	if err != nil {
+		log.Printf("[octoprint:%s] failed to get printer state: %v", p.config.URL, err)
 		status.State = models.StateOffline
 		return status, nil
 	}

@@ -149,7 +149,7 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.
 func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	status, err := pl.GetStatus(ctx)
 	if err != nil {
-		log.Printf("poll error for printer %d: %v", id, err)
+		log.Printf("[printer:%d] poll error: %v", id, err)
 		status = &models.PrinterStatus{
 			State:       models.StateOffline,
 			LastUpdated: time.Now(),
@@ -157,6 +157,22 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	}
 
 	p.mu.Lock()
+	prev := p.cache[id]
 	p.cache[id] = status
 	p.mu.Unlock()
+
+	prevState := models.StateOffline
+	if prev != nil {
+		prevState = prev.State
+	}
+	if prevState != status.State {
+		log.Printf("[printer:%d] state changed: %s -> %s", id, prevState, status.State)
+	}
+
+	if status.State == models.StatePrinting && status.Job != nil {
+		log.Printf("[printer:%d] printing %s (%.1f%%) hotend=%.0f/%.0f bed=%.0f/%.0f",
+			id, status.Job.FileName, status.Job.Progress,
+			status.Temps.HotendActual, status.Temps.HotendTarget,
+			status.Temps.BedActual, status.Temps.BedTarget)
+	}
 }

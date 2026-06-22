@@ -1,6 +1,7 @@
 const POLL_INTERVAL = 3000;
 let printers = [];
 let pollCounter = 0;
+let prevPrinterIDs = [];
 
 function getWebcamMode(printerId) {
     return localStorage.getItem(`webcam-mode-${printerId}`) || 'snapshot';
@@ -10,7 +11,8 @@ function toggleWebcamMode(printerId) {
     const current = getWebcamMode(printerId);
     const next = current === 'snapshot' ? 'live' : 'snapshot';
     localStorage.setItem(`webcam-mode-${printerId}`, next);
-    renderDashboard();
+    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
+    if (card) updateCard(card, printers.find(p => p.config.id === printerId));
 }
 
 function webcamSrc(printerId) {
@@ -27,13 +29,13 @@ async function fetchPrinters() {
         if (!resp.ok) return;
         printers = await resp.json();
         pollCounter++;
-        renderDashboard();
+        updateDashboard();
     } catch (e) {
         // server unreachable, keep showing last state
     }
 }
 
-function renderDashboard() {
+function updateDashboard() {
     const list = document.getElementById('printer-list');
     const count = document.getElementById('printer-count');
 
@@ -45,13 +47,25 @@ function renderDashboard() {
                 <p>Add your first printer to get started.</p>
                 <button class="btn btn-primary" onclick="openAddModal()">+ Add printer</button>
             </div>`;
+        prevPrinterIDs = [];
         return;
     }
 
     const connected = printers.filter(p => p.status && p.status.state !== 'offline').length;
     count.textContent = `${connected}/${printers.length} connected`;
 
-    list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
+    const currentIDs = printers.map(p => p.config.id);
+    const structureChanged = JSON.stringify(currentIDs) !== JSON.stringify(prevPrinterIDs);
+
+    if (structureChanged) {
+        list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
+        prevPrinterIDs = currentIDs;
+    } else {
+        printers.forEach(p => {
+            const card = list.querySelector(`[data-printer-id="${p.config.id}"]`);
+            if (card) updateCard(card, p);
+        });
+    }
 }
 
 function renderPrinterCard(printer) {
@@ -60,22 +74,14 @@ function renderPrinterCard(printer) {
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
     const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
-
-    let bodyHTML = '';
-
-    if (state === 'printing' && status.job) {
-        bodyHTML = renderPrintingBody(cfg, status);
-    } else if (state === 'paused' && status.job) {
-        bodyHTML = renderPrintingBody(cfg, status);
-    } else {
-        bodyHTML = renderIdleBody(cfg, status, state);
-    }
+    const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
+    const wcMode = getWebcamMode(cfg.id);
 
     return `
-        <div class="printer-card">
+        <div class="printer-card" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
-                <span class="printer-state ${stateClass}">${stateLabel}</span>
+                <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 <span class="printer-url">${esc(cfg.url)}</span>
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">OctoPrint &#8599;</a>
                 <div class="printer-actions">
@@ -84,12 +90,29 @@ function renderPrinterCard(printer) {
                 </div>
             </div>
             <div class="printer-body">
-                ${bodyHTML}
+                <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
+                    <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';${isPrinting ? '' : "this.parentElement.classList.add('webcam-collapsed');"}">
+                    <div class="webcam-placeholder" style="display:none">No camera</div>
+                    <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
+                    <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
+                </div>
+                ${isPrinting ? renderThumbnail(cfg, status.job) : ''}
+                <div class="printer-stats">
+                    ${isPrinting ? renderPrintingStats(status) : renderIdleStats(status, state)}
+                </div>
             </div>
         </div>`;
 }
 
-function renderPrintingBody(cfg, status) {
+function renderThumbnail(cfg, job) {
+    return `
+        <div class="thumbnail-container">
+            <img class="thumbnail-img" src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+            <div class="thumbnail-placeholder" style="display:none">${esc(job.file_name || 'Unknown')}</div>
+        </div>`;
+}
+
+function renderPrintingStats(status) {
     const job = status.job;
     const progress = Math.round(job.progress || 0);
     const elapsed = formatTime(job.elapsed_secs);
@@ -97,111 +120,137 @@ function renderPrintingBody(cfg, status) {
     const eta = computeETA(job.remaining_secs);
     const temps = status.temps;
 
-    let layerHTML = '';
+    let extraRow = '';
+    const parts = [];
     if (job.total_layers > 0) {
-        layerHTML = `
-            <div class="stat-box">
-                <div class="stat-label">Layer</div>
-                <div class="stat-value">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div>
-            </div>`;
+        parts.push(`<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`);
     }
-
-    let filamentHTML = '';
     if (job.filament_used_mm > 0) {
         const meters = (job.filament_used_mm / 1000).toFixed(1);
-        filamentHTML = `
-            <div class="stat-box">
-                <div class="stat-label">Filament</div>
-                <div class="stat-value">${meters}<span class="stat-unit"> m</span></div>
-            </div>`;
+        parts.push(`<div class="stat-box"><div class="stat-label">Filament</div><div class="stat-value" data-field="filament">${meters}<span class="stat-unit"> m</span></div></div>`);
+    }
+    if (parts.length > 0) {
+        extraRow = `<div class="stat-grid stat-grid-2">${parts.join('')}</div>`;
     }
 
-    const wcMode = getWebcamMode(cfg.id);
-    const wcLabel = wcMode === 'live' ? 'LIVE' : 'SNAP';
-    const wcBtnClass = wcMode === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
-
     return `
-        <div class="webcam-container">
-            <img src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none'">
-            <div class="webcam-placeholder" style="display:none">No camera</div>
-            <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcLabel}</div>
-            <button class="${wcBtnClass}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
+        <div>
+            <div class="progress-row">
+                <span class="progress-label">Progress</span>
+                <span class="progress-value" data-field="progress-text">${progress}%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
+            </div>
         </div>
-        <div class="thumbnail-container">
-            <img src="/api/thumbnail/${cfg.id}" alt="Thumbnail" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-            <div class="thumbnail-placeholder" style="display:none">${esc(job.file_name || 'Unknown')}</div>
+        <div class="stat-grid">
+            <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
+            <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
+            <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
         </div>
-        <div class="printer-stats">
-            <div>
-                <div class="progress-row">
-                    <span class="progress-label">Progress</span>
-                    <span class="progress-value">${progress}%</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${progress}%"></div>
-                </div>
-            </div>
-            <div class="stat-grid">
-                <div class="stat-box">
-                    <div class="stat-label">Elapsed</div>
-                    <div class="stat-value">${elapsed}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Remaining</div>
-                    <div class="stat-value">${remaining}</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">ETA</div>
-                    <div class="stat-value">${eta}</div>
-                </div>
-            </div>
-            <div class="stat-grid stat-grid-2">
-                <div class="stat-box">
-                    <div class="stat-label">Hotend</div>
-                    <div class="stat-value">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Bed</div>
-                    <div class="stat-value">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div>
-                </div>
-            </div>
-            ${(layerHTML || filamentHTML) ? `<div class="stat-grid stat-grid-2">${layerHTML}${filamentHTML}</div>` : ''}
-        </div>`;
+        <div class="stat-grid stat-grid-2">
+            <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>
+            <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>
+        </div>
+        ${extraRow}`;
 }
 
-function renderIdleBody(cfg, status, state) {
+function renderIdleStats(status, state) {
     const temps = status ? status.temps : null;
-    const tempsHTML = temps ? `
-        <div class="stat-grid stat-grid-2">
-            <div class="stat-box">
-                <div class="stat-label">Hotend</div>
-                <div class="stat-value">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-label">Bed</div>
-                <div class="stat-value">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div>
-            </div>
-        </div>` : '';
-
     const stateMsg = state === 'offline' ? 'Printer is offline or unreachable' :
                      state === 'error' ? 'Printer reported an error' :
                      'Ready for next job';
 
-    const wcMode = getWebcamMode(cfg.id);
-    const wcLabel = wcMode === 'live' ? 'LIVE' : 'SNAP';
-    const wcBtnClass = wcMode === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
+    let tempsHTML = '';
+    if (temps) {
+        tempsHTML = `
+            <div class="stat-grid stat-grid-2">
+                <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>
+                <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>
+            </div>`;
+    }
 
-    return `
-        <div class="webcam-container webcam-idle">
-            <img src="${webcamSrc(cfg.id)}" alt="Webcam" onload="this.parentElement.classList.remove('webcam-collapsed')" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';this.parentElement.classList.add('webcam-collapsed')">
-            <div class="webcam-placeholder" style="display:none">No camera</div>
-            <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcLabel}</div>
-            <button class="${wcBtnClass}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
-        </div>
-        <div class="printer-stats">
-            <div class="idle-message">${stateMsg}</div>
-            ${tempsHTML}
-        </div>`;
+    return `<div class="idle-message" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
+}
+
+function updateCard(card, printer) {
+    const cfg = printer.config;
+    const status = printer.status;
+    const state = status ? status.state : 'offline';
+    const prevState = card.dataset.state;
+    const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
+    const wasPrinting = (prevState === 'printing' || prevState === 'paused');
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting)) {
+        card.outerHTML = renderPrinterCard(printer);
+        return;
+    }
+
+    card.dataset.state = state;
+
+    const stateEl = card.querySelector('[data-field="state"]');
+    if (stateEl) {
+        const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+        stateEl.textContent = stateLabel;
+        stateEl.className = `printer-state state-${state}`;
+    }
+
+    // Update webcam snapshot src (but NOT live streams)
+    const wcMode = getWebcamMode(cfg.id);
+    const wcImg = card.querySelector('.webcam-img');
+    if (wcImg && wcMode === 'snapshot' && wcImg.style.display !== 'none') {
+        wcImg.src = `/api/snapshot/${cfg.id}?t=${pollCounter}`;
+    }
+
+    // Update badge
+    const badge = card.querySelector('.webcam-badge');
+    if (badge) {
+        const dot = badge.querySelector('.dot');
+        if (dot) dot.className = wcMode === 'live' ? 'dot' : 'dot dot-blue';
+        badge.lastChild.textContent = wcMode === 'live' ? ' LIVE' : ' SNAP';
+    }
+    const toggleBtn = card.querySelector('.webcam-toggle');
+    if (toggleBtn) {
+        toggleBtn.className = `webcam-toggle ${wcMode === 'live' ? 'live' : ''}`;
+        toggleBtn.innerHTML = wcMode === 'live' ? '&#9724;' : '&#9654;';
+    }
+
+    if (isPrinting && status.job) {
+        const job = status.job;
+        const progress = Math.round(job.progress || 0);
+        const temps = status.temps;
+
+        setText(card, 'progress-text', `${progress}%`);
+        const bar = card.querySelector('[data-field="progress-bar"]');
+        if (bar) bar.style.width = `${progress}%`;
+        setText(card, 'elapsed', formatTime(job.elapsed_secs));
+        setText(card, 'remaining', formatTime(job.remaining_secs));
+        setText(card, 'eta', computeETA(job.remaining_secs));
+        setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span>`);
+        setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span>`);
+
+        if (job.total_layers > 0) {
+            setHTML(card, 'layer', `${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span>`);
+        }
+        if (job.filament_used_mm > 0) {
+            const meters = (job.filament_used_mm / 1000).toFixed(1);
+            setHTML(card, 'filament', `${meters}<span class="stat-unit"> m</span>`);
+        }
+    } else if (status && status.temps) {
+        const temps = status.temps;
+        setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span>`);
+        setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span>`);
+    }
+}
+
+function setText(card, field, value) {
+    const el = card.querySelector(`[data-field="${field}"]`);
+    if (el) el.textContent = value;
+}
+
+function setHTML(card, field, value) {
+    const el = card.querySelector(`[data-field="${field}"]`);
+    if (el) el.innerHTML = value;
 }
 
 // Modal handling
@@ -276,6 +325,7 @@ async function savePrinter(e) {
         }
         if (resp.ok) {
             closeModal();
+            prevPrinterIDs = [];
             fetchPrinters();
         }
     } catch (e) {
@@ -287,6 +337,7 @@ async function deletePrinter(id) {
     if (!confirm('Remove this printer?')) return;
     try {
         await fetch(`/api/printers/${id}`, {method: 'DELETE'});
+        prevPrinterIDs = [];
         fetchPrinters();
     } catch (e) {
         // handle error
