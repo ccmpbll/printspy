@@ -139,32 +139,27 @@ func (p *Plugin) fetchWebcamConfig(ctx context.Context) {
 	}
 
 	streamURL := settings.Webcam.StreamURL
-	snapshotURL := settings.Webcam.SnapshotURL
 
 	// Also check the newer multi-webcam config
 	if streamURL == "" && len(settings.Webcam.Webcams) > 0 {
 		wc := settings.Webcam.Webcams[0]
 		streamURL = wc.Extras.StreamURL
-		snapshotURL = wc.Extras.SnapshotURL
 		if streamURL == "" {
 			streamURL = wc.StreamURL
-		}
-		if snapshotURL == "" {
-			snapshotURL = wc.SnapshotURL
 		}
 	}
 
 	// Resolve relative URLs against the OctoPrint base
 	streamURL = p.resolveURL(streamURL)
-	snapshotURL = p.resolveURL(snapshotURL)
 
 	// Fallback to defaults if still empty
 	if streamURL == "" {
 		streamURL = base + "/webcam/?action=stream"
 	}
-	if snapshotURL == "" {
-		snapshotURL = base + "/webcam/?action=snapshot"
-	}
+
+	// Derive snapshot URL from stream URL rather than trusting OctoPrint's
+	// snapshot setting, which is often misconfigured with localhost/127.0.0.1
+	snapshotURL := deriveSnapshotURL(streamURL)
 
 	log.Printf("[octoprint:%s] webcam config: stream=%s snapshot=%s", p.config.URL, streamURL, snapshotURL)
 
@@ -181,34 +176,35 @@ func (p *Plugin) resolveURL(rawURL string) string {
 	if rawURL == "" {
 		return ""
 	}
-
-	// Handle relative paths
 	if strings.HasPrefix(rawURL, "/") {
 		base := strings.TrimRight(p.config.URL, "/")
 		return base + rawURL
 	}
-
-	// For absolute URLs, replace loopback addresses with the printer's actual host
-	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
-		parsed, err := url.Parse(rawURL)
-		if err != nil {
-			return rawURL
-		}
-		host := parsed.Hostname()
-		if host == "127.0.0.1" || host == "localhost" || host == "::1" {
-			printerParsed, err := url.Parse(p.config.URL)
-			if err != nil {
-				return rawURL
-			}
-			parsed.Host = printerParsed.Host
-			resolved := parsed.String()
-			log.Printf("[octoprint:%s] rewrote loopback URL %s -> %s", p.config.URL, rawURL, resolved)
-			return resolved
-		}
-		return rawURL
-	}
-
 	return rawURL
+}
+
+// deriveSnapshotURL converts a known-working stream URL into its snapshot equivalent.
+// mjpg-streamer: ?action=stream -> ?action=snapshot
+// camera-streamer: /stream -> /snapshot
+func deriveSnapshotURL(streamURL string) string {
+	if strings.Contains(streamURL, "?action=stream") {
+		return strings.Replace(streamURL, "?action=stream", "?action=snapshot", 1)
+	}
+	if strings.HasSuffix(streamURL, "/stream") {
+		return strings.TrimSuffix(streamURL, "/stream") + "/snapshot"
+	}
+	// Unknown format — try appending snapshot as a sibling path
+	parsed, err := url.Parse(streamURL)
+	if err != nil {
+		return strings.TrimSuffix(streamURL, "/") + "/?action=snapshot"
+	}
+	parts := strings.Split(parsed.Path, "/")
+	if len(parts) > 0 {
+		parts[len(parts)-1] = "snapshot"
+	}
+	parsed.Path = strings.Join(parts, "/")
+	parsed.RawQuery = ""
+	return parsed.String()
 }
 
 func (p *Plugin) GetWebcamURL() string {
