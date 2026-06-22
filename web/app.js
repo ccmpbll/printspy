@@ -125,10 +125,6 @@ function renderPrintingStats(status) {
     if (job.total_layers > 0) {
         parts.push(`<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`);
     }
-    if (job.filament_used_mm > 0) {
-        const meters = (job.filament_used_mm / 1000).toFixed(1);
-        parts.push(`<div class="stat-box"><div class="stat-label">Filament (est.)</div><div class="stat-value" data-field="filament">${meters}<span class="stat-unit"> m</span></div></div>`);
-    }
     if (parts.length > 0) {
         extraRow = `<div class="stat-grid stat-grid-2">${parts.join('')}</div>`;
     }
@@ -231,10 +227,6 @@ function updateCard(card, printer) {
 
         if (job.total_layers > 0) {
             setHTML(card, 'layer', `${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span>`);
-        }
-        if (job.filament_used_mm > 0) {
-            const meters = (job.filament_used_mm / 1000).toFixed(1);
-            setHTML(card, 'filament', `${meters}<span class="stat-unit"> m</span>`);
         }
     } else if (status && status.temps) {
         const temps = status.temps;
