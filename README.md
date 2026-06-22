@@ -126,4 +126,4 @@ PrintSpy is in early development. If you'd like to contribute:
 
 ## License
 
-MIT
+AGPL-3.0 — see [LICENSE](LICENSE) for details.
