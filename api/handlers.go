@@ -44,6 +44,7 @@ func (h *Handler) logOnce(key string, interval time.Duration, format string, arg
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/printers", h.handlePrinters)
 	mux.HandleFunc("/api/printers/", h.handlePrinterByID)
+	mux.HandleFunc("/api/test", h.handleTestConnection)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
@@ -166,6 +167,41 @@ func (h *Handler) deletePrinter(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Type   string `json:"type"`
+		URL    string `json:"url"`
+		APIKey string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Type == "" {
+		req.Type = "octoprint"
+	}
+
+	cfg := models.PrinterConfig{Type: req.Type, URL: req.URL, APIKey: req.APIKey}
+	pl, err := plugin.Create(cfg)
+	if err != nil {
+		jsonError(w, "unsupported printer type", http.StatusBadRequest)
+		return
+	}
+
+	if err := pl.Connect(r.Context()); err != nil {
+		jsonResponse(w, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+
+	name := pl.GetPrinterName(r.Context())
+	jsonResponse(w, map[string]any{"success": true, "name": name})
 }
 
 func (h *Handler) testPrinter(w http.ResponseWriter, r *http.Request, id int64) {

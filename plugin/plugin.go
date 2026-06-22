@@ -15,6 +15,7 @@ type PrinterPlugin interface {
 	GetWebcamURL() string
 	GetSnapshotURL() string
 	GetThumbnailURL(ctx context.Context) string
+	GetPrinterName(ctx context.Context) string
 }
 
 type PluginFactory func(config models.PrinterConfig) PrinterPlugin

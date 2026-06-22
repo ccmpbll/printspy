@@ -127,7 +127,7 @@ function renderPrintingStats(status) {
     }
     if (job.filament_used_mm > 0) {
         const meters = (job.filament_used_mm / 1000).toFixed(1);
-        parts.push(`<div class="stat-box"><div class="stat-label">Filament</div><div class="stat-value" data-field="filament">${meters}<span class="stat-unit"> m</span></div></div>`);
+        parts.push(`<div class="stat-box"><div class="stat-label">Filament (est.)</div><div class="stat-value" data-field="filament">${meters}<span class="stat-unit"> m</span></div></div>`);
     }
     if (parts.length > 0) {
         extraRow = `<div class="stat-grid stat-grid-2">${parts.join('')}</div>`;
@@ -263,7 +263,7 @@ function openAddModal() {
     document.getElementById('printer-url').value = '';
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = '10';
-    document.getElementById('test-btn').style.display = 'none';
+    document.getElementById('test-btn').style.display = 'inline-flex';
     hideTestResult();
     document.getElementById('printer-modal').classList.add('active');
 }
@@ -345,8 +345,17 @@ async function deletePrinter(id) {
 }
 
 async function testConnection() {
-    const id = document.getElementById('printer-id').value;
-    if (!id) return;
+    const printerURL = document.getElementById('printer-url').value.replace(/\/+$/, '');
+    const apiKey = document.getElementById('printer-apikey').value;
+    const printerType = document.getElementById('printer-type').value;
+
+    if (!printerURL || !apiKey) {
+        const el = document.getElementById('test-result');
+        el.style.display = 'block';
+        el.className = 'test-result error';
+        el.textContent = 'URL and API key are required';
+        return;
+    }
 
     const el = document.getElementById('test-result');
     el.style.display = 'block';
@@ -354,11 +363,20 @@ async function testConnection() {
     el.textContent = 'Testing connection...';
 
     try {
-        const resp = await fetch(`/api/printers/${id}/test`, {method: 'POST'});
+        const resp = await fetch('/api/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({type: printerType, url: printerURL, api_key: apiKey}),
+        });
         const data = await resp.json();
         if (data.success) {
             el.className = 'test-result success';
             el.textContent = 'Connection successful!';
+            // Auto-fill name if empty and OctoPrint returned one
+            const nameField = document.getElementById('printer-name');
+            if (!nameField.value && data.name) {
+                nameField.value = data.name;
+            }
         } else {
             el.className = 'test-result error';
             el.textContent = `Connection failed: ${data.error}`;

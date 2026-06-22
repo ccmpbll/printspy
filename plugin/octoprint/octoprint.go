@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,9 +23,10 @@ func init() {
 	})
 }
 
-type webcamConfig struct {
+type cachedSettings struct {
 	streamURL   string
 	snapshotURL string
+	printerName string
 	fetched     bool
 }
 
@@ -32,8 +34,8 @@ type Plugin struct {
 	config models.PrinterConfig
 	client *http.Client
 
-	wcMu   sync.RWMutex
-	webcam webcamConfig
+	settingsMu sync.RWMutex
+	settings   cachedSettings
 }
 
 func New(config models.PrinterConfig) *Plugin {
@@ -61,11 +63,11 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	}
 
 	// Fetch webcam config on first successful poll
-	p.wcMu.RLock()
-	fetched := p.webcam.fetched
-	p.wcMu.RUnlock()
+	p.settingsMu.RLock()
+	fetched := p.settings.fetched
+	p.settingsMu.RUnlock()
 	if !fetched {
-		p.fetchWebcamConfig(ctx)
+		p.fetchSettings(ctx)
 	}
 
 	printerData, err := p.doGet(ctx, "/api/printer?exclude=sd")
@@ -106,35 +108,51 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		}
 	}
 
+	// Fetch layer info from DisplayLayerProgress plugin if available
+	if status.Job != nil {
+		layerData, err := p.doGet(ctx, "/plugin/DisplayLayerProgress/values")
+		if err == nil {
+			var layerResp layerProgressResponse
+			if err := json.Unmarshal(layerData, &layerResp); err == nil {
+				if current, err := strconv.Atoi(layerResp.Layer.Current); err == nil {
+					status.Job.CurrentLayer = current
+				}
+				if total, err := strconv.Atoi(layerResp.Layer.Total); err == nil {
+					status.Job.TotalLayers = total
+				}
+			}
+		}
+	}
+
 	return status, nil
 }
 
-func (p *Plugin) fetchWebcamConfig(ctx context.Context) {
+func (p *Plugin) fetchSettings(ctx context.Context) {
 	base := strings.TrimRight(p.config.URL, "/")
 
 	data, err := p.doGet(ctx, "/api/settings")
 	if err != nil {
 		log.Printf("[octoprint:%s] failed to fetch settings for webcam config: %v", p.config.URL, err)
-		p.wcMu.Lock()
-		p.webcam = webcamConfig{
+		p.settingsMu.Lock()
+		p.settings = cachedSettings{
 			streamURL:   base + "/webcam/?action=stream",
 			snapshotURL: base + "/webcam/?action=snapshot",
 			fetched:     true,
 		}
-		p.wcMu.Unlock()
+		p.settingsMu.Unlock()
 		return
 	}
 
 	var settings settingsResponse
 	if err := json.Unmarshal(data, &settings); err != nil {
 		log.Printf("[octoprint:%s] failed to parse settings: %v", p.config.URL, err)
-		p.wcMu.Lock()
-		p.webcam = webcamConfig{
+		p.settingsMu.Lock()
+		p.settings = cachedSettings{
 			streamURL:   base + "/webcam/?action=stream",
 			snapshotURL: base + "/webcam/?action=snapshot",
 			fetched:     true,
 		}
-		p.wcMu.Unlock()
+		p.settingsMu.Unlock()
 		return
 	}
 
@@ -161,15 +179,17 @@ func (p *Plugin) fetchWebcamConfig(ctx context.Context) {
 	// snapshot setting, which is often misconfigured with localhost/127.0.0.1
 	snapshotURL := deriveSnapshotURL(streamURL)
 
-	log.Printf("[octoprint:%s] webcam config: stream=%s snapshot=%s", p.config.URL, streamURL, snapshotURL)
+	printerName := settings.Appearance.Name
+	log.Printf("[octoprint:%s] settings: name=%q stream=%s snapshot=%s", p.config.URL, printerName, streamURL, snapshotURL)
 
-	p.wcMu.Lock()
-	p.webcam = webcamConfig{
+	p.settingsMu.Lock()
+	p.settings = cachedSettings{
 		streamURL:   streamURL,
 		snapshotURL: snapshotURL,
+		printerName: printerName,
 		fetched:     true,
 	}
-	p.wcMu.Unlock()
+	p.settingsMu.Unlock()
 }
 
 func (p *Plugin) resolveURL(rawURL string) string {
@@ -208,23 +228,38 @@ func deriveSnapshotURL(streamURL string) string {
 }
 
 func (p *Plugin) GetWebcamURL() string {
-	p.wcMu.RLock()
-	defer p.wcMu.RUnlock()
-	if p.webcam.fetched {
-		return p.webcam.streamURL
+	p.settingsMu.RLock()
+	defer p.settingsMu.RUnlock()
+	if p.settings.fetched {
+		return p.settings.streamURL
 	}
 	base := strings.TrimRight(p.config.URL, "/")
 	return base + "/webcam/?action=stream"
 }
 
 func (p *Plugin) GetSnapshotURL() string {
-	p.wcMu.RLock()
-	defer p.wcMu.RUnlock()
-	if p.webcam.fetched {
-		return p.webcam.snapshotURL
+	p.settingsMu.RLock()
+	defer p.settingsMu.RUnlock()
+	if p.settings.fetched {
+		return p.settings.snapshotURL
 	}
 	base := strings.TrimRight(p.config.URL, "/")
 	return base + "/webcam/?action=snapshot"
+}
+
+func (p *Plugin) GetPrinterName(ctx context.Context) string {
+	p.settingsMu.RLock()
+	fetched := p.settings.fetched
+	name := p.settings.printerName
+	p.settingsMu.RUnlock()
+
+	if !fetched {
+		p.fetchSettings(ctx)
+		p.settingsMu.RLock()
+		name = p.settings.printerName
+		p.settingsMu.RUnlock()
+	}
+	return name
 }
 
 func (p *Plugin) GetThumbnailURL(ctx context.Context) string {
@@ -368,6 +403,9 @@ type fileResponse struct {
 }
 
 type settingsResponse struct {
+	Appearance struct {
+		Name string `json:"name"`
+	} `json:"appearance"`
 	Webcam struct {
 		StreamURL   string `json:"streamUrl"`
 		SnapshotURL string `json:"snapshotUrl"`
@@ -381,4 +419,17 @@ type settingsResponse struct {
 			} `json:"extras"`
 		} `json:"webcams"`
 	} `json:"webcam"`
+}
+
+type layerProgressResponse struct {
+	Layer struct {
+		Current string `json:"current"`
+		Total   string `json:"total"`
+	} `json:"layer"`
+	Height struct {
+		Current          string `json:"current"`
+		CurrentFormatted string `json:"currentFormatted"`
+		Total            string `json:"total"`
+		TotalFormatted   string `json:"totalFormatted"`
+	} `json:"height"`
 }
