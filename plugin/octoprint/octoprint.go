@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ccmpbll/printspy/models"
@@ -20,9 +21,18 @@ func init() {
 	})
 }
 
+type webcamConfig struct {
+	streamURL   string
+	snapshotURL string
+	fetched     bool
+}
+
 type Plugin struct {
 	config models.PrinterConfig
 	client *http.Client
+
+	wcMu   sync.RWMutex
+	webcam webcamConfig
 }
 
 func New(config models.PrinterConfig) *Plugin {
@@ -47,6 +57,14 @@ func (p *Plugin) Connect(ctx context.Context) error {
 func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	status := &models.PrinterStatus{
 		LastUpdated: time.Now(),
+	}
+
+	// Fetch webcam config on first successful poll
+	p.wcMu.RLock()
+	fetched := p.webcam.fetched
+	p.wcMu.RUnlock()
+	if !fetched {
+		p.fetchWebcamConfig(ctx)
 	}
 
 	printerData, err := p.doGet(ctx, "/api/printer?exclude=sd")
@@ -90,12 +108,104 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	return status, nil
 }
 
+func (p *Plugin) fetchWebcamConfig(ctx context.Context) {
+	base := strings.TrimRight(p.config.URL, "/")
+
+	data, err := p.doGet(ctx, "/api/settings")
+	if err != nil {
+		log.Printf("[octoprint:%s] failed to fetch settings for webcam config: %v", p.config.URL, err)
+		p.wcMu.Lock()
+		p.webcam = webcamConfig{
+			streamURL:   base + "/webcam/?action=stream",
+			snapshotURL: base + "/webcam/?action=snapshot",
+			fetched:     true,
+		}
+		p.wcMu.Unlock()
+		return
+	}
+
+	var settings settingsResponse
+	if err := json.Unmarshal(data, &settings); err != nil {
+		log.Printf("[octoprint:%s] failed to parse settings: %v", p.config.URL, err)
+		p.wcMu.Lock()
+		p.webcam = webcamConfig{
+			streamURL:   base + "/webcam/?action=stream",
+			snapshotURL: base + "/webcam/?action=snapshot",
+			fetched:     true,
+		}
+		p.wcMu.Unlock()
+		return
+	}
+
+	streamURL := settings.Webcam.StreamURL
+	snapshotURL := settings.Webcam.SnapshotURL
+
+	// Also check the newer multi-webcam config
+	if streamURL == "" && len(settings.Webcam.Webcams) > 0 {
+		wc := settings.Webcam.Webcams[0]
+		streamURL = wc.Extras.StreamURL
+		snapshotURL = wc.Extras.SnapshotURL
+		if streamURL == "" {
+			streamURL = wc.StreamURL
+		}
+		if snapshotURL == "" {
+			snapshotURL = wc.SnapshotURL
+		}
+	}
+
+	// Resolve relative URLs against the OctoPrint base
+	streamURL = p.resolveURL(streamURL)
+	snapshotURL = p.resolveURL(snapshotURL)
+
+	// Fallback to defaults if still empty
+	if streamURL == "" {
+		streamURL = base + "/webcam/?action=stream"
+	}
+	if snapshotURL == "" {
+		snapshotURL = base + "/webcam/?action=snapshot"
+	}
+
+	log.Printf("[octoprint:%s] webcam config: stream=%s snapshot=%s", p.config.URL, streamURL, snapshotURL)
+
+	p.wcMu.Lock()
+	p.webcam = webcamConfig{
+		streamURL:   streamURL,
+		snapshotURL: snapshotURL,
+		fetched:     true,
+	}
+	p.wcMu.Unlock()
+}
+
+func (p *Plugin) resolveURL(url string) string {
+	if url == "" {
+		return ""
+	}
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return url
+	}
+	if strings.HasPrefix(url, "/") {
+		base := strings.TrimRight(p.config.URL, "/")
+		return base + url
+	}
+	return url
+}
+
 func (p *Plugin) GetWebcamURL() string {
+	p.wcMu.RLock()
+	defer p.wcMu.RUnlock()
+	if p.webcam.fetched {
+		return p.webcam.streamURL
+	}
 	base := strings.TrimRight(p.config.URL, "/")
 	return base + "/webcam/?action=stream"
 }
 
 func (p *Plugin) GetSnapshotURL() string {
+	p.wcMu.RLock()
+	defer p.wcMu.RUnlock()
+	if p.webcam.fetched {
+		return p.webcam.snapshotURL
+	}
 	base := strings.TrimRight(p.config.URL, "/")
 	return base + "/webcam/?action=snapshot"
 }
@@ -238,4 +348,20 @@ type fileResponse struct {
 		Width  int    `json:"width"`
 		Height int    `json:"height"`
 	} `json:"thumbnails"`
+}
+
+type settingsResponse struct {
+	Webcam struct {
+		StreamURL   string `json:"streamUrl"`
+		SnapshotURL string `json:"snapshotUrl"`
+		Webcams     []struct {
+			Name        string `json:"name"`
+			StreamURL   string `json:"streamUrl"`
+			SnapshotURL string `json:"snapshotUrl"`
+			Extras      struct {
+				StreamURL   string `json:"streamUrl"`
+				SnapshotURL string `json:"snapshotUrl"`
+			} `json:"extras"`
+		} `json:"webcams"`
+	} `json:"webcam"`
 }

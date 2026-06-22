@@ -170,9 +170,15 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	}
 
 	if status.State == models.StatePrinting && status.Job != nil {
-		log.Printf("[printer:%d] printing %s (%.1f%%) hotend=%.0f/%.0f bed=%.0f/%.0f",
-			id, status.Job.FileName, status.Job.Progress,
-			status.Temps.HotendActual, status.Temps.HotendTarget,
-			status.Temps.BedActual, status.Temps.BedTarget)
+		prevProgress := 0.0
+		if prev != nil && prev.Job != nil {
+			prevProgress = prev.Job.Progress
+		}
+		if int(status.Job.Progress) != int(prevProgress) {
+			log.Printf("[printer:%d] printing %s (%.0f%%) hotend=%.0f/%.0f bed=%.0f/%.0f",
+				id, status.Job.FileName, status.Job.Progress,
+				status.Temps.HotendActual, status.Temps.HotendTarget,
+				status.Temps.BedActual, status.Temps.BedTarget)
+		}
 	}
 }
