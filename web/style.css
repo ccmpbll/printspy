@@ -314,6 +314,16 @@ header .printer-count {
     overflow: hidden;
 }
 
+.print-filename {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.25rem;
+}
+
 .progress-fill {
     height: 100%;
     background: var(--success);

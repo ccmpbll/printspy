@@ -131,6 +131,7 @@ function renderPrintingStats(status) {
     }
 
     return `
+        <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
         <div>
             <div class="progress-row">
                 <span class="progress-label">Progress</span>
