@@ -97,7 +97,7 @@ function renderPrintingBody(cfg, status) {
 
     return `
         <div class="webcam-container">
-            <img src="/api/webcam/${cfg.id}" alt="Webcam" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+            <img src="/api/webcam/${cfg.id}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-live').style.display='none'">
             <div class="webcam-placeholder" style="display:none">No camera</div>
             <div class="webcam-live"><span class="dot"></span> LIVE</div>
         </div>
@@ -162,13 +162,10 @@ function renderIdleBody(cfg, status, state) {
                      'Ready for next job';
 
     return `
-        <div class="webcam-container">
-            <img src="/api/webcam/${cfg.id}" alt="Webcam" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
+        <div class="webcam-container webcam-idle">
+            <img src="/api/webcam/${cfg.id}" alt="Webcam" onload="this.parentElement.classList.remove('webcam-collapsed')" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-live').style.display='none';this.parentElement.classList.add('webcam-collapsed')">
             <div class="webcam-placeholder" style="display:none">No camera</div>
             <div class="webcam-live"><span class="dot"></span> LIVE</div>
-        </div>
-        <div class="thumbnail-container">
-            <div class="thumbnail-placeholder">No print</div>
         </div>
         <div class="printer-stats">
             <div class="idle-message">${stateMsg}</div>

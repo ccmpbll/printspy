@@ -434,6 +434,18 @@ header .printer-count {
     color: var(--error);
 }
 
+/* Collapsed webcam/thumbnail for idle printers */
+.webcam-idle {
+    height: auto;
+    min-height: 0;
+}
+
+.webcam-collapsed {
+    height: auto;
+    min-height: 0;
+    display: none;
+}
+
 /* Printer actions (edit/delete) */
 .printer-actions {
     display: flex;

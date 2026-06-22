@@ -97,10 +97,39 @@ func (p *Plugin) GetThumbnailURL(ctx context.Context) string {
 	if err := json.Unmarshal(jobData, &jobResp); err != nil {
 		return ""
 	}
-	if jobResp.Job.File.Thumbnail != "" {
-		base := strings.TrimRight(p.config.URL, "/")
-		return base + "/" + strings.TrimLeft(jobResp.Job.File.Thumbnail, "/")
+
+	fileName := jobResp.Job.File.Name
+	origin := jobResp.Job.File.Origin
+	if fileName == "" || origin == "" {
+		return ""
 	}
+
+	filePath := jobResp.Job.File.Path
+	if filePath == "" {
+		filePath = fileName
+	}
+
+	fileData, err := p.doGet(ctx, "/api/files/"+origin+"/"+filePath)
+	if err != nil {
+		return ""
+	}
+
+	var fileResp fileResponse
+	if err := json.Unmarshal(fileData, &fileResp); err != nil {
+		return ""
+	}
+
+	if len(fileResp.Thumbnail) > 0 {
+		base := strings.TrimRight(p.config.URL, "/")
+		return base + "/" + strings.TrimLeft(fileResp.Thumbnail, "/")
+	}
+
+	if len(fileResp.Thumbnails) > 0 {
+		base := strings.TrimRight(p.config.URL, "/")
+		best := fileResp.Thumbnails[len(fileResp.Thumbnails)-1]
+		return base + "/" + strings.TrimLeft(best.URL, "/")
+	}
+
 	return ""
 }
 
@@ -171,8 +200,9 @@ type tempData struct {
 type jobResponse struct {
 	Job struct {
 		File struct {
-			Name      string `json:"name"`
-			Thumbnail string `json:"thumbnail"`
+			Name   string `json:"name"`
+			Path   string `json:"path"`
+			Origin string `json:"origin"`
 		} `json:"file"`
 		EstimatedPrintTime float64 `json:"estimatedPrintTime"`
 		Filament           struct {
@@ -187,4 +217,13 @@ type jobResponse struct {
 		PrintTime     float64 `json:"printTime"`
 		PrintTimeLeft float64 `json:"printTimeLeft"`
 	} `json:"progress"`
+}
+
+type fileResponse struct {
+	Thumbnail  string `json:"thumbnail"`
+	Thumbnails []struct {
+		URL    string `json:"url"`
+		Width  int    `json:"width"`
+		Height int    `json:"height"`
+	} `json:"thumbnails"`
 }

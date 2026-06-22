@@ -206,20 +206,48 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Get(webcamURL)
+	printer, err := h.db.GetPrinter(id)
+	if err != nil {
+		http.Error(w, "printer not found", http.StatusNotFound)
+		return
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, webcamURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("X-Api-Key", printer.APIKey)
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "failed to connect to webcam", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	for _, header := range []string{"Content-Type", "Cache-Control"} {
+	for _, header := range []string{"Content-Type", "Cache-Control", "Connection"} {
 		if v := resp.Header.Get(header); v != "" {
 			w.Header().Set(header, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+
+	flusher, canFlush := w.(http.Flusher)
+	buf := make([]byte, 32*1024)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			if canFlush {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
 }
 
 func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
