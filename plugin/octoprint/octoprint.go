@@ -30,12 +30,20 @@ type cachedSettings struct {
 	fetched     bool
 }
 
+type pluginCache struct {
+	installed   map[string]bool
+	lastFetched time.Time
+}
+
 type Plugin struct {
 	config models.PrinterConfig
 	client *http.Client
 
 	settingsMu sync.RWMutex
 	settings   cachedSettings
+
+	pluginMu sync.RWMutex
+	plugins  pluginCache
 }
 
 func New(config models.PrinterConfig) *Plugin {
@@ -54,6 +62,10 @@ func (p *Plugin) Connect(ctx context.Context) error {
 		return err
 	}
 	log.Printf("[octoprint:%s] connected: %s", p.config.URL, string(data))
+
+	p.refreshPlugins(ctx)
+	p.fetchSettings(ctx)
+
 	return nil
 }
 
@@ -62,12 +74,15 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		LastUpdated: time.Now(),
 	}
 
-	// Fetch webcam config on first successful poll
+	// Fetch settings if not yet loaded (e.g. printer was offline at startup)
 	p.settingsMu.RLock()
 	fetched := p.settings.fetched
 	p.settingsMu.RUnlock()
 	if !fetched {
+		p.refreshPlugins(ctx)
 		p.fetchSettings(ctx)
+	} else {
+		p.refreshPlugins(ctx)
 	}
 
 	printerData, err := p.doGet(ctx, "/api/printer?exclude=sd")
@@ -108,8 +123,8 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		}
 	}
 
-	// Fetch layer info from DisplayLayerProgress plugin if available
-	if status.Job != nil {
+	// Fetch layer info from DisplayLayerProgress plugin if installed
+	if status.Job != nil && p.hasPlugin("DisplayLayerProgress") {
 		layerData, err := p.doGet(ctx, "/plugin/DisplayLayerProgress/values")
 		if err == nil {
 			var layerResp layerProgressResponse
@@ -156,9 +171,30 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 		return
 	}
 
-	streamURL := settings.Webcam.StreamURL
+	var streamURL string
 
-	// Also check the newer multi-webcam config
+	// Check plugin-specific camera config based on installed plugins
+	if p.hasPlugin("camera-streamer-control") {
+		// camera-streamer plugin stores URL in its own settings
+		if cs := settings.Plugins.CameraStreamer.StreamURL; cs != "" {
+			streamURL = p.resolveURL(cs)
+			log.Printf("[octoprint:%s] using camera-streamer plugin URL: %s", p.config.URL, streamURL)
+		}
+	}
+
+	if streamURL == "" && p.hasPlugin("classicwebcam") {
+		if cw := settings.Plugins.ClassicWebcam.Stream; cw != "" {
+			streamURL = p.resolveURL(cw)
+			log.Printf("[octoprint:%s] using classic webcam plugin URL: %s", p.config.URL, streamURL)
+		}
+	}
+
+	// Fall back to top-level webcam settings
+	if streamURL == "" {
+		streamURL = settings.Webcam.StreamURL
+	}
+
+	// Check the newer multi-webcam config
 	if streamURL == "" && len(settings.Webcam.Webcams) > 0 {
 		wc := settings.Webcam.Webcams[0]
 		streamURL = wc.Extras.StreamURL
@@ -167,10 +203,8 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 		}
 	}
 
-	// Resolve relative URLs against the OctoPrint base
 	streamURL = p.resolveURL(streamURL)
 
-	// Fallback to defaults if still empty
 	if streamURL == "" {
 		streamURL = base + "/webcam/?action=stream"
 	}
@@ -190,6 +224,50 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 		fetched:     true,
 	}
 	p.settingsMu.Unlock()
+}
+
+const pluginRefreshInterval = 5 * time.Minute
+
+func (p *Plugin) refreshPlugins(ctx context.Context) {
+	p.pluginMu.RLock()
+	if !p.plugins.lastFetched.IsZero() && time.Since(p.plugins.lastFetched) < pluginRefreshInterval {
+		p.pluginMu.RUnlock()
+		return
+	}
+	p.pluginMu.RUnlock()
+
+	data, err := p.doGet(ctx, "/plugin/pluginmanager/plugins")
+	if err != nil {
+		log.Printf("[octoprint:%s] failed to fetch plugin list: %v", p.config.URL, err)
+		return
+	}
+
+	var resp pluginManagerResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		log.Printf("[octoprint:%s] failed to parse plugin list: %v", p.config.URL, err)
+		return
+	}
+
+	installed := make(map[string]bool)
+	var names []string
+	for _, pl := range resp.Plugins {
+		if pl.Enabled {
+			installed[pl.Key] = true
+			names = append(names, pl.Key)
+		}
+	}
+
+	p.pluginMu.Lock()
+	p.plugins = pluginCache{installed: installed, lastFetched: time.Now()}
+	p.pluginMu.Unlock()
+
+	log.Printf("[octoprint:%s] plugins (%d): %s", p.config.URL, len(names), strings.Join(names, ", "))
+}
+
+func (p *Plugin) hasPlugin(key string) bool {
+	p.pluginMu.RLock()
+	defer p.pluginMu.RUnlock()
+	return p.plugins.installed[key]
 }
 
 func (p *Plugin) resolveURL(rawURL string) string {
@@ -419,6 +497,23 @@ type settingsResponse struct {
 			} `json:"extras"`
 		} `json:"webcams"`
 	} `json:"webcam"`
+	Plugins struct {
+		ClassicWebcam struct {
+			Stream   string `json:"stream"`
+			Snapshot string `json:"snapshot"`
+		} `json:"classicwebcam"`
+		CameraStreamer struct {
+			StreamURL string `json:"streamUrl"`
+		} `json:"camera-streamer-control"`
+	} `json:"plugins"`
+}
+
+type pluginManagerResponse struct {
+	Plugins []struct {
+		Key     string `json:"key"`
+		Name    string `json:"name"`
+		Enabled bool   `json:"enabled"`
+	} `json:"plugins"`
 }
 
 type layerProgressResponse struct {
