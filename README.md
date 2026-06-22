@@ -21,7 +21,7 @@ Printers are configured through the web UI — no config files required. Just ru
 
 - **OctoPrint** — fully supported today
 - **PrusaLink** — planned
-- **Klipper/Moonraker** — planned
+- **Klipper/Moonraker** — planned, but I don't have any printers running Klipper...
 
 PrintSpy uses a plugin architecture, so adding support for new printer platforms is straightforward.
 
