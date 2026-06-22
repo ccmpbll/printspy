@@ -297,24 +297,24 @@ header .printer-count {
     gap: 0.5rem;
 }
 
-/* Stats with thumbnail beside */
-.stats-with-thumb {
+/* Filename + progress with thumbnail beside */
+.file-and-thumb {
     display: flex;
     gap: 0.75rem;
-    flex: 1;
 }
 
-.stats-main {
+.file-and-progress {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    justify-content: center;
+    gap: 0.25rem;
 }
 
 .thumb-beside {
-    width: 100px;
-    min-width: 100px;
+    width: 72px;
+    min-width: 72px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -639,16 +639,6 @@ header .printer-count {
 
     .webcam-container {
         height: 200px;
-    }
-
-    .stats-with-thumb {
-        flex-direction: column;
-    }
-
-    .thumb-beside {
-        width: 100%;
-        min-width: unset;
-        height: 120px;
     }
 
     .stat-grid {

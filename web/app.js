@@ -165,8 +165,8 @@ function renderPrintingStats(cfg, status) {
     }
 
     return `
-        <div class="stats-with-thumb">
-            <div class="stats-main">
+        <div class="file-and-thumb">
+            <div class="file-and-progress">
                 <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
                 <div>
                     <div class="progress-row">
@@ -177,17 +177,17 @@ function renderPrintingStats(cfg, status) {
                         <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
                     </div>
                 </div>
-                <div class="stat-grid">
-                    <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
-                    <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
-                    <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
-                </div>
-                <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>
             </div>
             <div class="thumb-beside">
                 <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
             </div>
-        </div>`;
+        </div>
+        <div class="stat-grid">
+            <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
+            <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
+            <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
+        </div>
+        <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>`;
 }
 
 function renderIdleStats(status, state) {
