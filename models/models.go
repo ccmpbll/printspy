@@ -25,10 +25,13 @@ type PrinterConfig struct {
 }
 
 type Temperatures struct {
-	HotendActual float64 `json:"hotend_actual"`
-	HotendTarget float64 `json:"hotend_target"`
-	BedActual    float64 `json:"bed_actual"`
-	BedTarget    float64 `json:"bed_target"`
+	HotendActual  float64 `json:"hotend_actual"`
+	HotendTarget  float64 `json:"hotend_target"`
+	BedActual     float64 `json:"bed_actual"`
+	BedTarget     float64 `json:"bed_target"`
+	ChamberActual float64 `json:"chamber_actual"`
+	ChamberTarget float64 `json:"chamber_target"`
+	HasChamber    bool    `json:"has_chamber"`
 }
 
 type JobInfo struct {

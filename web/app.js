@@ -120,13 +120,14 @@ function renderPrintingStats(status) {
     const eta = computeETA(job.remaining_secs);
     const temps = status.temps;
 
-    let extraRow = '';
-    const parts = [];
-    if (job.total_layers > 0) {
-        parts.push(`<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`);
+    const infoCells = [];
+    infoCells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>`);
+    infoCells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>`);
+    if (temps.has_chamber) {
+        infoCells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
     }
-    if (parts.length > 0) {
-        extraRow = `<div class="stat-grid stat-grid-2">${parts.join('')}</div>`;
+    if (job.total_layers > 0) {
+        infoCells.push(`<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`);
     }
 
     return `
@@ -144,11 +145,7 @@ function renderPrintingStats(status) {
             <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
             <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
         </div>
-        <div class="stat-grid stat-grid-2">
-            <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>
-            <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>
-        </div>
-        ${extraRow}`;
+        <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>`;
 }
 
 function renderIdleStats(status, state) {
@@ -159,11 +156,13 @@ function renderIdleStats(status, state) {
 
     let tempsHTML = '';
     if (temps) {
-        tempsHTML = `
-            <div class="stat-grid stat-grid-2">
-                <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>
-                <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>
-            </div>`;
+        const cells = [];
+        cells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>`);
+        cells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>`);
+        if (temps.has_chamber) {
+            cells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
+        }
+        tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
     }
 
     return `<div class="idle-message" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
@@ -224,7 +223,9 @@ function updateCard(card, printer) {
         setText(card, 'eta', computeETA(job.remaining_secs));
         setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span>`);
         setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span>`);
-
+        if (temps.has_chamber) {
+            setHTML(card, 'chamber', `${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span>`);
+        }
         if (job.total_layers > 0) {
             setHTML(card, 'layer', `${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span>`);
         }
@@ -232,6 +233,9 @@ function updateCard(card, printer) {
         const temps = status.temps;
         setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span>`);
         setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span>`);
+        if (temps.has_chamber) {
+            setHTML(card, 'chamber', `${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span>`);
+        }
     }
 }
 

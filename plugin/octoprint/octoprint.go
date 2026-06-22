@@ -105,6 +105,11 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		BedActual:    printerResp.Temperature.Bed.Actual,
 		BedTarget:    printerResp.Temperature.Bed.Target,
 	}
+	if printerResp.Temperature.Chamber.Actual != 0 || printerResp.Temperature.Chamber.Target != 0 {
+		status.Temps.HasChamber = true
+		status.Temps.ChamberActual = printerResp.Temperature.Chamber.Actual
+		status.Temps.ChamberTarget = printerResp.Temperature.Chamber.Target
+	}
 
 	jobData, err := p.doGet(ctx, "/api/job")
 	if err == nil {
@@ -428,8 +433,9 @@ type printerResponse struct {
 		Flags stateFlags `json:"flags"`
 	} `json:"state"`
 	Temperature struct {
-		Tool0 tempData `json:"tool0"`
-		Bed   tempData `json:"bed"`
+		Tool0   tempData `json:"tool0"`
+		Bed     tempData `json:"bed"`
+		Chamber tempData `json:"chamber"`
 	} `json:"temperature"`
 }
 

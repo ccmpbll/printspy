@@ -332,6 +332,10 @@ header .printer-count {
     grid-template-columns: repeat(2, 1fr);
 }
 
+.stat-grid-auto {
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+}
+
 .stat-box {
     background: var(--bg-secondary);
     border-radius: var(--radius);
