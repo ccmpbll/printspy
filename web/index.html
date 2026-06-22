@@ -12,12 +12,14 @@
             <h1>PrintSpy</h1>
             <span class="status-dot"></span>
             <span class="printer-count" id="printer-count"></span>
+            <button class="btn" onclick="openSettings()" title="Settings">&#9881;</button>
             <button class="btn btn-primary" onclick="openAddModal()">+ Add printer</button>
         </header>
 
         <div id="printer-list"></div>
     </div>
 
+    <!-- Add/Edit Printer Modal -->
     <div class="modal-overlay" id="printer-modal">
         <div class="modal">
             <h2 id="modal-title">Add printer</h2>
@@ -48,7 +50,25 @@
                 <div class="test-result" id="test-result"></div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>
-                    <button type="button" class="btn" id="test-btn" onclick="testConnection()" style="display:none">Test connection</button>
+                    <button type="button" class="btn" id="test-btn" onclick="testConnection()">Test connection</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settings-modal">
+        <div class="modal">
+            <h2>Settings</h2>
+            <form onsubmit="saveSettings(event)">
+                <div class="form-group">
+                    <label for="setting-snapshot-interval">Snapshot refresh interval (seconds)</label>
+                    <input type="number" id="setting-snapshot-interval" value="10" min="3" max="300">
+                    <div class="form-hint">How often webcam snapshots refresh. Lower values use more bandwidth.</div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
                 </div>
             </form>

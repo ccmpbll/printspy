@@ -20,6 +20,7 @@ type PrinterConfig struct {
 	APIKey       string `json:"api_key" yaml:"api_key"`
 	Enabled      bool   `json:"enabled" yaml:"enabled"`
 	PollInterval int    `json:"poll_interval" yaml:"poll_interval"`
+	SortOrder    int    `json:"sort_order" yaml:"-"`
 	CreatedAt    string `json:"created_at" yaml:"-"`
 	UpdatedAt    string `json:"updated_at" yaml:"-"`
 }

@@ -1,7 +1,62 @@
-const POLL_INTERVAL = 3000;
 let printers = [];
 let pollCounter = 0;
 let prevPrinterIDs = [];
+let eventSource = null;
+let statusCache = {};
+
+// SSE connection
+
+function connectSSE() {
+    if (eventSource) eventSource.close();
+
+    eventSource = new EventSource('/api/events');
+
+    eventSource.addEventListener('init', (e) => {
+        printers = JSON.parse(e.data);
+        printers.forEach(p => { if (p.status) statusCache[p.config.id] = p.status; });
+        prevPrinterIDs = [];
+        updateDashboard();
+    });
+
+    eventSource.addEventListener('status', (e) => {
+        const msg = JSON.parse(e.data);
+        statusCache[msg.printer_id] = msg.status;
+        const printer = printers.find(p => p.config.id === msg.printer_id);
+        if (printer) {
+            printer.status = msg.status;
+            const card = document.querySelector(`[data-printer-id="${msg.printer_id}"]`);
+            if (card) updateCard(card, printer);
+        }
+        updateHeaderCount();
+    });
+
+    eventSource.addEventListener('error', () => {
+        // EventSource auto-reconnects
+    });
+}
+
+function updateHeaderCount() {
+    const count = document.getElementById('printer-count');
+    if (!printers || printers.length === 0) {
+        count.textContent = '';
+        return;
+    }
+    const connected = printers.filter(p => p.status && p.status.state !== 'offline').length;
+    count.textContent = `${connected}/${printers.length} connected`;
+}
+
+// Snapshot refresh on interval (SSE doesn't cover images)
+function refreshSnapshots() {
+    pollCounter++;
+    document.querySelectorAll('.webcam-img').forEach(img => {
+        const id = img.closest('[data-printer-id]')?.dataset.printerId;
+        if (id && getWebcamMode(parseInt(id)) === 'snapshot' && img.style.display !== 'none') {
+            img.src = `/api/snapshot/${id}?t=${pollCounter}`;
+        }
+    });
+}
+
+// Webcam mode
 
 function getWebcamMode(printerId) {
     return localStorage.getItem(`webcam-mode-${printerId}`) || 'snapshot';
@@ -12,7 +67,12 @@ function toggleWebcamMode(printerId) {
     const next = current === 'snapshot' ? 'live' : 'snapshot';
     localStorage.setItem(`webcam-mode-${printerId}`, next);
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
-    if (card) updateCard(card, printers.find(p => p.config.id === printerId));
+    if (card) {
+        const printer = printers.find(p => p.config.id === printerId);
+        if (printer) {
+            card.outerHTML = renderPrinterCard(printer);
+        }
+    }
 }
 
 function webcamSrc(printerId) {
@@ -23,15 +83,16 @@ function webcamSrc(printerId) {
     return `/api/snapshot/${printerId}?t=${pollCounter}`;
 }
 
+// Fetch full printer list (used after add/edit/delete)
 async function fetchPrinters() {
     try {
         const resp = await fetch('/api/printers');
         if (!resp.ok) return;
         printers = await resp.json();
-        pollCounter++;
+        prevPrinterIDs = [];
         updateDashboard();
     } catch (e) {
-        // server unreachable, keep showing last state
+        // server unreachable
     }
 }
 
@@ -51,8 +112,7 @@ function updateDashboard() {
         return;
     }
 
-    const connected = printers.filter(p => p.status && p.status.state !== 'offline').length;
-    count.textContent = `${connected}/${printers.length} connected`;
+    updateHeaderCount();
 
     const currentIDs = printers.map(p => p.config.id);
     const structureChanged = JSON.stringify(currentIDs) !== JSON.stringify(prevPrinterIDs);
@@ -60,11 +120,6 @@ function updateDashboard() {
     if (structureChanged) {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
-    } else {
-        printers.forEach(p => {
-            const card = list.querySelector(`[data-printer-id="${p.config.id}"]`);
-            if (card) updateCard(card, p);
-        });
     }
 }
 
@@ -77,9 +132,17 @@ function renderPrinterCard(printer) {
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wcMode = getWebcamMode(cfg.id);
 
+    const idx = printers.indexOf(printer);
+    const isFirst = idx === 0;
+    const isLast = idx === printers.length - 1;
+
     return `
         <div class="printer-card" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
+                <div class="printer-reorder">
+                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},-1)" ${isFirst ? 'disabled' : ''} title="Move up">&#9650;</button>
+                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},1)" ${isLast ? 'disabled' : ''} title="Move down">&#9660;</button>
+                </div>
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 <span class="printer-url">${esc(cfg.url)}</span>
@@ -90,25 +153,19 @@ function renderPrinterCard(printer) {
                 </div>
             </div>
             <div class="printer-body">
-                <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
-                    <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';${isPrinting ? '' : "this.parentElement.classList.add('webcam-collapsed');"}">
-                    <div class="webcam-placeholder" style="display:none">No camera</div>
-                    <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
-                    <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
+                <div class="webcam-wrapper">
+                    <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
+                        <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';${isPrinting ? '' : "this.parentElement.classList.add('webcam-collapsed');"}">
+                        <div class="webcam-placeholder" style="display:none">No camera</div>
+                        <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
+                        <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
+                        ${isPrinting ? `<img class="thumbnail-overlay" src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="" onerror="this.style.display='none'">` : ''}
+                    </div>
                 </div>
-                ${isPrinting ? renderThumbnail(cfg, status.job) : ''}
                 <div class="printer-stats">
                     ${isPrinting ? renderPrintingStats(status) : renderIdleStats(status, state)}
                 </div>
             </div>
-        </div>`;
-}
-
-function renderThumbnail(cfg, job) {
-    return `
-        <div class="thumbnail-container">
-            <img class="thumbnail-img" src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-            <div class="thumbnail-placeholder" style="display:none">${esc(job.file_name || 'Unknown')}</div>
         </div>`;
 }
 
@@ -191,31 +248,12 @@ function updateCard(card, printer) {
         stateEl.className = `printer-state state-${state}`;
     }
 
-    // Update webcam snapshot src (but NOT live streams)
-    const wcMode = getWebcamMode(cfg.id);
-    const wcImg = card.querySelector('.webcam-img');
-    if (wcImg && wcMode === 'snapshot' && wcImg.style.display !== 'none') {
-        wcImg.src = `/api/snapshot/${cfg.id}?t=${pollCounter}`;
-    }
-
-    // Update badge
-    const badge = card.querySelector('.webcam-badge');
-    if (badge) {
-        const dot = badge.querySelector('.dot');
-        if (dot) dot.className = wcMode === 'live' ? 'dot' : 'dot dot-blue';
-        badge.lastChild.textContent = wcMode === 'live' ? ' LIVE' : ' SNAP';
-    }
-    const toggleBtn = card.querySelector('.webcam-toggle');
-    if (toggleBtn) {
-        toggleBtn.className = `webcam-toggle ${wcMode === 'live' ? 'live' : ''}`;
-        toggleBtn.innerHTML = wcMode === 'live' ? '&#9724;' : '&#9654;';
-    }
-
     if (isPrinting && status.job) {
         const job = status.job;
         const progress = Math.round(job.progress || 0);
         const temps = status.temps;
 
+        setText(card, 'filename', job.file_name);
         setText(card, 'progress-text', `${progress}%`);
         const bar = card.querySelector('[data-field="progress-bar"]');
         if (bar) bar.style.width = `${progress}%`;
@@ -248,6 +286,27 @@ function setText(card, field, value) {
 function setHTML(card, field, value) {
     const el = card.querySelector(`[data-field="${field}"]`);
     if (el) el.innerHTML = value;
+}
+
+// Printer reordering
+
+async function movePrinter(id, direction) {
+    const idx = printers.findIndex(p => p.config.id === id);
+    if (idx < 0) return;
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= printers.length) return;
+
+    [printers[idx], printers[newIdx]] = [printers[newIdx], printers[idx]];
+    const ids = printers.map(p => p.config.id);
+
+    prevPrinterIDs = [];
+    updateDashboard();
+
+    await fetch('/api/printers/reorder', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ids}),
+    });
 }
 
 // Modal handling
@@ -283,7 +342,7 @@ function openEditModal(id) {
 }
 
 function closeModal() {
-    document.getElementById('printer-modal').classList.remove('active');
+    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
 }
 
 function hideTestResult() {
@@ -322,7 +381,6 @@ async function savePrinter(e) {
         }
         if (resp.ok) {
             closeModal();
-            prevPrinterIDs = [];
             fetchPrinters();
         }
     } catch (e) {
@@ -334,7 +392,6 @@ async function deletePrinter(id) {
     if (!confirm('Remove this printer?')) return;
     try {
         await fetch(`/api/printers/${id}`, {method: 'DELETE'});
-        prevPrinterIDs = [];
         fetchPrinters();
     } catch (e) {
         // handle error
@@ -369,7 +426,6 @@ async function testConnection() {
         if (data.success) {
             el.className = 'test-result success';
             el.textContent = 'Connection successful!';
-            // Auto-fill name if empty and OctoPrint returned one
             const nameField = document.getElementById('printer-name');
             if (!nameField.value && data.name) {
                 nameField.value = data.name;
@@ -382,6 +438,38 @@ async function testConnection() {
         el.className = 'test-result error';
         el.textContent = 'Connection test failed';
     }
+}
+
+// Settings
+
+function openSettings() {
+    fetch('/api/settings').then(r => r.json()).then(settings => {
+        document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
+        document.getElementById('settings-modal').classList.add('active');
+    });
+}
+
+async function saveSettings(e) {
+    e.preventDefault();
+    const settings = {
+        snapshot_interval: document.getElementById('setting-snapshot-interval').value,
+    };
+    await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings),
+    });
+    snapshotInterval = parseInt(settings.snapshot_interval) || 10;
+    restartSnapshotTimer();
+    closeModal();
+}
+
+let snapshotTimer = null;
+let snapshotInterval = 10;
+
+function restartSnapshotTimer() {
+    if (snapshotTimer) clearInterval(snapshotTimer);
+    snapshotTimer = setInterval(refreshSnapshots, snapshotInterval * 1000);
 }
 
 // Utilities
@@ -407,16 +495,23 @@ function esc(str) {
     return div.innerHTML;
 }
 
-// Close modal on overlay click
-document.getElementById('printer-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeModal();
+// Event listeners
+document.querySelectorAll('.modal-overlay').forEach(modal => {
+    modal.addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+    });
 });
 
-// Close modal on Escape
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') closeModal();
 });
 
-// Start polling
-fetchPrinters();
-setInterval(fetchPrinters, POLL_INTERVAL);
+// Initialize
+fetch('/api/settings').then(r => r.json()).then(settings => {
+    snapshotInterval = parseInt(settings.snapshot_interval) || 10;
+    restartSnapshotTimer();
+}).catch(() => {
+    restartSnapshotTimer();
+});
+
+connectSSE();

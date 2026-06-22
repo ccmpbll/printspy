@@ -40,6 +40,7 @@ func (db *DB) migrate() error {
 			api_key TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1,
 			poll_interval INTEGER NOT NULL DEFAULT 10,
+			sort_order INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -69,16 +70,28 @@ func (db *DB) migrate() error {
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
 		);
 
+		CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_history_printer ON print_history(printer_id);
 		CREATE INDEX IF NOT EXISTS idx_snapshots_printer_time ON printer_snapshots(printer_id, recorded_at);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: add sort_order column if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
+
+	return nil
 }
 
 func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, type, url, api_key, enabled, poll_interval, created_at, updated_at
-		FROM printers ORDER BY id
+		SELECT id, name, type, url, api_key, enabled, poll_interval, sort_order, created_at, updated_at
+		FROM printers ORDER BY sort_order, id
 	`)
 	if err != nil {
 		return nil, err
@@ -89,7 +102,7 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	for rows.Next() {
 		var p models.PrinterConfig
 		var enabled int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
@@ -102,9 +115,9 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	var p models.PrinterConfig
 	var enabled int
 	err := db.conn.QueryRow(`
-		SELECT id, name, type, url, api_key, enabled, poll_interval, created_at, updated_at
+		SELECT id, name, type, url, api_key, enabled, poll_interval, sort_order, created_at, updated_at
 		FROM printers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -120,10 +133,16 @@ func (db *DB) CreatePrinter(p *models.PrinterConfig) error {
 	if p.PollInterval <= 0 {
 		p.PollInterval = 10
 	}
+
+	// Set sort_order to max+1 so new printers go at the end
+	var maxOrder int
+	db.conn.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) FROM printers`).Scan(&maxOrder)
+	p.SortOrder = maxOrder + 1
+
 	result, err := db.conn.Exec(`
-		INSERT INTO printers (name, type, url, api_key, enabled, poll_interval)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, p.Name, p.Type, p.URL, p.APIKey, enabled, p.PollInterval)
+		INSERT INTO printers (name, type, url, api_key, enabled, poll_interval, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.Type, p.URL, p.APIKey, enabled, p.PollInterval, p.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -141,6 +160,20 @@ func (db *DB) UpdatePrinter(p *models.PrinterConfig) error {
 		WHERE id=?
 	`, p.Name, p.Type, p.URL, p.APIKey, enabled, p.PollInterval, p.ID)
 	return err
+}
+
+func (db *DB) ReorderPrinters(ids []int64) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	for i, id := range ids {
+		if _, err := tx.Exec(`UPDATE printers SET sort_order=? WHERE id=?`, i, id); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (db *DB) DeletePrinter(id int64) error {
@@ -197,4 +230,41 @@ func (db *DB) GetPrintHistory(printerID int64, limit int) ([]models.PrintHistory
 		history = append(history, h)
 	}
 	return history, rows.Err()
+}
+
+// Settings
+
+func (db *DB) GetSetting(key string) (string, error) {
+	var value string
+	err := db.conn.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+func (db *DB) SetSetting(key, value string) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO settings (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value
+	`, key, value)
+	return err
+}
+
+func (db *DB) GetAllSettings() (map[string]string, error) {
+	rows, err := db.conn.Query(`SELECT key, value FROM settings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		settings[k] = v
+	}
+	return settings, rows.Err()
 }

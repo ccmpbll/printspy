@@ -62,6 +62,7 @@ header {
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 1.5rem;
+    flex-wrap: wrap;
 }
 
 header h1 {
@@ -136,6 +137,7 @@ header .printer-count {
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.75rem;
+    flex-wrap: wrap;
 }
 
 .printer-name {
@@ -183,9 +185,41 @@ header .printer-count {
     align-items: stretch;
 }
 
-.webcam-container {
-    width: 200px;
+/* Reorder buttons */
+.printer-reorder {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.reorder-btn {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 0.6rem;
+    padding: 0;
+    line-height: 1;
+}
+
+.reorder-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+}
+
+.reorder-btn:disabled {
+    opacity: 0.2;
+    cursor: default;
+}
+
+/* Webcam */
+.webcam-wrapper {
     min-width: 200px;
+    width: 200px;
+}
+
+.webcam-container {
+    width: 100%;
+    height: 100%;
     background: #111;
     border-radius: var(--radius);
     overflow: hidden;
@@ -195,7 +229,7 @@ header .printer-count {
     justify-content: center;
 }
 
-.webcam-container img {
+.webcam-container img.webcam-img {
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -264,27 +298,29 @@ header .printer-count {
     background: rgba(220,38,38,0.8);
 }
 
-.thumbnail-container {
-    width: 110px;
-    min-width: 110px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-}
-
-.thumbnail-container img {
-    max-width: 100%;
-    max-height: 100%;
+/* Thumbnail overlay on webcam */
+.thumbnail-overlay {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    width: 64px;
+    height: 64px;
     object-fit: contain;
+    background: rgba(0,0,0,0.6);
+    border-radius: 4px;
+    padding: 2px;
 }
 
-.thumbnail-placeholder {
-    color: var(--text-tertiary);
-    font-size: 0.7rem;
-    text-align: center;
+/* Collapsed webcam for idle printers */
+.webcam-idle {
+    height: auto;
+    min-height: 0;
+}
+
+.webcam-collapsed {
+    height: auto;
+    min-height: 0;
+    display: none;
 }
 
 .printer-stats {
@@ -293,6 +329,17 @@ header .printer-count {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+}
+
+/* Filename */
+.print-filename {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 0.25rem;
 }
 
 /* Progress bar */
@@ -311,16 +358,6 @@ header .printer-count {
     background: var(--bg-tertiary);
     border-radius: 3px;
     overflow: hidden;
-}
-
-.print-filename {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-primary);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-bottom: 0.25rem;
 }
 
 .progress-fill {
@@ -456,6 +493,12 @@ header .printer-count {
     border-color: var(--accent);
 }
 
+.form-hint {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    margin-top: 0.25rem;
+}
+
 .form-actions {
     display: flex;
     justify-content: flex-end;
@@ -483,20 +526,80 @@ header .printer-count {
     color: var(--error);
 }
 
-/* Collapsed webcam/thumbnail for idle printers */
-.webcam-idle {
-    height: auto;
-    min-height: 0;
-}
-
-.webcam-collapsed {
-    height: auto;
-    min-height: 0;
-    display: none;
-}
-
-/* Printer actions (edit/delete) */
+/* Printer actions */
 .printer-actions {
     display: flex;
     gap: 0.25rem;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .container {
+        padding: 1rem;
+    }
+
+    .printer-header {
+        gap: 0.4rem;
+    }
+
+    .printer-url {
+        display: none;
+    }
+
+    .printer-body {
+        flex-direction: column;
+    }
+
+    .webcam-wrapper {
+        width: 100%;
+        min-width: unset;
+    }
+
+    .webcam-container {
+        height: 200px;
+    }
+
+    .thumbnail-overlay {
+        width: 80px;
+        height: 80px;
+    }
+
+    .stat-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+
+    .stat-grid-auto {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media (max-width: 480px) {
+    header h1 {
+        font-size: 1.1rem;
+    }
+
+    .printer-link {
+        display: none;
+    }
+
+    .printer-name {
+        font-size: 0.85rem;
+    }
+
+    .stat-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .webcam-container {
+        height: 180px;
+    }
+
+    .form-actions {
+        flex-direction: column;
+    }
+
+    .form-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
 }

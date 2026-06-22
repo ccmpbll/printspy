@@ -44,7 +44,10 @@ func (h *Handler) logOnce(key string, interval time.Duration, format string, arg
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/printers", h.handlePrinters)
 	mux.HandleFunc("/api/printers/", h.handlePrinterByID)
+	mux.HandleFunc("/api/printers/reorder", h.handleReorder)
 	mux.HandleFunc("/api/test", h.handleTestConnection)
+	mux.HandleFunc("/api/events", h.handleSSE)
+	mux.HandleFunc("/api/settings", h.handleSettings)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
@@ -109,6 +112,11 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
+	// Skip if this is the reorder endpoint
+	if strings.HasSuffix(r.URL.Path, "/reorder") {
+		return
+	}
+
 	path := strings.TrimPrefix(r.URL.Path, "/api/printers/")
 	parts := strings.SplitN(path, "/", 2)
 
@@ -244,6 +252,106 @@ func (h *Handler) getPrintHistory(w http.ResponseWriter, r *http.Request, id int
 	}
 	jsonResponse(w, history)
 }
+
+func (h *Handler) handleReorder(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.ReorderPrinters(req.IDs); err != nil {
+		jsonError(w, "failed to reorder printers", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SSE
+
+func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	sub := h.poller.Subscribe(r.Context())
+	defer h.poller.Unsubscribe(sub)
+
+	// Send initial full state
+	printers, err := h.db.ListPrinters()
+	if err == nil {
+		statuses := h.poller.GetAllStatuses()
+		result := make([]models.PrinterWithStatus, len(printers))
+		for i, p := range printers {
+			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID]}
+		}
+		if data, err := json.Marshal(result); err == nil {
+			fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-sub.Done():
+			return
+		case data := <-sub.Chan():
+			fmt.Fprintf(w, "event: status\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+
+// Settings
+
+func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		settings, err := h.db.GetAllSettings()
+		if err != nil {
+			jsonError(w, "failed to get settings", http.StatusInternalServerError)
+			return
+		}
+		if settings == nil {
+			settings = make(map[string]string)
+		}
+		jsonResponse(w, settings)
+	case http.MethodPut:
+		var settings map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		for k, v := range settings {
+			if err := h.db.SetSetting(k, v); err != nil {
+				jsonError(w, "failed to save settings", http.StatusInternalServerError)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Webcam/Thumbnail proxies
 
 func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/webcam/")

@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -16,18 +17,28 @@ type polledPrinter struct {
 	cancel context.CancelFunc
 }
 
+type subscriber struct {
+	ch     chan []byte
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
 type Poller struct {
 	mu       sync.RWMutex
 	printers map[int64]*polledPrinter
 	cache    map[int64]*models.PrinterStatus
 	db       *db.DB
+
+	subMu       sync.Mutex
+	subscribers map[*subscriber]struct{}
 }
 
 func New(database *db.DB) *Poller {
 	return &Poller{
-		printers: make(map[int64]*polledPrinter),
-		cache:    make(map[int64]*models.PrinterStatus),
-		db:       database,
+		printers:    make(map[int64]*polledPrinter),
+		cache:       make(map[int64]*models.PrinterStatus),
+		db:          database,
+		subscribers: make(map[*subscriber]struct{}),
 	}
 }
 
@@ -128,6 +139,58 @@ func (p *Poller) GetThumbnailURL(ctx context.Context, id int64) string {
 	return ""
 }
 
+// SSE subscriber management
+
+func (p *Poller) Subscribe(ctx context.Context) *subscriber {
+	subCtx, cancel := context.WithCancel(ctx)
+	s := &subscriber{
+		ch:     make(chan []byte, 64),
+		ctx:    subCtx,
+		cancel: cancel,
+	}
+	p.subMu.Lock()
+	p.subscribers[s] = struct{}{}
+	p.subMu.Unlock()
+	return s
+}
+
+func (p *Poller) Unsubscribe(s *subscriber) {
+	s.cancel()
+	p.subMu.Lock()
+	delete(p.subscribers, s)
+	p.subMu.Unlock()
+}
+
+func (s *subscriber) Chan() <-chan []byte {
+	return s.ch
+}
+
+func (s *subscriber) Done() <-chan struct{} {
+	return s.ctx.Done()
+}
+
+func (p *Poller) broadcast(printerID int64, status *models.PrinterStatus) {
+	msg := struct {
+		PrinterID int64                `json:"printer_id"`
+		Status    *models.PrinterStatus `json:"status"`
+	}{printerID, status}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+
+	p.subMu.Lock()
+	defer p.subMu.Unlock()
+	for s := range p.subscribers {
+		select {
+		case s.ch <- data:
+		default:
+			// subscriber too slow, skip
+		}
+	}
+}
+
 func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, interval time.Duration) {
 	log.Printf("starting poller for printer %d (%s) every %s", id, name, interval)
 	ticker := time.NewTicker(interval)
@@ -181,4 +244,6 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 				status.Temps.BedActual, status.Temps.BedTarget)
 		}
 	}
+
+	p.broadcast(id, status)
 }
