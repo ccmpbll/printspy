@@ -30,9 +30,7 @@ function connectSSE() {
         updateHeaderCount();
     });
 
-    eventSource.addEventListener('error', () => {
-        // EventSource auto-reconnects
-    });
+    eventSource.addEventListener('error', () => {});
 }
 
 function updateHeaderCount() {
@@ -45,7 +43,6 @@ function updateHeaderCount() {
     count.textContent = `${connected}/${printers.length} connected`;
 }
 
-// Snapshot refresh on interval (SSE doesn't cover images)
 function refreshSnapshots() {
     pollCounter++;
     document.querySelectorAll('.webcam-img').forEach(img => {
@@ -69,21 +66,17 @@ function toggleWebcamMode(printerId) {
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
     if (card) {
         const printer = printers.find(p => p.config.id === printerId);
-        if (printer) {
-            card.outerHTML = renderPrinterCard(printer);
-        }
+        if (printer) card.outerHTML = renderPrinterCard(printer);
     }
 }
 
 function webcamSrc(printerId) {
     const mode = getWebcamMode(printerId);
-    if (mode === 'live') {
-        return `/api/webcam/${printerId}`;
-    }
+    if (mode === 'live') return `/api/webcam/${printerId}`;
     return `/api/snapshot/${printerId}?t=${pollCounter}`;
 }
 
-// Fetch full printer list (used after add/edit/delete)
+// Fetch full printer list
 async function fetchPrinters() {
     try {
         const resp = await fetch('/api/printers');
@@ -91,22 +84,19 @@ async function fetchPrinters() {
         printers = await resp.json();
         prevPrinterIDs = [];
         updateDashboard();
-    } catch (e) {
-        // server unreachable
-    }
+    } catch (e) {}
 }
 
 function updateDashboard() {
     const list = document.getElementById('printer-list');
-    const count = document.getElementById('printer-count');
 
     if (!printers || printers.length === 0) {
-        count.textContent = '';
+        updateHeaderCount();
         list.innerHTML = `
             <div class="empty-state">
                 <h2>No printers configured</h2>
-                <p>Add your first printer to get started.</p>
-                <button class="btn btn-primary" onclick="openAddModal()">+ Add printer</button>
+                <p>Open settings to add your first printer.</p>
+                <button class="btn btn-primary" onclick="openSettings()">Open settings</button>
             </div>`;
         prevPrinterIDs = [];
         return;
@@ -132,25 +122,13 @@ function renderPrinterCard(printer) {
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wcMode = getWebcamMode(cfg.id);
 
-    const idx = printers.indexOf(printer);
-    const isFirst = idx === 0;
-    const isLast = idx === printers.length - 1;
-
     return `
         <div class="printer-card" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
-                <div class="printer-reorder">
-                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},-1)" ${isFirst ? 'disabled' : ''} title="Move up">&#9650;</button>
-                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},1)" ${isLast ? 'disabled' : ''} title="Move down">&#9660;</button>
-                </div>
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 <span class="printer-url">${esc(cfg.url)}</span>
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">OctoPrint &#8599;</a>
-                <div class="printer-actions">
-                    <button class="btn btn-sm" onclick="openEditModal(${cfg.id})" title="Edit">&#9998;</button>
-                    <button class="btn btn-sm btn-danger" onclick="deletePrinter(${cfg.id})" title="Delete">&times;</button>
-                </div>
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper">
@@ -159,17 +137,16 @@ function renderPrinterCard(printer) {
                         <div class="webcam-placeholder" style="display:none">No camera</div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
-                        ${isPrinting ? `<img class="thumbnail-overlay" src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="" onerror="this.style.display='none'">` : ''}
                     </div>
                 </div>
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(status) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;
 }
 
-function renderPrintingStats(status) {
+function renderPrintingStats(cfg, status) {
     const job = status.job;
     const progress = Math.round(job.progress || 0);
     const elapsed = formatTime(job.elapsed_secs);
@@ -188,22 +165,29 @@ function renderPrintingStats(status) {
     }
 
     return `
-        <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
-        <div>
-            <div class="progress-row">
-                <span class="progress-label">Progress</span>
-                <span class="progress-value" data-field="progress-text">${progress}%</span>
+        <div class="stats-with-thumb">
+            <div class="stats-main">
+                <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
+                <div>
+                    <div class="progress-row">
+                        <span class="progress-label">Progress</span>
+                        <span class="progress-value" data-field="progress-text">${progress}%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
+                    </div>
+                </div>
+                <div class="stat-grid">
+                    <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
+                    <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
+                    <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
+                </div>
+                <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>
             </div>
-            <div class="progress-bar">
-                <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
+            <div class="thumb-beside">
+                <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
             </div>
-        </div>
-        <div class="stat-grid">
-            <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
-            <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
-            <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
-        </div>
-        <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>`;
+        </div>`;
 }
 
 function renderIdleStats(status, state) {
@@ -288,6 +272,44 @@ function setHTML(card, field, value) {
     if (el) el.innerHTML = value;
 }
 
+// Settings modal with printer management
+
+function openSettings() {
+    fetch('/api/settings').then(r => r.json()).then(settings => {
+        document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
+    });
+    renderSettingsPrinterList();
+    document.getElementById('settings-modal').classList.add('active');
+}
+
+function renderSettingsPrinterList() {
+    const list = document.getElementById('settings-printer-list');
+    if (!printers || printers.length === 0) {
+        list.innerHTML = '<div class="settings-empty">No printers configured yet.</div>';
+        return;
+    }
+    list.innerHTML = printers.map((p, idx) => {
+        const cfg = p.config;
+        const isFirst = idx === 0;
+        const isLast = idx === printers.length - 1;
+        return `
+            <div class="settings-printer-row">
+                <div class="settings-printer-reorder">
+                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},-1)" ${isFirst ? 'disabled' : ''} title="Move up">&#9650;</button>
+                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},1)" ${isLast ? 'disabled' : ''} title="Move down">&#9660;</button>
+                </div>
+                <div class="settings-printer-info">
+                    <span class="settings-printer-name">${esc(cfg.name)}</span>
+                    <span class="settings-printer-url">${esc(cfg.url)}</span>
+                </div>
+                <div class="settings-printer-actions">
+                    <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
+                    <button class="btn btn-sm btn-danger" onclick="deletePrinter(${cfg.id})" title="Delete">&times;</button>
+                </div>
+            </div>`;
+    }).join('');
+}
+
 // Printer reordering
 
 async function movePrinter(id, direction) {
@@ -301,6 +323,7 @@ async function movePrinter(id, direction) {
 
     prevPrinterIDs = [];
     updateDashboard();
+    renderSettingsPrinterList();
 
     await fetch('/api/printers/reorder', {
         method: 'POST',
@@ -309,7 +332,7 @@ async function movePrinter(id, direction) {
     });
 }
 
-// Modal handling
+// Add/Edit printer modals
 
 function openAddModal() {
     document.getElementById('modal-title').textContent = 'Add printer';
@@ -381,21 +404,19 @@ async function savePrinter(e) {
         }
         if (resp.ok) {
             closeModal();
-            fetchPrinters();
+            await fetchPrinters();
+            openSettings();
         }
-    } catch (e) {
-        // handle error
-    }
+    } catch (e) {}
 }
 
 async function deletePrinter(id) {
     if (!confirm('Remove this printer?')) return;
     try {
         await fetch(`/api/printers/${id}`, {method: 'DELETE'});
-        fetchPrinters();
-    } catch (e) {
-        // handle error
-    }
+        await fetchPrinters();
+        renderSettingsPrinterList();
+    } catch (e) {}
 }
 
 async function testConnection() {
@@ -440,14 +461,7 @@ async function testConnection() {
     }
 }
 
-// Settings
-
-function openSettings() {
-    fetch('/api/settings').then(r => r.json()).then(settings => {
-        document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
-        document.getElementById('settings-modal').classList.add('active');
-    });
-}
+// General settings
 
 async function saveSettings(e) {
     e.preventDefault();

@@ -102,6 +102,11 @@ header .printer-count {
     background: var(--bg-secondary);
 }
 
+.btn-icon {
+    padding: 0.4rem;
+    line-height: 0;
+}
+
 .btn-primary {
     background: var(--accent);
     color: white;
@@ -183,32 +188,6 @@ header .printer-count {
     display: flex;
     gap: 0.75rem;
     align-items: stretch;
-}
-
-/* Reorder buttons */
-.printer-reorder {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-
-.reorder-btn {
-    background: none;
-    border: none;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    font-size: 0.6rem;
-    padding: 0;
-    line-height: 1;
-}
-
-.reorder-btn:hover:not(:disabled) {
-    color: var(--text-primary);
-}
-
-.reorder-btn:disabled {
-    opacity: 0.2;
-    cursor: default;
 }
 
 /* Webcam */
@@ -298,19 +277,6 @@ header .printer-count {
     background: rgba(220,38,38,0.8);
 }
 
-/* Thumbnail overlay on webcam */
-.thumbnail-overlay {
-    position: absolute;
-    bottom: 6px;
-    right: 6px;
-    width: 64px;
-    height: 64px;
-    object-fit: contain;
-    background: rgba(0,0,0,0.6);
-    border-radius: 4px;
-    padding: 2px;
-}
-
 /* Collapsed webcam for idle printers */
 .webcam-idle {
     height: auto;
@@ -329,6 +295,38 @@ header .printer-count {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+}
+
+/* Stats with thumbnail beside */
+.stats-with-thumb {
+    display: flex;
+    gap: 0.75rem;
+    flex: 1;
+}
+
+.stats-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.thumb-beside {
+    width: 100px;
+    min-width: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.thumb-beside img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
 }
 
 /* Filename */
@@ -459,6 +457,10 @@ header .printer-count {
     overflow-y: auto;
 }
 
+.modal-wide {
+    max-width: 600px;
+}
+
 .modal h2 {
     font-size: 1rem;
     margin-bottom: 1rem;
@@ -526,10 +528,90 @@ header .printer-count {
     color: var(--error);
 }
 
-/* Printer actions */
-.printer-actions {
+/* Settings sections */
+.settings-section {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.settings-section h3 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.settings-printer-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.settings-printer-row:last-child {
+    border-bottom: none;
+}
+
+.settings-printer-reorder {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.reorder-btn {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    font-size: 0.6rem;
+    padding: 0;
+    line-height: 1;
+}
+
+.reorder-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+}
+
+.reorder-btn:disabled {
+    opacity: 0.2;
+    cursor: default;
+}
+
+.settings-printer-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.settings-printer-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    display: block;
+}
+
+.settings-printer-url {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+}
+
+.settings-printer-actions {
     display: flex;
     gap: 0.25rem;
+}
+
+.settings-empty {
+    font-size: 0.85rem;
+    color: var(--text-tertiary);
+    padding: 0.5rem 0;
 }
 
 /* Responsive */
@@ -559,9 +641,14 @@ header .printer-count {
         height: 200px;
     }
 
-    .thumbnail-overlay {
-        width: 80px;
-        height: 80px;
+    .stats-with-thumb {
+        flex-direction: column;
+    }
+
+    .thumb-beside {
+        width: 100%;
+        min-width: unset;
+        height: 120px;
     }
 
     .stat-grid {
@@ -601,5 +688,15 @@ header .printer-count {
     .form-actions .btn {
         width: 100%;
         justify-content: center;
+    }
+
+    .settings-printer-row {
+        flex-wrap: wrap;
+    }
+
+    .settings-printer-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 0.25rem;
     }
 }
