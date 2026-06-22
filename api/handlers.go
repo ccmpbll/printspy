@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
@@ -19,10 +22,23 @@ type Handler struct {
 	db     *db.DB
 	poller *poller.Poller
 	ctx    context.Context
+
+	errLogMu   sync.Mutex
+	errLogLast map[string]time.Time
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
-	return &Handler{db: database, poller: p, ctx: ctx}
+	return &Handler{db: database, poller: p, ctx: ctx, errLogLast: make(map[string]time.Time)}
+}
+
+func (h *Handler) logOnce(key string, interval time.Duration, format string, args ...any) {
+	h.errLogMu.Lock()
+	defer h.errLogMu.Unlock()
+	if last, ok := h.errLogLast[key]; ok && time.Since(last) < interval {
+		return
+	}
+	h.errLogLast[key] = time.Now()
+	log.Printf(format, args...)
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -284,14 +300,14 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := (&http.Client{}).Do(req)
 	if err != nil {
-		log.Printf("[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
+		h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
 		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
+		h.logOnce(fmt.Sprintf("snapshot-status-%d", id), 30*time.Second, "[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
 	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -176,18 +177,38 @@ func (p *Plugin) fetchWebcamConfig(ctx context.Context) {
 	p.wcMu.Unlock()
 }
 
-func (p *Plugin) resolveURL(url string) string {
-	if url == "" {
+func (p *Plugin) resolveURL(rawURL string) string {
+	if rawURL == "" {
 		return ""
 	}
-	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
-		return url
-	}
-	if strings.HasPrefix(url, "/") {
+
+	// Handle relative paths
+	if strings.HasPrefix(rawURL, "/") {
 		base := strings.TrimRight(p.config.URL, "/")
-		return base + url
+		return base + rawURL
 	}
-	return url
+
+	// For absolute URLs, replace loopback addresses with the printer's actual host
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		parsed, err := url.Parse(rawURL)
+		if err != nil {
+			return rawURL
+		}
+		host := parsed.Hostname()
+		if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+			printerParsed, err := url.Parse(p.config.URL)
+			if err != nil {
+				return rawURL
+			}
+			parsed.Host = printerParsed.Host
+			resolved := parsed.String()
+			log.Printf("[octoprint:%s] rewrote loopback URL %s -> %s", p.config.URL, rawURL, resolved)
+			return resolved
+		}
+		return rawURL
+	}
+
+	return rawURL
 }
 
 func (p *Plugin) GetWebcamURL() string {
