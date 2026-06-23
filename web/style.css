@@ -690,12 +690,26 @@ header .printer-count {
         height: 200px;
     }
 
+    .file-and-thumb {
+        gap: 0.5rem;
+    }
+
+    .thumb-beside {
+        width: 64px;
+        min-width: 64px;
+    }
+
     .stat-grid {
         grid-template-columns: repeat(3, 1fr);
     }
 
     .stat-grid-auto {
         grid-template-columns: repeat(2, 1fr);
+    }
+
+    .connection-banner {
+        font-size: 0.75rem;
+        padding: 0.4rem 0.75rem;
     }
 }
 
@@ -720,6 +734,15 @@ header .printer-count {
         height: 180px;
     }
 
+    .thumb-beside {
+        width: 56px;
+        min-width: 56px;
+    }
+
+    .print-filename {
+        font-size: 0.7rem;
+    }
+
     .form-actions {
         flex-direction: column;
     }
@@ -737,5 +760,9 @@ header .printer-count {
         width: 100%;
         justify-content: flex-end;
         margin-top: 0.25rem;
+    }
+
+    .modal-wide {
+        max-width: 100%;
     }
 }
