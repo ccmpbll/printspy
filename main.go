@@ -18,6 +18,8 @@ import (
 	_ "github.com/ccmpbll/printspy/plugin/octoprint"
 )
 
+var version = "dev"
+
 func main() {
 	port := 8080
 	dataDir := "/data"
@@ -53,6 +55,10 @@ func main() {
 	handler := api.New(ctx, database, p)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"version":%q}`, version)
+	})
 
 	webDir := findWebDir()
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))

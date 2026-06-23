@@ -6,7 +6,8 @@ WORKDIR /build
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN go mod tidy && CGO_ENABLED=1 go build -o printspy -ldflags="-s -w" .
+ARG VERSION=dev
+RUN go mod tidy && CGO_ENABLED=1 go build -o printspy -ldflags="-s -w -X main.version=${VERSION}" .
 
 FROM alpine:3.21
 RUN apk add --no-cache sqlite-libs ca-certificates
