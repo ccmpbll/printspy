@@ -725,10 +725,6 @@ header .printer-count {
         font-size: 1.1rem;
     }
 
-    .printer-link {
-        display: none;
-    }
-
     .printer-name {
         font-size: 0.85rem;
     }
