@@ -166,14 +166,16 @@ function renderPrintingStats(cfg, status) {
     const eta = computeETA(job.remaining_secs);
     const temps = status.temps;
 
-    const infoCells = [];
-    infoCells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>`);
-    infoCells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>`);
+    const tempCells = [];
+    tempCells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>`);
+    tempCells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>`);
     if (temps.has_chamber) {
-        infoCells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
+        tempCells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
     }
+
+    let layerCell = '';
     if (job.total_layers > 0) {
-        infoCells.push(`<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`);
+        layerCell = `<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`;
     }
 
     return `
@@ -195,12 +197,13 @@ function renderPrintingStats(cfg, status) {
             </div>
         </div>
         <div class="stat-rows">
-            <div class="stat-grid">
+            <div class="stat-grid stat-grid-auto">
                 <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
                 <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
                 <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
+                ${layerCell}
             </div>
-            <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>
+            <div class="stat-grid stat-grid-auto">${tempCells.join('')}</div>
         </div>`;
 }
 
