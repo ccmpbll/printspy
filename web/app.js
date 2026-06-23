@@ -227,7 +227,7 @@ function renderIdleStats(status, state) {
     }
 
     let tempsHTML = '';
-    if (temps) {
+    if (temps && state !== 'offline' && state !== 'disconnected') {
         const cells = [];
         cells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>`);
         cells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>`);
@@ -251,7 +251,10 @@ function updateCard(card, printer) {
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wasPrinting = (prevState === 'printing' || prevState === 'paused');
 
-    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting)) {
+    const wasDown = prevState === 'offline' || prevState === 'disconnected';
+    const isDown = state === 'offline' || state === 'disconnected';
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown)) {
         card.outerHTML = renderPrinterCard(printer);
         return;
     }
