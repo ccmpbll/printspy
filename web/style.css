@@ -343,6 +343,12 @@ header .printer-count {
     gap: 0.5rem;
 }
 
+.stat-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
 /* Filename + progress with thumbnail beside */
 .file-and-thumb {
     display: flex;
@@ -710,6 +716,16 @@ header .printer-count {
         gap: 0.35rem;
     }
 
+    .stat-rows {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.3rem;
+    }
+
+    .stat-rows .stat-grid {
+        display: contents;
+    }
+
     .stat-grid {
         grid-template-columns: repeat(3, 1fr);
         gap: 0.3rem;
@@ -736,6 +752,11 @@ header .printer-count {
     }
 
     .printer-stats {
+        gap: 0.25rem;
+    }
+
+    .stat-rows {
+        grid-template-columns: repeat(2, 1fr);
         gap: 0.25rem;
     }
 

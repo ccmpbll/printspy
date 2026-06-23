@@ -194,12 +194,14 @@ function renderPrintingStats(cfg, status) {
                 <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
             </div>
         </div>
-        <div class="stat-grid">
-            <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
-            <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
-            <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
-        </div>
-        <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>`;
+        <div class="stat-rows">
+            <div class="stat-grid">
+                <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
+                <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
+                <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
+            </div>
+            <div class="stat-grid stat-grid-auto">${infoCells.join('')}</div>
+        </div>`;
 }
 
 function renderIdleStats(status, state) {
