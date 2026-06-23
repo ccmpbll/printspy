@@ -13,16 +13,16 @@ const (
 )
 
 type PrinterConfig struct {
-	ID           int64  `json:"id" yaml:"-"`
-	Name         string `json:"name" yaml:"name"`
-	Type         string `json:"type" yaml:"type"`
-	URL          string `json:"url" yaml:"url"`
-	APIKey       string `json:"api_key" yaml:"api_key"`
-	Enabled      bool   `json:"enabled" yaml:"enabled"`
-	PollInterval int    `json:"poll_interval" yaml:"poll_interval"`
-	SortOrder    int    `json:"sort_order" yaml:"-"`
-	CreatedAt    string `json:"created_at" yaml:"-"`
-	UpdatedAt    string `json:"updated_at" yaml:"-"`
+	ID           int64  `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	URL          string `json:"url"`
+	APIKey       string `json:"api_key"`
+	Enabled      bool   `json:"enabled"`
+	PollInterval int    `json:"poll_interval"`
+	SortOrder    int    `json:"sort_order"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 type Temperatures struct {

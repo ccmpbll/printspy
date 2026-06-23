@@ -56,35 +56,7 @@ volumes:
 
 ## Configuration
 
-### Web UI (recommended)
-
-All printer management is done through the dashboard. Add, edit, and remove printers without touching any files.
-
-### YAML config (optional)
-
-Power users can define printers in a config file. Mount it into the container and printers will be seeded into the database on first run:
-
-```yaml
-server:
-  port: 8080
-  data_dir: /data
-
-printers:
-  - name: "My Printer"
-    type: octoprint
-    url: "http://192.168.1.40"
-    api_key: "YOUR_OCTOPRINT_API_KEY"
-    poll_interval: 10
-```
-
-```bash
-docker run -d \
-  --name printspy \
-  -p 8080:8080 \
-  -v printspy-data:/data \
-  -v ./config.yaml:/etc/printspy/config.yaml \
-  ccmpbll/printspy:latest
-```
+All printer management is done through the web UI — open the settings page to add, edit, reorder, and remove printers. No config files needed.
 
 ### Environment variables
 
@@ -92,7 +64,6 @@ docker run -d \
 |----------|---------|-------------|
 | `PRINTSPY_PORT` | `8080` | HTTP server port |
 | `PRINTSPY_DATA_DIR` | `/data` | SQLite database location |
-| `PRINTSPY_CONFIG` | — | Path to YAML config file |
 
 ## Getting your OctoPrint API key
 

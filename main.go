@@ -8,10 +8,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"github.com/ccmpbll/printspy/api"
-	"github.com/ccmpbll/printspy/config"
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/poller"
 
@@ -19,23 +19,28 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load("")
-	if err != nil {
-		log.Printf("warning: config load: %v (using defaults)", err)
+	port := 8080
+	dataDir := "/data"
+
+	if envPort := os.Getenv("PRINTSPY_PORT"); envPort != "" {
+		if p, err := strconv.Atoi(envPort); err == nil && p > 0 {
+			port = p
+		}
+	}
+	if envDataDir := os.Getenv("PRINTSPY_DATA_DIR"); envDataDir != "" {
+		dataDir = envDataDir
 	}
 
-	if err := os.MkdirAll(cfg.Server.DataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		log.Fatalf("failed to create data directory: %v", err)
 	}
 
-	dbPath := filepath.Join(cfg.Server.DataDir, "printspy.db")
+	dbPath := filepath.Join(dataDir, "printspy.db")
 	database, err := db.Open(dbPath)
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
-
-	seedFromConfig(database, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -52,7 +57,7 @@ func main() {
 	webDir := findWebDir()
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	addr := fmt.Sprintf(":%d", port)
 	server := &http.Server{Addr: addr, Handler: mux}
 
 	go func() {
@@ -67,31 +72,6 @@ func main() {
 	log.Printf("PrintSpy starting on http://0.0.0.0%s", addr)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
-	}
-}
-
-func seedFromConfig(database *db.DB, cfg *config.Config) {
-	for _, p := range cfg.Printers {
-		exists, err := database.PrinterExistsByURL(p.URL)
-		if err != nil {
-			log.Printf("warning: checking printer existence: %v", err)
-			continue
-		}
-		if exists {
-			continue
-		}
-		if p.Type == "" {
-			p.Type = "octoprint"
-		}
-		if p.PollInterval <= 0 {
-			p.PollInterval = 10
-		}
-		p.Enabled = true
-		if err := database.CreatePrinter(&p); err != nil {
-			log.Printf("warning: seeding printer %s: %v", p.Name, err)
-		} else {
-			log.Printf("seeded printer from config: %s (%s)", p.Name, p.URL)
-		}
 	}
 }
 
