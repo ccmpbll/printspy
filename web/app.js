@@ -48,7 +48,7 @@ function updateHeaderCount() {
         count.textContent = '';
         return;
     }
-    const connected = printers.filter(p => p.status && p.status.state !== 'offline').length;
+    const connected = printers.filter(p => p.status && p.status.state !== 'offline' && p.status.state !== 'disconnected').length;
     count.textContent = `${connected}/${printers.length} connected`;
 }
 
@@ -127,9 +127,14 @@ function renderPrinterCard(printer) {
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
-    const stateLabel = state === 'error' && status && status.state_message
-        ? `Error: ${status.state_message}`
-        : state.charAt(0).toUpperCase() + state.slice(1);
+    let stateLabel;
+    if (state === 'error' && status && status.state_message) {
+        stateLabel = `Error: ${status.state_message}`;
+    } else if (state === 'disconnected') {
+        stateLabel = 'Printer disconnected';
+    } else {
+        stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+    }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wcMode = getWebcamMode(cfg.id);
     const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
@@ -214,7 +219,7 @@ function renderIdleStats(status, state) {
     if (state === 'offline') {
         stateMsg = detailMsg || 'Unable to reach OctoPrint';
     } else if (state === 'disconnected') {
-        stateMsg = detailMsg || 'Printer not connected to OctoPrint';
+        stateMsg = 'Printer disconnected';
     } else if (state === 'error') {
         stateMsg = detailMsg || 'Printer reported an error';
     } else {
@@ -264,7 +269,7 @@ function updateCard(card, printer) {
                              state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
             idleMsg.className = msgClass;
             if (state === 'offline') idleMsg.textContent = detailMsg || 'Unable to reach OctoPrint';
-            else if (state === 'disconnected') idleMsg.textContent = detailMsg || 'Printer not connected to OctoPrint';
+            else if (state === 'disconnected') idleMsg.textContent = 'Printer disconnected';
             else if (state === 'error') idleMsg.textContent = detailMsg || 'Printer reported an error';
             else idleMsg.textContent = 'Ready for next job';
         }
