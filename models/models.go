@@ -47,10 +47,11 @@ type JobInfo struct {
 }
 
 type PrinterStatus struct {
-	State       PrinterState `json:"state"`
-	Temps       Temperatures `json:"temps"`
-	Job         *JobInfo     `json:"job"`
-	LastUpdated time.Time    `json:"last_updated"`
+	State        PrinterState `json:"state"`
+	StateMessage string       `json:"state_message,omitempty"`
+	Temps        Temperatures `json:"temps"`
+	Job          *JobInfo     `json:"job"`
+	LastUpdated  time.Time    `json:"last_updated"`
 }
 
 type PrinterWithStatus struct {

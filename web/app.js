@@ -16,6 +16,7 @@ function connectSSE() {
         printers.forEach(p => { if (p.status) statusCache[p.config.id] = p.status; });
         prevPrinterIDs = [];
         updateDashboard();
+        showConnectionBanner(false);
     });
 
     eventSource.addEventListener('status', (e) => {
@@ -28,9 +29,17 @@ function connectSSE() {
             if (card) updateCard(card, printer);
         }
         updateHeaderCount();
+        showConnectionBanner(false);
     });
 
-    eventSource.addEventListener('error', () => {});
+    eventSource.addEventListener('error', () => {
+        showConnectionBanner(true);
+    });
+}
+
+function showConnectionBanner(show) {
+    const banner = document.getElementById('connection-banner');
+    if (banner) banner.style.display = show ? 'flex' : 'none';
 }
 
 function updateHeaderCount() {
@@ -118,12 +127,15 @@ function renderPrinterCard(printer) {
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
-    const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+    const stateLabel = state === 'error' && status && status.state_message
+        ? `Error: ${status.state_message}`
+        : state.charAt(0).toUpperCase() + state.slice(1);
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wcMode = getWebcamMode(cfg.id);
+    const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : ''}`;
 
     return `
-        <div class="printer-card" data-printer-id="${cfg.id}" data-state="${state}">
+        <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
@@ -134,7 +146,7 @@ function renderPrinterCard(printer) {
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
                         <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';${isPrinting ? '' : "this.parentElement.classList.add('webcam-collapsed');"}">
-                        <div class="webcam-placeholder" style="display:none">No camera</div>
+                        <div class="webcam-placeholder" style="display:none">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
                     </div>
@@ -192,9 +204,15 @@ function renderPrintingStats(cfg, status) {
 
 function renderIdleStats(status, state) {
     const temps = status ? status.temps : null;
-    const stateMsg = state === 'offline' ? 'Printer is offline or unreachable' :
-                     state === 'error' ? 'Printer reported an error' :
-                     'Ready for next job';
+    const detailMsg = status && status.state_message ? status.state_message : '';
+    let stateMsg;
+    if (state === 'offline') {
+        stateMsg = detailMsg || 'Printer is offline or unreachable';
+    } else if (state === 'error') {
+        stateMsg = detailMsg || 'Printer reported an error';
+    } else {
+        stateMsg = 'Ready for next job';
+    }
 
     let tempsHTML = '';
     if (temps) {
@@ -207,7 +225,9 @@ function renderIdleStats(status, state) {
         tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
     }
 
-    return `<div class="idle-message" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
+    const msgClass = state === 'error' ? 'idle-message msg-error' :
+                     state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
+    return `<div class="${msgClass}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
 }
 
 function updateCard(card, printer) {

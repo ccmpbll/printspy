@@ -89,16 +89,21 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	if err != nil {
 		log.Printf("[octoprint:%s] failed to get printer state: %v", p.config.URL, err)
 		status.State = models.StateOffline
+		status.StateMessage = "Unable to reach printer"
 		return status, nil
 	}
 
 	var printerResp printerResponse
 	if err := json.Unmarshal(printerData, &printerResp); err != nil {
 		status.State = models.StateOffline
+		status.StateMessage = "Invalid response from printer"
 		return status, nil
 	}
 
 	status.State = mapState(printerResp.State.Flags)
+	if status.State == models.StateError {
+		status.StateMessage = printerResp.State.Text
+	}
 	status.Temps = models.Temperatures{
 		HotendActual: printerResp.Temperature.Tool0.Actual,
 		HotendTarget: printerResp.Temperature.Tool0.Target,
@@ -430,6 +435,7 @@ func mapState(flags stateFlags) models.PrinterState {
 
 type printerResponse struct {
 	State struct {
+		Text  string     `json:"text"`
 		Flags stateFlags `json:"flags"`
 	} `json:"state"`
 	Temperature struct {
