@@ -12,17 +12,29 @@ PrintSpy connects to your 3D printers and displays their status on a single dash
 - Live webcam feed or periodic snapshots (toggleable per printer)
 - GCode thumbnail for the current print
 - Print progress, elapsed time, remaining time, and ETA
-- Hotend and bed temperatures
-- Layer count and filament usage
+- Hotend, bed, and chamber temperatures (chamber shown when detected)
+- Layer progress (when DisplayLayerProgress plugin is installed)
 - Direct link to each printer's native web interface
 
-Printers are configured through the web UI — no config files required. Just run the container and start adding printers.
+Status updates are pushed in real-time via Server-Sent Events (SSE). Printers are managed through the settings page — no config files required. Just run the container, open the browser, and add your printers.
+
+## Features
+
+- **Real-time updates** via SSE — no manual refresh needed
+- **Auto-detection** of camera stack (mjpg-streamer / camera-streamer) and printer name
+- **Plugin detection** — queries installed OctoPrint plugins to enable features like layer progress
+- **Snapshot/live toggle** — choose between periodic snapshots or live MJPEG stream per printer
+- **Printer reordering** — arrange printers in any order from the settings page
+- **Responsive layout** — works on desktop, tablet, and mobile
+- **Dark mode** — follows system preference
+- **Error reporting** — connection status banner, OctoPrint error passthrough, camera status differentiation
+- **Multi-arch** — runs on x86 and ARM (Raspberry Pi)
 
 ## Supported platforms
 
 - **OctoPrint** — fully supported today
 - **PrusaLink** — planned
-- **Klipper/Moonraker** — planned, but I don't have any printers running Klipper...
+- **Klipper/Moonraker** — planned
 
 PrintSpy uses a plugin architecture, so adding support for new printer platforms is straightforward.
 
@@ -36,7 +48,7 @@ docker run -d \
   ccmpbll/printspy:latest
 ```
 
-Open `http://localhost:8080` and click **Add printer** to get started. You'll need your printer's URL and API key.
+Open `http://localhost:8080`, click the settings gear, and add your first printer. You'll need the printer's URL and OctoPrint API key.
 
 ### Docker Compose
 
@@ -76,7 +88,7 @@ All printer management is done through the web UI — open the settings page to 
 - **Go** backend — single binary, low resource usage
 - **SQLite** — no external database needed
 - **Vanilla HTML/CSS/JS** frontend — no build step, no framework
-- **Docker** — single container, ~20MB image
+- **Docker** — multi-arch container (amd64 + arm64)
 
 ## Building from source
 
