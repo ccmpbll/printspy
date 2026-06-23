@@ -3,10 +3,10 @@ FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
 WORKDIR /build
-COPY go.mod go.sum ./
+COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o printspy -ldflags="-s -w" .
+RUN go mod tidy && CGO_ENABLED=1 go build -o printspy -ldflags="-s -w" .
 
 FROM alpine:3.21
 RUN apk add --no-cache sqlite-libs ca-certificates
