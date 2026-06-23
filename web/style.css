@@ -171,9 +171,9 @@ header .printer-count {
 }
 
 .printer-card.card-offline {
-    border-color: var(--text-tertiary);
-    border-left: 3px solid var(--text-tertiary);
-    opacity: 0.7;
+    border-color: var(--warning);
+    border-left: 3px solid var(--warning);
+    opacity: 0.75;
 }
 
 .printer-card.card-disconnected {
@@ -206,7 +206,7 @@ header .printer-count {
 .state-idle { background: var(--bg-secondary); color: var(--text-secondary); }
 .state-paused { background: var(--warning-bg); color: var(--warning); }
 .state-error { background: var(--error-bg); color: var(--error); }
-.state-offline { background: var(--bg-tertiary); color: var(--text-tertiary); }
+.state-offline { background: var(--warning-bg); color: var(--warning); }
 .state-disconnected { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 .printer-url {
@@ -472,8 +472,8 @@ header .printer-count {
 }
 
 .idle-message.msg-offline {
-    background: var(--bg-tertiary);
-    color: var(--text-tertiary);
+    background: var(--warning-bg);
+    color: var(--warning);
 }
 
 .idle-message.msg-disconnected {
