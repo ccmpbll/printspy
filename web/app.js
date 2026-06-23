@@ -552,7 +552,7 @@ fetch('/api/settings').then(r => r.json()).then(settings => {
 
 fetch('/api/version').then(r => r.json()).then(data => {
     const el = document.getElementById('app-version');
-    if (el && data.version) el.textContent = data.version;
+    if (el && data.version) el.textContent = 'v' + data.version;
 }).catch(() => {});
 
 connectSSE();
