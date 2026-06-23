@@ -77,13 +77,6 @@ header .app-version {
     margin-bottom: 2px;
 }
 
-header .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--success);
-}
-
 header .printer-count {
     font-size: 0.8rem;
     color: var(--text-secondary);
