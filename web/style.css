@@ -706,12 +706,18 @@ header .printer-count {
         min-width: 64px;
     }
 
+    .printer-stats {
+        gap: 0.35rem;
+    }
+
     .stat-grid {
         grid-template-columns: repeat(3, 1fr);
+        gap: 0.3rem;
     }
 
     .stat-grid-auto {
         grid-template-columns: repeat(2, 1fr);
+        gap: 0.3rem;
     }
 
     .connection-banner {
@@ -729,8 +735,17 @@ header .printer-count {
         font-size: 0.85rem;
     }
 
+    .printer-stats {
+        gap: 0.25rem;
+    }
+
     .stat-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 0.25rem;
+    }
+
+    .stat-grid-auto {
+        gap: 0.25rem;
     }
 
     .webcam-container {
