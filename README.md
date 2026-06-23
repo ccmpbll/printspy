@@ -33,8 +33,6 @@ Status updates are pushed in real-time via Server-Sent Events (SSE). Printers ar
 ## Supported platforms
 
 - **OctoPrint** — fully supported today
-- **PrusaLink** — planned
-- **Klipper/Moonraker** — planned
 
 PrintSpy uses a plugin architecture, so adding support for new printer platforms is straightforward.
 
