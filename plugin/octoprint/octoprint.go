@@ -85,11 +85,30 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		p.refreshPlugins(ctx)
 	}
 
-	printerData, err := p.doGet(ctx, "/api/printer?exclude=sd")
+	printerData, statusCode, err := p.doGetRaw(ctx, "/api/printer?exclude=sd")
 	if err != nil {
 		log.Printf("[octoprint:%s] failed to get printer state: %v", p.config.URL, err)
 		status.State = models.StateOffline
-		status.StateMessage = "Unable to reach printer"
+		status.StateMessage = "Unable to reach OctoPrint"
+		return status, nil
+	}
+
+	if statusCode == http.StatusConflict {
+		status.State = models.StateDisconnected
+		status.StateMessage = "Printer not connected to OctoPrint"
+		connData, err := p.doGet(ctx, "/api/connection")
+		if err == nil {
+			var connResp connectionResponse
+			if err := json.Unmarshal(connData, &connResp); err == nil && connResp.Current.State != "" {
+				status.StateMessage = connResp.Current.State
+			}
+		}
+		return status, nil
+	}
+
+	if statusCode != http.StatusOK {
+		status.State = models.StateOffline
+		status.StateMessage = fmt.Sprintf("OctoPrint returned %d", statusCode)
 		return status, nil
 	}
 
@@ -396,24 +415,35 @@ func (p *Plugin) GetThumbnailURL(ctx context.Context) string {
 }
 
 func (p *Plugin) doGet(ctx context.Context, path string) ([]byte, error) {
+	data, statusCode, err := p.doGetRaw(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if statusCode != http.StatusOK {
+		return nil, fmt.Errorf("octoprint API returned %d", statusCode)
+	}
+	return data, nil
+}
+
+func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error) {
 	url := strings.TrimRight(p.config.URL, "/") + path
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("X-Api-Key", p.config.APIKey)
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("octoprint API returned %d", resp.StatusCode)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, err
 	}
-
-	return io.ReadAll(resp.Body)
+	return data, resp.StatusCode, nil
 }
 
 func mapState(flags stateFlags) models.PrinterState {
@@ -526,6 +556,12 @@ type pluginManagerResponse struct {
 		Name    string `json:"name"`
 		Enabled bool   `json:"enabled"`
 	} `json:"plugins"`
+}
+
+type connectionResponse struct {
+	Current struct {
+		State string `json:"state"`
+	} `json:"current"`
 }
 
 type layerProgressResponse struct {

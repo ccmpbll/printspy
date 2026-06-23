@@ -5,11 +5,12 @@ import "time"
 type PrinterState string
 
 const (
-	StateIdle     PrinterState = "idle"
-	StatePrinting PrinterState = "printing"
-	StatePaused   PrinterState = "paused"
-	StateError    PrinterState = "error"
-	StateOffline  PrinterState = "offline"
+	StateIdle         PrinterState = "idle"
+	StatePrinting     PrinterState = "printing"
+	StatePaused       PrinterState = "paused"
+	StateError        PrinterState = "error"
+	StateOffline      PrinterState = "offline"
+	StateDisconnected PrinterState = "disconnected"
 )
 
 type PrinterConfig struct {

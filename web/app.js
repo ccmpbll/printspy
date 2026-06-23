@@ -132,7 +132,7 @@ function renderPrinterCard(printer) {
         : state.charAt(0).toUpperCase() + state.slice(1);
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
     const wcMode = getWebcamMode(cfg.id);
-    const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : ''}`;
+    const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
@@ -212,7 +212,9 @@ function renderIdleStats(status, state) {
     const detailMsg = status && status.state_message ? status.state_message : '';
     let stateMsg;
     if (state === 'offline') {
-        stateMsg = detailMsg || 'Printer is offline or unreachable';
+        stateMsg = detailMsg || 'Unable to reach OctoPrint';
+    } else if (state === 'disconnected') {
+        stateMsg = detailMsg || 'Printer not connected to OctoPrint';
     } else if (state === 'error') {
         stateMsg = detailMsg || 'Printer reported an error';
     } else {
@@ -231,6 +233,7 @@ function renderIdleStats(status, state) {
     }
 
     const msgClass = state === 'error' ? 'idle-message msg-error' :
+                     state === 'disconnected' ? 'idle-message msg-disconnected' :
                      state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
     return `<div class="${msgClass}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
 }
@@ -249,6 +252,23 @@ function updateCard(card, printer) {
     }
 
     card.dataset.state = state;
+
+    // Update card border class on state change
+    if (prevState !== state) {
+        card.className = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
+        const idleMsg = card.querySelector('[data-field="idle-msg"]');
+        if (idleMsg) {
+            const detailMsg = status && status.state_message ? status.state_message : '';
+            const msgClass = state === 'error' ? 'idle-message msg-error' :
+                             state === 'disconnected' ? 'idle-message msg-disconnected' :
+                             state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
+            idleMsg.className = msgClass;
+            if (state === 'offline') idleMsg.textContent = detailMsg || 'Unable to reach OctoPrint';
+            else if (state === 'disconnected') idleMsg.textContent = detailMsg || 'Printer not connected to OctoPrint';
+            else if (state === 'error') idleMsg.textContent = detailMsg || 'Printer reported an error';
+            else idleMsg.textContent = 'Ready for next job';
+        }
+    }
 
     const stateEl = card.querySelector('[data-field="state"]');
     if (stateEl) {
