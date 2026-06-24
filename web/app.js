@@ -131,7 +131,7 @@ function renderPrinterCard(printer) {
     if (state === 'error' && status && status.state_message) {
         stateLabel = `Error: ${status.state_message}`;
     } else if (state === 'disconnected') {
-        stateLabel = 'Printer disconnected';
+        stateLabel = 'Disconnected';
     } else {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
@@ -237,8 +237,11 @@ function renderIdleStats(status, state) {
         tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
     }
 
+    if (state === 'disconnected') {
+        return '';
+    }
+
     const msgClass = state === 'error' ? 'idle-message msg-error' :
-                     state === 'disconnected' ? 'idle-message msg-disconnected' :
                      state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
     return `<div class="${msgClass}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
 }
