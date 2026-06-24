@@ -52,6 +52,7 @@ type PrinterStatus struct {
 	StateMessage string       `json:"state_message,omitempty"`
 	Temps        Temperatures `json:"temps"`
 	Job          *JobInfo     `json:"job"`
+	ThumbnailURL string       `json:"thumbnail_url,omitempty"`
 	LastUpdated  time.Time    `json:"last_updated"`
 }
 

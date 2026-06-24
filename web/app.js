@@ -32,6 +32,10 @@ function connectSSE() {
         showConnectionBanner(false);
     });
 
+    eventSource.addEventListener('refresh', () => {
+        fetchPrinters();
+    });
+
     eventSource.addEventListener('error', () => {
         showConnectionBanner(true);
     });

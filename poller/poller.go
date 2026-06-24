@@ -130,11 +130,11 @@ func (p *Poller) GetSnapshotURL(id int64) string {
 	return ""
 }
 
-func (p *Poller) GetThumbnailURL(ctx context.Context, id int64) string {
+func (p *Poller) GetThumbnailURL(id int64) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if pp, ok := p.printers[id]; ok {
-		return pp.plugin.GetThumbnailURL(ctx)
+	if status, ok := p.cache[id]; ok {
+		return status.ThumbnailURL
 	}
 	return ""
 }
@@ -167,6 +167,18 @@ func (s *subscriber) Chan() <-chan []byte {
 
 func (s *subscriber) Done() <-chan struct{} {
 	return s.ctx.Done()
+}
+
+func (p *Poller) BroadcastRefresh() {
+	data := []byte(`{"refresh":true}`)
+	p.subMu.Lock()
+	defer p.subMu.Unlock()
+	for s := range p.subscribers {
+		select {
+		case s.ch <- data:
+		default:
+		}
+	}
 }
 
 func (p *Poller) broadcast(printerID int64, status *models.PrinterStatus) {

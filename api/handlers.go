@@ -41,10 +41,18 @@ func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
 func (h *Handler) logOnce(key string, interval time.Duration, format string, args ...any) {
 	h.errLogMu.Lock()
 	defer h.errLogMu.Unlock()
-	if last, ok := h.errLogLast[key]; ok && time.Since(last) < interval {
+	now := time.Now()
+	if last, ok := h.errLogLast[key]; ok && now.Sub(last) < interval {
 		return
 	}
-	h.errLogLast[key] = time.Now()
+	if len(h.errLogLast) > 100 {
+		for k, t := range h.errLogLast {
+			if now.Sub(t) > interval {
+				delete(h.errLogLast, k)
+			}
+		}
+	}
+	h.errLogLast[key] = now
 	log.Printf(format, args...)
 }
 
@@ -114,16 +122,12 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.poller.AddPrinter(h.ctx, p)
+	h.poller.BroadcastRefresh()
 	w.WriteHeader(http.StatusCreated)
 	jsonResponse(w, p)
 }
 
 func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
-	// Skip if this is the reorder endpoint
-	if strings.HasSuffix(r.URL.Path, "/reorder") {
-		return
-	}
-
 	path := strings.TrimPrefix(r.URL.Path, "/api/printers/")
 	parts := strings.SplitN(path, "/", 2)
 
@@ -172,6 +176,7 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 	if p.Enabled {
 		h.poller.AddPrinter(h.ctx, p)
 	}
+	h.poller.BroadcastRefresh()
 	jsonResponse(w, p)
 }
 
@@ -181,6 +186,7 @@ func (h *Handler) deletePrinter(w http.ResponseWriter, r *http.Request, id int64
 		jsonError(w, "failed to delete printer", http.StatusInternalServerError)
 		return
 	}
+	h.poller.BroadcastRefresh()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -279,6 +285,7 @@ func (h *Handler) handleReorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.poller.BroadcastRefresh()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -320,7 +327,11 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-sub.Done():
 			return
 		case data := <-sub.Chan():
-			fmt.Fprintf(w, "event: status\ndata: %s\n\n", data)
+			if strings.Contains(string(data), `"refresh"`) {
+				fmt.Fprintf(w, "event: refresh\ndata: %s\n\n", data)
+			} else {
+				fmt.Fprintf(w, "event: status\ndata: %s\n\n", data)
+			}
 			flusher.Flush()
 		}
 	}
@@ -478,7 +489,7 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thumbURL := h.poller.GetThumbnailURL(r.Context(), id)
+	thumbURL := h.poller.GetThumbnailURL(id)
 	if thumbURL == "" {
 		http.Error(w, "no thumbnail available", http.StatusNotFound)
 		return

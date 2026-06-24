@@ -149,6 +149,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 			if jobResp.Job.Filament.Tool0.Length > 0 {
 				status.Job.FilamentUsedMM = jobResp.Job.Filament.Tool0.Length
 			}
+			status.ThumbnailURL = p.fetchThumbnailURL(ctx, jobResp)
 		}
 	}
 
@@ -378,7 +379,10 @@ func (p *Plugin) GetThumbnailURL(ctx context.Context) string {
 	if err := json.Unmarshal(jobData, &jobResp); err != nil {
 		return ""
 	}
+	return p.fetchThumbnailURL(ctx, jobResp)
+}
 
+func (p *Plugin) fetchThumbnailURL(ctx context.Context, jobResp jobResponse) string {
 	fileName := jobResp.Job.File.Name
 	origin := jobResp.Job.File.Origin
 	if fileName == "" || origin == "" {
