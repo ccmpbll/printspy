@@ -259,12 +259,12 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 const pluginRefreshInterval = 5 * time.Minute
 
 func (p *Plugin) refreshPlugins(ctx context.Context) {
-	p.pluginMu.RLock()
+	p.pluginMu.Lock()
 	if !p.plugins.lastFetched.IsZero() && time.Since(p.plugins.lastFetched) < pluginRefreshInterval {
-		p.pluginMu.RUnlock()
+		p.pluginMu.Unlock()
 		return
 	}
-	p.pluginMu.RUnlock()
+	p.pluginMu.Unlock()
 
 	data, err := p.doGet(ctx, "/plugin/pluginmanager/plugins")
 	if err != nil {
@@ -288,10 +288,25 @@ func (p *Plugin) refreshPlugins(ctx context.Context) {
 	}
 
 	p.pluginMu.Lock()
+	prev := p.plugins.installed
 	p.plugins = pluginCache{installed: installed, lastFetched: time.Now()}
 	p.pluginMu.Unlock()
 
-	log.Printf("[octoprint:%s] plugins (%d): %s", p.config.URL, len(names), strings.Join(names, ", "))
+	if !mapsEqual(prev, installed) {
+		log.Printf("[octoprint:%s] plugins (%d): %s", p.config.URL, len(names), strings.Join(names, ", "))
+	}
+}
+
+func mapsEqual(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Plugin) hasPlugin(key string) bool {
