@@ -397,7 +397,12 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for k, v := range settings {
-			if err := h.db.SetSetting(k, v); err != nil {
+			validated, err := validateSetting(k, v)
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := h.db.SetSetting(k, validated); err != nil {
 				jsonError(w, "failed to save settings", http.StatusInternalServerError)
 				return
 			}
@@ -557,6 +562,24 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
 	io.Copy(w, resp.Body)
+}
+
+func validateSetting(key, value string) (string, error) {
+	switch key {
+	case "snapshot_interval":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("snapshot_interval must be a number")
+		}
+		if n < 3 {
+			n = 3
+		} else if n > 300 {
+			n = 300
+		}
+		return strconv.Itoa(n), nil
+	default:
+		return "", fmt.Errorf("unknown setting: %s", key)
+	}
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {
