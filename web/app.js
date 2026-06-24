@@ -311,20 +311,20 @@ function updateCard(card, printer) {
         setText(card, 'elapsed', formatTime(job.elapsed_secs));
         setText(card, 'remaining', formatTime(job.remaining_secs));
         setText(card, 'eta', computeETA(job.remaining_secs));
-        setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span>`);
-        setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span>`);
+        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${Math.round(temps.hotend_target)}°C`);
+        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${Math.round(temps.bed_target)}°C`);
         if (temps.has_chamber) {
-            setHTML(card, 'chamber', `${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span>`);
+            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
         }
         if (job.total_layers > 0) {
-            setHTML(card, 'layer', `${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span>`);
+            setStatValue(card, 'layer', job.current_layer, `/ ${job.total_layers}`);
         }
     } else if (status && status.temps) {
         const temps = status.temps;
-        setHTML(card, 'hotend', `${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span>`);
-        setHTML(card, 'bed', `${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span>`);
+        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '°C' : 'off'}`);
+        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '°C' : 'off'}`);
         if (temps.has_chamber) {
-            setHTML(card, 'chamber', `${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span>`);
+            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
         }
     }
 }
@@ -334,9 +334,15 @@ function setText(card, field, value) {
     if (el) el.textContent = value;
 }
 
-function setHTML(card, field, value) {
+function setStatValue(card, field, main, unit) {
     const el = card.querySelector(`[data-field="${field}"]`);
-    if (el) el.innerHTML = value;
+    if (!el) return;
+    el.textContent = '';
+    el.appendChild(document.createTextNode(main));
+    const span = document.createElement('span');
+    span.className = 'stat-unit';
+    span.textContent = unit;
+    el.appendChild(span);
 }
 
 // Settings modal with printer management
@@ -414,7 +420,7 @@ function openAddModal() {
     document.getElementById('printer-modal').classList.add('active');
 }
 
-function openEditModal(id) {
+async function openEditModal(id) {
     const printer = printers.find(p => p.config.id === id);
     if (!printer) return;
     const cfg = printer.config;
@@ -424,11 +430,19 @@ function openEditModal(id) {
     document.getElementById('printer-name').value = cfg.name;
     document.getElementById('printer-type').value = cfg.type;
     document.getElementById('printer-url').value = cfg.url;
-    document.getElementById('printer-apikey').value = cfg.api_key;
+    document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = cfg.poll_interval;
     document.getElementById('test-btn').style.display = 'inline-flex';
     hideTestResult();
     document.getElementById('printer-modal').classList.add('active');
+
+    try {
+        const resp = await fetch(`/api/printers/${cfg.id}`);
+        if (resp.ok) {
+            const data = await resp.json();
+            document.getElementById('printer-apikey').value = data.api_key || '';
+        }
+    } catch (e) {}
 }
 
 function closeModal() {

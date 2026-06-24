@@ -97,11 +97,28 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, result)
 }
 
+type printerRequest struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	URL          string `json:"url"`
+	APIKey       string `json:"api_key"`
+	Enabled      bool   `json:"enabled"`
+	PollInterval int    `json:"poll_interval"`
+}
+
 func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
-	var p models.PrinterConfig
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	var req printerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
+	}
+
+	p := models.PrinterConfig{
+		Name:         req.Name,
+		Type:         req.Type,
+		URL:          req.URL,
+		APIKey:       req.APIKey,
+		PollInterval: req.PollInterval,
 	}
 
 	if p.Name == "" || p.URL == "" || p.APIKey == "" {
@@ -150,6 +167,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch r.Method {
+	case http.MethodGet:
+		h.getPrinter(w, r, id)
 	case http.MethodPut:
 		h.updatePrinter(w, r, id)
 	case http.MethodDelete:
@@ -159,13 +178,33 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) getPrinter(w http.ResponseWriter, r *http.Request, id int64) {
+	printer, err := h.db.GetPrinter(id)
+	if err != nil {
+		jsonError(w, "printer not found", http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, struct {
+		models.PrinterConfig
+		APIKey string `json:"api_key"`
+	}{*printer, printer.APIKey})
+}
+
 func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64) {
-	var p models.PrinterConfig
-	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+	var req printerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	p.ID = id
+	p := models.PrinterConfig{
+		ID:           id,
+		Name:         req.Name,
+		Type:         req.Type,
+		URL:          req.URL,
+		APIKey:       req.APIKey,
+		Enabled:      req.Enabled,
+		PollInterval: req.PollInterval,
+	}
 
 	if err := h.db.UpdatePrinter(&p); err != nil {
 		jsonError(w, "failed to update printer", http.StatusInternalServerError)
