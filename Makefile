@@ -1,7 +1,7 @@
 .PHONY: build run docker clean
 
 build:
-	CGO_ENABLED=1 go build -o printspy -ldflags="-s -w" .
+	CGO_ENABLED=1 go build -o printspy -ldflags="-s -w -X main.version=dev" .
 
 run:
 	go run .

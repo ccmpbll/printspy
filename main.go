@@ -72,6 +72,7 @@ func main() {
 		<-sigCh
 		log.Println("shutting down...")
 		cancel()
+		p.Wait()
 		server.Close()
 	}()
 

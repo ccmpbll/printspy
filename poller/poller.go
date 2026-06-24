@@ -28,6 +28,7 @@ type Poller struct {
 	printers map[int64]*polledPrinter
 	cache    map[int64]*models.PrinterStatus
 	db       *db.DB
+	wg       sync.WaitGroup
 
 	subMu       sync.Mutex
 	subscribers map[*subscriber]struct{}
@@ -40,6 +41,10 @@ func New(database *db.DB) *Poller {
 		db:          database,
 		subscribers: make(map[*subscriber]struct{}),
 	}
+}
+
+func (p *Poller) Wait() {
+	p.wg.Wait()
 }
 
 func (p *Poller) Start(ctx context.Context) error {
@@ -81,7 +86,11 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 		interval = 10 * time.Second
 	}
 
-	go p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
+	}()
 }
 
 func (p *Poller) RemovePrinter(id int64) {

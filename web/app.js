@@ -77,10 +77,26 @@ function toggleWebcamMode(printerId) {
     const next = current === 'snapshot' ? 'live' : 'snapshot';
     localStorage.setItem(`webcam-mode-${printerId}`, next);
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
-    if (card) {
-        const printer = printers.find(p => p.config.id === printerId);
-        if (printer) card.outerHTML = renderPrinterCard(printer);
+    if (!card) return;
+
+    const img = card.querySelector('.webcam-img');
+    if (img) {
+        img.style.display = '';
+        img.src = next === 'live' ? `/api/webcam/${printerId}` : `/api/snapshot/${printerId}?t=${pollCounter}`;
     }
+    const badge = card.querySelector('.webcam-badge');
+    if (badge) {
+        const dot = badge.querySelector('.dot');
+        if (dot) dot.className = next === 'live' ? 'dot' : 'dot dot-blue';
+        badge.lastChild.textContent = next === 'live' ? ' LIVE' : ' SNAP';
+    }
+    const btn = card.querySelector('.webcam-toggle');
+    if (btn) {
+        btn.className = next === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
+        btn.innerHTML = next === 'live' ? '&#9724;' : '&#9654;';
+    }
+    const placeholder = card.querySelector('.webcam-placeholder');
+    if (placeholder) placeholder.style.display = 'none';
 }
 
 function webcamSrc(printerId) {
