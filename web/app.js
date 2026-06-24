@@ -283,7 +283,14 @@ function updateCard(card, printer) {
 
     const stateEl = card.querySelector('[data-field="state"]');
     if (stateEl) {
-        const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+        let stateLabel;
+        if (state === 'error' && status && status.state_message) {
+            stateLabel = `Error: ${status.state_message}`;
+        } else if (state === 'disconnected') {
+            stateLabel = 'Printer disconnected';
+        } else {
+            stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+        }
         stateEl.textContent = stateLabel;
         stateEl.className = `printer-state state-${state}`;
     }

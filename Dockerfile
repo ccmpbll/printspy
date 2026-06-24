@@ -3,8 +3,6 @@ FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
 WORKDIR /build
-COPY go.mod ./
-RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN go mod tidy && CGO_ENABLED=1 go build -o printspy -ldflags="-s -w -X main.version=${VERSION}" .

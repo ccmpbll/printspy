@@ -22,13 +22,20 @@ type Handler struct {
 	db     *db.DB
 	poller *poller.Poller
 	ctx    context.Context
+	proxy  *http.Client
 
 	errLogMu   sync.Mutex
 	errLogLast map[string]time.Time
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
-	return &Handler{db: database, poller: p, ctx: ctx, errLogLast: make(map[string]time.Time)}
+	return &Handler{
+		db:         database,
+		poller:     p,
+		ctx:        ctx,
+		proxy:      &http.Client{Timeout: 30 * time.Second},
+		errLogLast: make(map[string]time.Time),
+	}
 }
 
 func (h *Handler) logOnce(key string, interval time.Duration, format string, args ...any) {
@@ -381,8 +388,12 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Api-Key", printer.APIKey)
 
 	log.Printf("[webcam:%d] proxying stream from %s", id, webcamURL)
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	streamClient := &http.Client{
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: 10 * time.Second,
+		},
+	}
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		log.Printf("[webcam:%d] connection failed: %v", id, err)
 		http.Error(w, "failed to connect to webcam", http.StatusBadGateway)
@@ -442,7 +453,7 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("X-Api-Key", printer.APIKey)
 
-	resp, err := (&http.Client{}).Do(req)
+	resp, err := h.proxy.Do(req)
 	if err != nil {
 		h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
 		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
@@ -486,7 +497,7 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Header.Set("X-Api-Key", printer.APIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.proxy.Do(req)
 	if err != nil {
 		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 		return
