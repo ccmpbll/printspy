@@ -57,26 +57,12 @@ func (db *DB) migrate() error {
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
 		);
 
-		CREATE TABLE IF NOT EXISTS printer_snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			printer_id INTEGER NOT NULL,
-			state TEXT NOT NULL,
-			hotend_actual REAL,
-			hotend_target REAL,
-			bed_actual REAL,
-			bed_target REAL,
-			progress REAL,
-			recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
-		);
-
 		CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_history_printer ON print_history(printer_id);
-		CREATE INDEX IF NOT EXISTS idx_snapshots_printer_time ON printer_snapshots(printer_id, recorded_at);
 	`)
 	if err != nil {
 		return err
@@ -178,33 +164,6 @@ func (db *DB) ReorderPrinters(ids []int64) error {
 
 func (db *DB) DeletePrinter(id int64) error {
 	_, err := db.conn.Exec(`DELETE FROM printers WHERE id = ?`, id)
-	return err
-}
-
-func (db *DB) PrinterExistsByURL(url string) (bool, error) {
-	var count int
-	err := db.conn.QueryRow(`SELECT COUNT(*) FROM printers WHERE url = ?`, url).Scan(&count)
-	return count > 0, err
-}
-
-func (db *DB) InsertSnapshot(printerID int64, status *models.PrinterStatus) error {
-	progress := 0.0
-	if status.Job != nil {
-		progress = status.Job.Progress
-	}
-	_, err := db.conn.Exec(`
-		INSERT INTO printer_snapshots (printer_id, state, hotend_actual, hotend_target, bed_actual, bed_target, progress)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, printerID, string(status.State), status.Temps.HotendActual, status.Temps.HotendTarget,
-		status.Temps.BedActual, status.Temps.BedTarget, progress)
-	return err
-}
-
-func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {
-	_, err := db.conn.Exec(`
-		INSERT INTO print_history (printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM)
 	return err
 }
 
