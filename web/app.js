@@ -131,7 +131,7 @@ function renderPrinterCard(printer) {
     if (state === 'error' && status && status.state_message) {
         stateLabel = `Error: ${status.state_message}`;
     } else if (state === 'disconnected') {
-        stateLabel = 'Disconnected';
+        stateLabel = 'Printer disconnected';
     } else {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
