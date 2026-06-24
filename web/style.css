@@ -65,6 +65,11 @@ header {
     flex-wrap: wrap;
 }
 
+header .header-logo {
+    width: 32px;
+    height: 32px;
+}
+
 header h1 {
     font-size: 1.25rem;
     font-weight: 600;
