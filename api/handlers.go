@@ -365,12 +365,8 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-sub.Done():
 			return
-		case data := <-sub.Chan():
-			if strings.Contains(string(data), `"refresh"`) {
-				fmt.Fprintf(w, "event: refresh\ndata: %s\n\n", data)
-			} else {
-				fmt.Fprintf(w, "event: status\ndata: %s\n\n", data)
-			}
+		case msg := <-sub.Chan():
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", msg.Event, msg.Data)
 			flusher.Flush()
 		}
 	}

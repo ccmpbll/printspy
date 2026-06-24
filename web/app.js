@@ -99,6 +99,15 @@ function toggleWebcamMode(printerId) {
     if (placeholder) placeholder.style.display = 'none';
 }
 
+function webcamError(img, isPrinting) {
+    const container = img.parentElement;
+    img.style.display = 'none';
+    container.querySelector('.webcam-placeholder').style.display = 'block';
+    container.querySelector('.webcam-badge').style.display = 'none';
+    container.querySelector('.webcam-toggle').style.display = 'none';
+    if (!isPrinting) container.classList.add('webcam-collapsed');
+}
+
 function webcamSrc(printerId) {
     const mode = getWebcamMode(printerId);
     if (mode === 'live') return `/api/webcam/${printerId}`;
@@ -170,7 +179,7 @@ function renderPrinterCard(printer) {
             <div class="printer-body">
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="this.style.display='none';this.parentElement.querySelector('.webcam-placeholder').style.display='block';this.parentElement.querySelector('.webcam-badge').style.display='none';this.parentElement.querySelector('.webcam-toggle').style.display='none';${isPrinting ? '' : "this.parentElement.classList.add('webcam-collapsed');"}">
+                        <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="webcamError(this,${isPrinting})">
                         <div class="webcam-placeholder" style="display:none">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
@@ -601,9 +610,7 @@ function computeETA(remainingSecs) {
 
 function esc(str) {
     if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // Event listeners

@@ -17,8 +17,13 @@ type polledPrinter struct {
 	cancel context.CancelFunc
 }
 
+type SSEMessage struct {
+	Event string
+	Data  []byte
+}
+
 type subscriber struct {
-	ch     chan []byte
+	ch     chan SSEMessage
 	ctx    context.Context
 	cancel context.CancelFunc
 }
@@ -153,7 +158,7 @@ func (p *Poller) GetThumbnailURL(id int64) string {
 func (p *Poller) Subscribe(ctx context.Context) *subscriber {
 	subCtx, cancel := context.WithCancel(ctx)
 	s := &subscriber{
-		ch:     make(chan []byte, 64),
+		ch:     make(chan SSEMessage, 64),
 		ctx:    subCtx,
 		cancel: cancel,
 	}
@@ -170,7 +175,7 @@ func (p *Poller) Unsubscribe(s *subscriber) {
 	p.subMu.Unlock()
 }
 
-func (s *subscriber) Chan() <-chan []byte {
+func (s *subscriber) Chan() <-chan SSEMessage {
 	return s.ch
 }
 
@@ -179,41 +184,46 @@ func (s *subscriber) Done() <-chan struct{} {
 }
 
 func (p *Poller) BroadcastRefresh() {
-	data := []byte(`{"refresh":true}`)
+	msg := SSEMessage{Event: "refresh", Data: []byte(`{}`)}
 	p.subMu.Lock()
 	defer p.subMu.Unlock()
 	for s := range p.subscribers {
 		select {
-		case s.ch <- data:
+		case s.ch <- msg:
 		default:
 		}
 	}
 }
 
 func (p *Poller) broadcast(printerID int64, status *models.PrinterStatus) {
-	msg := struct {
-		PrinterID int64                `json:"printer_id"`
+	payload := struct {
+		PrinterID int64                 `json:"printer_id"`
 		Status    *models.PrinterStatus `json:"status"`
 	}{printerID, status}
 
-	data, err := json.Marshal(msg)
+	data, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
 
+	msg := SSEMessage{Event: "status", Data: data}
 	p.subMu.Lock()
 	defer p.subMu.Unlock()
 	for s := range p.subscribers {
 		select {
-		case s.ch <- data:
+		case s.ch <- msg:
 		default:
-			// subscriber too slow, skip
 		}
 	}
 }
 
 func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, interval time.Duration) {
 	log.Printf("starting poller for printer %d (%s) every %s", id, name, interval)
+
+	if err := pl.Connect(ctx); err != nil {
+		log.Printf("[printer:%d] initial connect failed: %v (will retry on poll)", id, err)
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
