@@ -91,7 +91,7 @@ All printer management is done through the web UI — open the settings page to 
 ## Building from source
 
 ```bash
-# Requires Go 1.24+ and CGO (for SQLite)
+# Tested with Go 1.26, requires CGO (for SQLite)
 make build
 
 # Or with Docker
