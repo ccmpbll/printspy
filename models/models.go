@@ -48,23 +48,24 @@ type JobInfo struct {
 }
 
 type PowerState struct {
-	Available bool    `json:"available"`
-	On        bool    `json:"on"`
-	Source    string  `json:"source,omitempty"`
-	Watts     float64 `json:"watts,omitempty"`
-	Voltage   float64 `json:"voltage,omitempty"`
-	Current   float64 `json:"current,omitempty"`
-	TotalKWh  float64 `json:"total_kwh,omitempty"`
+	ID       string  `json:"id"`
+	Label    string  `json:"label,omitempty"`
+	On       bool    `json:"on"`
+	Source   string  `json:"source,omitempty"`
+	Watts    float64 `json:"watts,omitempty"`
+	Voltage  float64 `json:"voltage,omitempty"`
+	Current  float64 `json:"current,omitempty"`
+	TotalKWh float64 `json:"total_kwh,omitempty"`
 }
 
 type PrinterStatus struct {
-	State        PrinterState `json:"state"`
-	StateMessage string       `json:"state_message,omitempty"`
-	Temps        Temperatures `json:"temps"`
-	Job          *JobInfo     `json:"job"`
-	Power        *PowerState  `json:"power,omitempty"`
-	ThumbnailURL string       `json:"thumbnail_url,omitempty"`
-	LastUpdated  time.Time    `json:"last_updated"`
+	State        PrinterState  `json:"state"`
+	StateMessage string        `json:"state_message,omitempty"`
+	Temps        Temperatures  `json:"temps"`
+	Job          *JobInfo      `json:"job"`
+	Power        []PowerState  `json:"power,omitempty"`
+	ThumbnailURL string        `json:"thumbnail_url,omitempty"`
+	LastUpdated  time.Time     `json:"last_updated"`
 }
 
 type RecentFile struct {

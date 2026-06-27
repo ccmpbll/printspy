@@ -92,6 +92,11 @@
                         <div class="form-hint">How often webcam snapshots refresh. Lower values use more bandwidth.</div>
                     </div>
                     <div class="form-group">
+                        <label for="setting-poll-interval">Poll interval (seconds)</label>
+                        <input type="number" id="setting-poll-interval" value="" min="3" max="60" placeholder="Per-printer default">
+                        <div class="form-hint">Global override for how often printers are polled. Leave empty to use per-printer settings.</div>
+                    </div>
+                    <div class="form-group">
                         <label for="setting-recent-files">Recent files to show</label>
                         <input type="number" id="setting-recent-files" value="5" min="1" max="20">
                         <div class="form-hint">Number of files shown in the recent files dropdown per printer.</div>
@@ -100,6 +105,18 @@
                         <button type="submit" class="btn btn-primary">Save</button>
                     </div>
                 </form>
+            </div>
+
+            <div class="settings-section">
+                <h3>Backup</h3>
+                <div class="form-group">
+                    <div class="form-hint">Export or import your printer configuration and settings as YAML.</div>
+                </div>
+                <div class="form-actions" style="justify-content: flex-start; gap: 0.5rem;">
+                    <button class="btn" onclick="exportConfig()">Export YAML</button>
+                    <button class="btn" onclick="document.getElementById('import-file').click()">Import YAML</button>
+                    <input type="file" id="import-file" accept=".yaml,.yml" style="display:none" onchange="importConfig(this)">
+                </div>
             </div>
         </div>
     </div>

@@ -16,6 +16,7 @@ import (
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/poller"
+	"gopkg.in/yaml.v3"
 )
 
 type Handler struct {
@@ -64,6 +65,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/test", h.handleTestConnection)
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.HandleFunc("/api/settings", h.handleSettings)
+	mux.HandleFunc("/api/config/export", h.handleConfigExport)
+	mux.HandleFunc("/api/config/import", h.handleConfigImport)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
@@ -428,38 +431,46 @@ func (h *Handler) handlePower(w http.ResponseWriter, r *http.Request, id int64) 
 	}
 
 	var req struct {
-		Action string `json:"action"` // "on", "off", "toggle"
+		Action string `json:"action"`  // "on" or "off"
+		PlugID string `json:"plug_id"` // which plug to control
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	if req.PlugID == "" {
+		jsonError(w, "plug_id is required", http.StatusBadRequest)
+		return
+	}
 
-	status := h.poller.GetStatus(id)
+	turnOn := req.Action == "on"
 
-	var turnOn bool
-	switch req.Action {
-	case "on":
-		turnOn = true
-	case "off":
-		turnOn = false
-	case "toggle":
-		if status != nil && status.Power != nil {
-			turnOn = !status.Power.On
-		} else {
-			turnOn = true
+	if !turnOn && req.Action != "off" {
+		jsonError(w, "action must be on or off", http.StatusBadRequest)
+		return
+	}
+
+	if !turnOn {
+		status := h.poller.GetStatus(id)
+		if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+			singlePlug := len(status.Power) <= 1
+			isPrinterPlug := singlePlug
+			if !singlePlug {
+				for _, ps := range status.Power {
+					if ps.ID == req.PlugID && strings.Contains(strings.ToLower(ps.Label), "printer") {
+						isPrinterPlug = true
+						break
+					}
+				}
+			}
+			if isPrinterPlug {
+				jsonError(w, "cannot turn off printer while printing", http.StatusConflict)
+				return
+			}
 		}
-	default:
-		jsonError(w, "action must be on, off, or toggle", http.StatusBadRequest)
-		return
 	}
 
-	if !turnOn && status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
-		jsonError(w, "cannot turn off printer while printing", http.StatusConflict)
-		return
-	}
-
-	if err := h.poller.SetPowerState(r.Context(), id, turnOn); err != nil {
+	if err := h.poller.SetPowerState(r.Context(), id, req.PlugID, turnOn); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -499,18 +510,20 @@ func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		status := h.poller.GetStatus(p.ID)
-		if status == nil || status.Power == nil || !status.Power.Available {
+		if status == nil || len(status.Power) == 0 {
 			continue
 		}
 		if !turnOn && (status.State == models.StatePrinting || status.State == models.StatePaused) {
 			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": false, "error": "printing"})
 			continue
 		}
-		err := h.poller.SetPowerState(r.Context(), p.ID, turnOn)
-		if err != nil {
-			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": false, "error": err.Error()})
-		} else {
-			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": true})
+		for _, ps := range status.Power {
+			err := h.poller.SetPowerState(r.Context(), p.ID, ps.ID, turnOn)
+			if err != nil {
+				results = append(results, map[string]any{"id": p.ID, "name": p.Name, "plug": ps.Label, "success": false, "error": err.Error()})
+			} else {
+				results = append(results, map[string]any{"id": p.ID, "name": p.Name, "plug": ps.Label, "success": true})
+			}
 		}
 	}
 
@@ -595,6 +608,116 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 	jsonResponse(w, map[string]any{"success": true})
+}
+
+// Config export/import
+
+type configExport struct {
+	Settings map[string]string     `yaml:"settings,omitempty"`
+	Printers []configExportPrinter `yaml:"printers"`
+}
+
+type configExportPrinter struct {
+	Name         string `yaml:"name"`
+	Type         string `yaml:"type"`
+	URL          string `yaml:"url"`
+	APIKey       string `yaml:"api_key"`
+	PollInterval int    `yaml:"poll_interval"`
+	Enabled      bool   `yaml:"enabled"`
+}
+
+func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	printers, err := h.db.ListPrinters()
+	if err != nil {
+		jsonError(w, "failed to list printers", http.StatusInternalServerError)
+		return
+	}
+
+	settings, err := h.db.GetAllSettings()
+	if err != nil {
+		settings = make(map[string]string)
+	}
+
+	export := configExport{
+		Settings: settings,
+		Printers: make([]configExportPrinter, len(printers)),
+	}
+
+	for i, p := range printers {
+		full, err := h.db.GetPrinter(p.ID)
+		if err != nil {
+			continue
+		}
+		export.Printers[i] = configExportPrinter{
+			Name:         full.Name,
+			Type:         full.Type,
+			URL:          full.URL,
+			APIKey:       full.APIKey,
+			PollInterval: full.PollInterval,
+			Enabled:      full.Enabled,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Header().Set("Content-Disposition", "attachment; filename=printspy-config.yaml")
+	yaml.NewEncoder(w).Encode(export)
+}
+
+func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var export configExport
+	if err := yaml.NewDecoder(r.Body).Decode(&export); err != nil {
+		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	for k, v := range export.Settings {
+		validated, err := validateSetting(k, v)
+		if err != nil {
+			continue
+		}
+		h.db.SetSetting(k, validated)
+	}
+
+	added := 0
+	for _, ep := range export.Printers {
+		if ep.URL == "" || ep.APIKey == "" {
+			continue
+		}
+		if ep.Type == "" {
+			ep.Type = "octoprint"
+		}
+		if ep.PollInterval <= 0 {
+			ep.PollInterval = 10
+		}
+		p := models.PrinterConfig{
+			Name:         ep.Name,
+			Type:         ep.Type,
+			URL:          ep.URL,
+			APIKey:       ep.APIKey,
+			PollInterval: ep.PollInterval,
+			Enabled:      ep.Enabled,
+		}
+		if err := h.db.CreatePrinter(&p); err != nil {
+			continue
+		}
+		if p.Enabled {
+			h.poller.AddPrinter(h.ctx, p)
+		}
+		added++
+	}
+
+	h.poller.BroadcastRefresh()
+	jsonResponse(w, map[string]any{"success": true, "printers_added": added})
 }
 
 // Webcam/Thumbnail proxies
@@ -815,6 +938,17 @@ func validateSetting(key, value string) (string, error) {
 			n = 1
 		} else if n > 20 {
 			n = 20
+		}
+		return strconv.Itoa(n), nil
+	case "poll_interval":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("poll_interval must be a number")
+		}
+		if n < 3 {
+			n = 3
+		} else if n > 60 {
+			n = 60
 		}
 		return strconv.Itoa(n), nil
 	default:

@@ -25,9 +25,10 @@ Status updates are pushed in real-time via Server-Sent Events (SSE). Printers ar
 - **Real-time updates** via SSE — no manual refresh needed
 - **Auto-detection** of camera stack (mjpg-streamer / camera-streamer) and printer name
 - **Plugin detection** — queries installed OctoPrint plugins to enable features like layer progress
-- **Smart plug integration** — monitors and controls power via OctoPrint-Tasmota or PSU Control plugins, with energy monitoring (watts) for Tasmota devices
+- **Smart plug integration** — monitors and controls power via OctoPrint-Tasmota or PSU Control plugins, with multi-plug support and energy monitoring (watts) for Tasmota devices
 - **Print control** — pause, resume, and cancel prints directly from the dashboard
 - **Recent files** — browse recently uploaded files per printer with thumbnails, print status, and one-click reprint
+- **Config backup** — export and import printer configuration and settings as YAML
 - **Snapshot/live toggle** — choose between periodic snapshots or live MJPEG stream per printer
 - **Printer reordering** — arrange printers in any order from the settings page
 - **Responsive layout** — works on desktop, tablet, and mobile

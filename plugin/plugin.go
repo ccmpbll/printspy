@@ -16,7 +16,7 @@ type PrinterPlugin interface {
 	GetSnapshotURL() string
 	GetThumbnailURL(ctx context.Context) string
 	GetPrinterName(ctx context.Context) string
-	SetPowerState(ctx context.Context, on bool) error
+	SetPowerState(ctx context.Context, plugID string, on bool) error
 	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
 	StartPrint(ctx context.Context, location, path string) error
 	PausePrint(ctx context.Context) error

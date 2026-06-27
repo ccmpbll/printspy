@@ -55,7 +55,7 @@ function updateHeaderCount() {
     }
     const connected = printers.filter(p => p.status && p.status.state !== 'offline' && p.status.state !== 'disconnected').length;
     count.textContent = `${connected}/${printers.length} connected`;
-    const hasPower = printers.some(p => p.status && p.status.power && p.status.power.available);
+    const hasPower = printers.some(p => p.status && p.status.power && p.status.power.length > 0);
     document.getElementById('power-controls').style.display = hasPower ? 'inline-flex' : 'none';
 }
 
@@ -129,6 +129,11 @@ async function startReprint(btn) {
     } catch (e) {}
 }
 
+function totalWatts(power) {
+    if (!power || !power.length) return 0;
+    return power.reduce((sum, p) => sum + (p.watts || 0), 0);
+}
+
 function formatDate(unixTs) {
     if (!unixTs) return '';
     const d = new Date(unixTs * 1000);
@@ -143,7 +148,7 @@ function formatDate(unixTs) {
 // Print control
 
 async function controlPrint(printerId, action) {
-    if (action === 'cancel' && !confirm('Cancel this print?')) return;
+    if ((action === 'cancel' || action === 'pause') && !confirm(action === 'cancel' ? 'Cancel this print?' : 'Pause this print?')) return;
     try {
         await fetch(`/api/printers/${printerId}/control`, {
             method: 'POST',
@@ -155,12 +160,12 @@ async function controlPrint(printerId, action) {
 
 // Power control
 
-async function setPower(printerId, action) {
+async function setPower(printerId, action, plugId) {
     try {
         await fetch(`/api/printers/${printerId}/power`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action}),
+            body: JSON.stringify({action, plug_id: plugId}),
         });
     } catch (e) {}
 }
@@ -291,12 +296,17 @@ function renderPrinterCard(printer) {
     const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
 
     let powerHTML = '';
-    if (status && status.power && status.power.available) {
+    if (status && status.power && status.power.length > 0) {
         const isBusy = state === 'printing' || state === 'paused';
-        const onClass = status.power.on ? 'power-btn-active power-on' : '';
-        const offClass = !status.power.on ? 'power-btn-active power-off' : '';
-        const offDisabled = isBusy ? 'disabled title="Cannot turn off while printing"' : '';
-        powerHTML = `<span class="power-btn-group" data-field="power"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on')">&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off')" ${offDisabled}>Off</button></span>`;
+        const singlePlug = status.power.length === 1;
+        powerHTML = status.power.map(ps => {
+            const onClass = ps.on ? 'power-btn-active power-on' : '';
+            const offClass = !ps.on ? 'power-btn-active power-off' : '';
+            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
+            const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
+            const label = !singlePlug && ps.label ? esc(ps.label) + ' ' : '';
+            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
+        }).join('');
     }
 
     let controlHTML = '';
@@ -358,8 +368,8 @@ function renderPrintingStats(cfg, status) {
         layerCell = `<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`;
     }
 
-    if (status.power && status.power.watts > 0) {
-        tempCells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(status.power.watts)}<span class="stat-unit">W</span></div></div>`);
+    if (totalWatts(status.power) > 0) {
+        tempCells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
     }
 
     return `
@@ -440,7 +450,10 @@ function updateCard(card, printer) {
     const wasDown = prevState === 'offline' || prevState === 'disconnected';
     const isDown = state === 'offline' || state === 'disconnected';
 
-    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown)) {
+    const hadPower = !!card.querySelector('[data-field="power"]');
+    const hasPower = status && status.power && status.power.length > 0;
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown) || (hasPower && !hadPower)) {
         card.outerHTML = renderPrinterCard(printer);
         if (state === 'idle') loadRecentPrints(cfg.id);
         return;
@@ -480,16 +493,21 @@ function updateCard(card, printer) {
     }
 
     // Update power buttons
-    const powerGroup = card.querySelector('[data-field="power"]');
-    if (powerGroup && status && status.power && status.power.available) {
-        const btns = powerGroup.querySelectorAll('.power-toggle-btn');
+    if (status && status.power && status.power.length > 0) {
         const isBusy = state === 'printing' || state === 'paused';
-        if (btns[0]) btns[0].className = `power-toggle-btn ${status.power.on ? 'power-btn-active power-on' : ''}`;
-        if (btns[1]) {
-            btns[1].className = `power-toggle-btn ${!status.power.on ? 'power-btn-active power-off' : ''}`;
-            btns[1].disabled = isBusy;
-            btns[1].title = isBusy ? 'Cannot turn off while printing' : '';
-        }
+        const singlePlug = status.power.length === 1;
+        status.power.forEach(ps => {
+            const group = card.querySelector(`[data-field="power"][data-plug-id="${ps.id}"]`);
+            if (!group) return;
+            const btns = group.querySelectorAll('.power-toggle-btn');
+            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
+            if (btns[0]) btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
+            if (btns[1]) {
+                btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
+                btns[1].disabled = isBusy && isPrinterPlug;
+                btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
+            }
+        });
     }
 
     if (isPrinting && status.job) {
@@ -512,8 +530,8 @@ function updateCard(card, printer) {
         if (job.total_layers > 0) {
             setStatValue(card, 'layer', job.current_layer, `/ ${job.total_layers}`);
         }
-        if (status.power && status.power.watts > 0) {
-            setStatValue(card, 'watts', Math.round(status.power.watts), 'W');
+        if (totalWatts(status.power) > 0) {
+            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
         }
     } else if (status && status.temps) {
         const temps = status.temps;
@@ -522,8 +540,8 @@ function updateCard(card, printer) {
         if (temps.has_chamber) {
             setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
         }
-        if (status.power && status.power.watts > 0) {
-            setStatValue(card, 'watts', Math.round(status.power.watts), 'W');
+        if (totalWatts(status.power) > 0) {
+            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
         }
     }
 }
@@ -549,6 +567,7 @@ function setStatValue(card, field, main, unit) {
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
+        document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
     });
     renderSettingsPrinterList();
@@ -750,6 +769,8 @@ async function saveSettings(e) {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
         recent_files_count: document.getElementById('setting-recent-files').value,
     };
+    const pollVal = document.getElementById('setting-poll-interval').value;
+    if (pollVal) settings.poll_interval = pollVal;
     await fetch('/api/settings', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
@@ -787,6 +808,46 @@ function computeETA(remainingSecs) {
 function esc(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Config export/import
+
+async function exportConfig() {
+    try {
+        const resp = await fetch('/api/config/export');
+        if (!resp.ok) return;
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'printspy-config.yaml';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {}
+}
+
+async function importConfig(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (!confirm('Import will add printers and overwrite settings from this file. Continue?')) {
+        input.value = '';
+        return;
+    }
+    try {
+        const text = await file.text();
+        const resp = await fetch('/api/config/import', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-yaml'},
+            body: text,
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            alert(`Import complete: ${data.printers_added} printer(s) added.`);
+            await fetchPrinters();
+            openSettings();
+        }
+    } catch (e) {}
+    input.value = '';
 }
 
 // Event listeners

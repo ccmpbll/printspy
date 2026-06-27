@@ -25,8 +25,9 @@ func init() {
 }
 
 type tasmotaPlug struct {
-	IP  string
-	Idx string
+	IP    string
+	Idx   string
+	Label string
 }
 
 type cachedSettings struct {
@@ -262,7 +263,7 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 			if idx == "" {
 				idx = "1"
 			}
-			plugs = append(plugs, tasmotaPlug{IP: sp.IP, Idx: idx})
+			plugs = append(plugs, tasmotaPlug{IP: sp.IP, Idx: idx, Label: sp.Label})
 		}
 	}
 
@@ -456,9 +457,9 @@ func (p *Plugin) fetchThumbnailURL(ctx context.Context, jobResp jobResponse) str
 	return ""
 }
 
-func (p *Plugin) SetPowerState(ctx context.Context, on bool) error {
+func (p *Plugin) SetPowerState(ctx context.Context, plugID string, on bool) error {
 	if p.hasPlugin("tasmota") {
-		return p.setTasmotaPower(ctx, on)
+		return p.setTasmotaPower(ctx, plugID, on)
 	}
 	if p.hasPlugin("psucontrol") {
 		return p.setPSUControlPower(ctx, on)
@@ -475,16 +476,22 @@ func (p *Plugin) setPSUControlPower(ctx context.Context, on bool) error {
 	return err
 }
 
-func (p *Plugin) setTasmotaPower(ctx context.Context, on bool) error {
+func (p *Plugin) setTasmotaPower(ctx context.Context, plugID string, on bool) error {
 	p.settingsMu.RLock()
 	plugs := p.settings.tasmotaPlugs
 	p.settingsMu.RUnlock()
 
-	if len(plugs) == 0 {
-		return fmt.Errorf("no Tasmota devices configured")
+	var plug *tasmotaPlug
+	for i := range plugs {
+		if plugs[i].IP+":"+plugs[i].Idx == plugID {
+			plug = &plugs[i]
+			break
+		}
+	}
+	if plug == nil {
+		return fmt.Errorf("tasmota plug %s not found", plugID)
 	}
 
-	plug := plugs[0]
 	command := "turnOff"
 	if on {
 		command = "turnOn"
@@ -602,7 +609,7 @@ func (p *Plugin) CancelPrint(ctx context.Context) error {
 	return err
 }
 
-func (p *Plugin) fetchPowerState(ctx context.Context) *models.PowerState {
+func (p *Plugin) fetchPowerState(ctx context.Context) []models.PowerState {
 	if p.hasPlugin("tasmota") {
 		return p.fetchTasmotaPower(ctx)
 	}
@@ -612,7 +619,7 @@ func (p *Plugin) fetchPowerState(ctx context.Context) *models.PowerState {
 	return nil
 }
 
-func (p *Plugin) fetchPSUControlPower(ctx context.Context) *models.PowerState {
+func (p *Plugin) fetchPSUControlPower(ctx context.Context) []models.PowerState {
 	data, err := p.doGet(ctx, "/api/plugin/psucontrol")
 	if err != nil {
 		return nil
@@ -623,14 +630,15 @@ func (p *Plugin) fetchPSUControlPower(ctx context.Context) *models.PowerState {
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil
 	}
-	return &models.PowerState{
-		Available: true,
-		On:        resp.IsPSUOn,
-		Source:    "psucontrol",
-	}
+	return []models.PowerState{{
+		ID:     "psu",
+		Label:  "PSU",
+		On:     resp.IsPSUOn,
+		Source: "psucontrol",
+	}}
 }
 
-func (p *Plugin) fetchTasmotaPower(ctx context.Context) *models.PowerState {
+func (p *Plugin) fetchTasmotaPower(ctx context.Context) []models.PowerState {
 	p.settingsMu.RLock()
 	plugs := p.settings.tasmotaPlugs
 	p.settingsMu.RUnlock()
@@ -639,44 +647,53 @@ func (p *Plugin) fetchTasmotaPower(ctx context.Context) *models.PowerState {
 		return nil
 	}
 
-	plug := plugs[0]
-	cmd := map[string]any{
-		"command": "checkStatus",
-		"ip":      plug.IP,
-		"idx":     plug.Idx,
-	}
-	data, err := p.doPost(ctx, "/api/plugin/tasmota", cmd)
-	if err != nil {
-		return nil
+	var states []models.PowerState
+	for _, plug := range plugs {
+		cmd := map[string]any{
+			"command": "checkStatus",
+			"ip":      plug.IP,
+			"idx":     plug.Idx,
+		}
+		data, err := p.doPost(ctx, "/api/plugin/tasmota", cmd)
+		if err != nil {
+			continue
+		}
+
+		var resp struct {
+			CurrentState string `json:"currentState"`
+			EnergyData   *struct {
+				Power   float64 `json:"Power"`
+				Voltage float64 `json:"Voltage"`
+				Current float64 `json:"Current"`
+				Total   float64 `json:"Total"`
+			} `json:"energy_data"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			continue
+		}
+
+		if resp.CurrentState == "unknown" {
+			continue
+		}
+
+		ps := models.PowerState{
+			ID:     plug.IP + ":" + plug.Idx,
+			Label:  plug.Label,
+			On:     resp.CurrentState == "on",
+			Source: "tasmota",
+		}
+
+		if resp.EnergyData != nil {
+			ps.Watts = resp.EnergyData.Power
+			ps.Voltage = resp.EnergyData.Voltage
+			ps.Current = resp.EnergyData.Current
+			ps.TotalKWh = resp.EnergyData.Total
+		}
+
+		states = append(states, ps)
 	}
 
-	var resp struct {
-		CurrentState string `json:"currentState"`
-		EnergyData   *struct {
-			Power   float64 `json:"Power"`
-			Voltage float64 `json:"Voltage"`
-			Current float64 `json:"Current"`
-			Total   float64 `json:"Total"`
-		} `json:"energy_data"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil
-	}
-
-	power := &models.PowerState{
-		Available: true,
-		On:        resp.CurrentState == "on",
-		Source:    "tasmota",
-	}
-
-	if resp.EnergyData != nil {
-		power.Watts = resp.EnergyData.Power
-		power.Voltage = resp.EnergyData.Voltage
-		power.Current = resp.EnergyData.Current
-		power.TotalKWh = resp.EnergyData.Total
-	}
-
-	return power
+	return states
 }
 
 func (p *Plugin) doPost(ctx context.Context, path string, body any) ([]byte, error) {
@@ -843,8 +860,9 @@ type settingsResponse struct {
 		} `json:"camera-streamer-control"`
 		Tasmota struct {
 			ArrSmartplugs []struct {
-				IP  string `json:"ip"`
-				Idx string `json:"idx"`
+				IP    string `json:"ip"`
+				Idx   string `json:"idx"`
+				Label string `json:"label"`
 			} `json:"arrSmartplugs"`
 		} `json:"tasmota"`
 	} `json:"plugins"`

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -53,6 +54,19 @@ func (p *Poller) Wait() {
 	p.wg.Wait()
 }
 
+func (p *Poller) getInterval(perPrinter int) time.Duration {
+	if v, err := p.db.GetSetting("poll_interval"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	interval := time.Duration(perPrinter) * time.Second
+	if interval < time.Second {
+		interval = 10 * time.Second
+	}
+	return interval
+}
+
 func (p *Poller) Start(ctx context.Context) error {
 	printers, err := p.db.ListPrinters()
 	if err != nil {
@@ -87,10 +101,7 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 	}
 	p.printers[config.ID] = pp
 
-	interval := time.Duration(config.PollInterval) * time.Second
-	if interval < time.Second {
-		interval = 10 * time.Second
-	}
+	interval := p.getInterval(config.PollInterval)
 
 	p.wg.Add(1)
 	go func() {
@@ -184,14 +195,14 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
-func (p *Poller) SetPowerState(ctx context.Context, id int64, on bool) error {
+func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
 	p.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
-	return pp.plugin.SetPowerState(ctx, on)
+	return pp.plugin.SetPowerState(ctx, plugID, on)
 }
 
 func (p *Poller) GetThumbnailURL(id int64) string {
