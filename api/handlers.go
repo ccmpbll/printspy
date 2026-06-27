@@ -60,6 +60,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/printers", h.handlePrinters)
 	mux.HandleFunc("/api/printers/", h.handlePrinterByID)
 	mux.HandleFunc("/api/printers/reorder", h.handleReorder)
+	mux.HandleFunc("/api/printers/power", h.handleBulkPower)
 	mux.HandleFunc("/api/test", h.handleTestConnection)
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.HandleFunc("/api/settings", h.handleSettings)
@@ -160,6 +161,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.testPrinter(w, r, id)
 		case "history":
 			h.getPrintHistory(w, r, id)
+		case "power":
+			h.handlePower(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -407,6 +410,104 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// Power control
+
+func (h *Handler) handlePower(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"` // "on", "off", "toggle"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	status := h.poller.GetStatus(id)
+
+	var turnOn bool
+	switch req.Action {
+	case "on":
+		turnOn = true
+	case "off":
+		turnOn = false
+	case "toggle":
+		if status != nil && status.Power != nil {
+			turnOn = !status.Power.On
+		} else {
+			turnOn = true
+		}
+	default:
+		jsonError(w, "action must be on, off, or toggle", http.StatusBadRequest)
+		return
+	}
+
+	if !turnOn && status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+		jsonError(w, "cannot turn off printer while printing", http.StatusConflict)
+		return
+	}
+
+	if err := h.poller.SetPowerState(r.Context(), id, turnOn); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]any{"success": true, "power_on": turnOn})
+}
+
+func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"` // "on" or "off"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Action != "on" && req.Action != "off" {
+		jsonError(w, "action must be on or off", http.StatusBadRequest)
+		return
+	}
+
+	turnOn := req.Action == "on"
+
+	printers, err := h.db.ListPrinters()
+	if err != nil {
+		jsonError(w, "failed to list printers", http.StatusInternalServerError)
+		return
+	}
+
+	results := make([]map[string]any, 0)
+	for _, p := range printers {
+		if !p.Enabled {
+			continue
+		}
+		status := h.poller.GetStatus(p.ID)
+		if status == nil || status.Power == nil || !status.Power.Available {
+			continue
+		}
+		if !turnOn && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": false, "error": "printing"})
+			continue
+		}
+		err := h.poller.SetPowerState(r.Context(), p.ID, turnOn)
+		if err != nil {
+			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": false, "error": err.Error()})
+		} else {
+			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": true})
+		}
+	}
+
+	jsonResponse(w, map[string]any{"results": results})
 }
 
 // Webcam/Thumbnail proxies

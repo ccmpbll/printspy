@@ -14,6 +14,8 @@ PrintSpy connects to your 3D printers and displays their status on a single dash
 - Print progress, elapsed time, remaining time, and ETA
 - Hotend, bed, and chamber temperatures (chamber shown when detected)
 - Layer progress (when DisplayLayerProgress plugin is installed)
+- Smart plug power state and control (when Tasmota or PSU Control plugin is installed)
+- Live power consumption in watts (Tasmota devices with energy monitoring)
 - Direct link to each printer's native web interface
 
 Status updates are pushed in real-time via Server-Sent Events (SSE). Printers are managed through the settings page — no config files required. Just run the container, open the browser, and add your printers.
@@ -23,6 +25,7 @@ Status updates are pushed in real-time via Server-Sent Events (SSE). Printers ar
 - **Real-time updates** via SSE — no manual refresh needed
 - **Auto-detection** of camera stack (mjpg-streamer / camera-streamer) and printer name
 - **Plugin detection** — queries installed OctoPrint plugins to enable features like layer progress
+- **Smart plug integration** — monitors and controls power via OctoPrint-Tasmota or PSU Control plugins, with energy monitoring (watts) for Tasmota devices
 - **Snapshot/live toggle** — choose between periodic snapshots or live MJPEG stream per printer
 - **Printer reordering** — arrange printers in any order from the settings page
 - **Responsive layout** — works on desktop, tablet, and mobile

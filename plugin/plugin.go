@@ -16,6 +16,7 @@ type PrinterPlugin interface {
 	GetSnapshotURL() string
 	GetThumbnailURL(ctx context.Context) string
 	GetPrinterName(ctx context.Context) string
+	SetPowerState(ctx context.Context, on bool) error
 }
 
 type PluginFactory func(config models.PrinterConfig) PrinterPlugin

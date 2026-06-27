@@ -23,11 +23,17 @@ func init() {
 	})
 }
 
+type tasmotaPlug struct {
+	IP  string
+	Idx string
+}
+
 type cachedSettings struct {
-	streamURL   string
-	snapshotURL string
-	printerName string
-	fetched     bool
+	streamURL    string
+	snapshotURL  string
+	printerName  string
+	tasmotaPlugs []tasmotaPlug
+	fetched      bool
 }
 
 type pluginCache struct {
@@ -84,6 +90,9 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	} else {
 		p.refreshPlugins(ctx)
 	}
+
+	// Fetch power state early — smart plugs work regardless of printer connection state
+	status.Power = p.fetchPowerState(ctx)
 
 	printerData, statusCode, err := p.doGetRaw(ctx, "/api/printer?exclude=sd")
 	if err != nil {
@@ -244,14 +253,27 @@ func (p *Plugin) fetchSettings(ctx context.Context) {
 	snapshotURL := deriveSnapshotURL(streamURL)
 
 	printerName := settings.Appearance.Name
-	log.Printf("[octoprint:%s] settings: name=%q stream=%s snapshot=%s", p.config.URL, printerName, streamURL, snapshotURL)
+
+	var plugs []tasmotaPlug
+	for _, sp := range settings.Plugins.Tasmota.ArrSmartplugs {
+		if sp.IP != "" {
+			idx := sp.Idx
+			if idx == "" {
+				idx = "1"
+			}
+			plugs = append(plugs, tasmotaPlug{IP: sp.IP, Idx: idx})
+		}
+	}
+
+	log.Printf("[octoprint:%s] settings: name=%q stream=%s snapshot=%s tasmota_plugs=%d", p.config.URL, printerName, streamURL, snapshotURL, len(plugs))
 
 	p.settingsMu.Lock()
 	p.settings = cachedSettings{
-		streamURL:   streamURL,
-		snapshotURL: snapshotURL,
-		printerName: printerName,
-		fetched:     true,
+		streamURL:    streamURL,
+		snapshotURL:  snapshotURL,
+		printerName:  printerName,
+		tasmotaPlugs: plugs,
+		fetched:      true,
 	}
 	p.settingsMu.Unlock()
 }
@@ -433,6 +455,153 @@ func (p *Plugin) fetchThumbnailURL(ctx context.Context, jobResp jobResponse) str
 	return ""
 }
 
+func (p *Plugin) SetPowerState(ctx context.Context, on bool) error {
+	if p.hasPlugin("tasmota") {
+		return p.setTasmotaPower(ctx, on)
+	}
+	if p.hasPlugin("psucontrol") {
+		return p.setPSUControlPower(ctx, on)
+	}
+	return fmt.Errorf("no power control plugin detected")
+}
+
+func (p *Plugin) setPSUControlPower(ctx context.Context, on bool) error {
+	command := "turnPSUOff"
+	if on {
+		command = "turnPSUOn"
+	}
+	_, err := p.doPost(ctx, "/api/plugin/psucontrol", map[string]string{"command": command})
+	return err
+}
+
+func (p *Plugin) setTasmotaPower(ctx context.Context, on bool) error {
+	p.settingsMu.RLock()
+	plugs := p.settings.tasmotaPlugs
+	p.settingsMu.RUnlock()
+
+	if len(plugs) == 0 {
+		return fmt.Errorf("no Tasmota devices configured")
+	}
+
+	plug := plugs[0]
+	command := "turnOff"
+	if on {
+		command = "turnOn"
+	}
+	_, err := p.doPost(ctx, "/api/plugin/tasmota", map[string]any{
+		"command": command,
+		"ip":      plug.IP,
+		"idx":     plug.Idx,
+	})
+	return err
+}
+
+func (p *Plugin) fetchPowerState(ctx context.Context) *models.PowerState {
+	if p.hasPlugin("tasmota") {
+		return p.fetchTasmotaPower(ctx)
+	}
+	if p.hasPlugin("psucontrol") {
+		return p.fetchPSUControlPower(ctx)
+	}
+	return nil
+}
+
+func (p *Plugin) fetchPSUControlPower(ctx context.Context) *models.PowerState {
+	data, err := p.doGet(ctx, "/api/plugin/psucontrol")
+	if err != nil {
+		return nil
+	}
+	var resp struct {
+		IsPSUOn bool `json:"isPSUOn"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil
+	}
+	return &models.PowerState{
+		Available: true,
+		On:        resp.IsPSUOn,
+		Source:    "psucontrol",
+	}
+}
+
+func (p *Plugin) fetchTasmotaPower(ctx context.Context) *models.PowerState {
+	p.settingsMu.RLock()
+	plugs := p.settings.tasmotaPlugs
+	p.settingsMu.RUnlock()
+
+	if len(plugs) == 0 {
+		return nil
+	}
+
+	plug := plugs[0]
+	cmd := map[string]any{
+		"command": "checkStatus",
+		"ip":      plug.IP,
+		"idx":     plug.Idx,
+	}
+	data, err := p.doPost(ctx, "/api/plugin/tasmota", cmd)
+	if err != nil {
+		return nil
+	}
+
+	var resp struct {
+		CurrentState string `json:"currentState"`
+		EnergyData   *struct {
+			Power   float64 `json:"Power"`
+			Voltage float64 `json:"Voltage"`
+			Current float64 `json:"Current"`
+			Total   float64 `json:"Total"`
+		} `json:"energy_data"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil
+	}
+
+	power := &models.PowerState{
+		Available: true,
+		On:        resp.CurrentState == "on",
+		Source:    "tasmota",
+	}
+
+	if resp.EnergyData != nil {
+		power.Watts = resp.EnergyData.Power
+		power.Voltage = resp.EnergyData.Voltage
+		power.Current = resp.EnergyData.Current
+		power.TotalKWh = resp.EnergyData.Total
+	}
+
+	return power
+}
+
+func (p *Plugin) doPost(ctx context.Context, path string, body any) ([]byte, error) {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	url := strings.TrimRight(p.config.URL, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(string(jsonBody)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", p.config.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("octoprint API returned %d", resp.StatusCode)
+	}
+	return data, nil
+}
+
 func (p *Plugin) doGet(ctx context.Context, path string) ([]byte, error) {
 	data, statusCode, err := p.doGetRaw(ctx, path)
 	if err != nil {
@@ -566,6 +735,12 @@ type settingsResponse struct {
 		CameraStreamer struct {
 			StreamURL string `json:"streamUrl"`
 		} `json:"camera-streamer-control"`
+		Tasmota struct {
+			ArrSmartplugs []struct {
+				IP  string `json:"ip"`
+				Idx string `json:"idx"`
+			} `json:"arrSmartplugs"`
+		} `json:"tasmota"`
 	} `json:"plugins"`
 }
 

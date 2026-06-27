@@ -50,10 +50,35 @@ function updateHeaderCount() {
     const count = document.getElementById('printer-count');
     if (!printers || printers.length === 0) {
         count.textContent = '';
+        document.getElementById('power-controls').style.display = 'none';
         return;
     }
     const connected = printers.filter(p => p.status && p.status.state !== 'offline' && p.status.state !== 'disconnected').length;
     count.textContent = `${connected}/${printers.length} connected`;
+    const hasPower = printers.some(p => p.status && p.status.power && p.status.power.available);
+    document.getElementById('power-controls').style.display = hasPower ? 'inline-flex' : 'none';
+}
+
+// Power control
+
+async function setPower(printerId, action) {
+    try {
+        await fetch(`/api/printers/${printerId}/power`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action}),
+        });
+    } catch (e) {}
+}
+
+async function bulkPower(action) {
+    try {
+        await fetch('/api/printers/power', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action}),
+        });
+    } catch (e) {}
 }
 
 function refreshSnapshots() {
@@ -168,11 +193,21 @@ function renderPrinterCard(printer) {
     const wcMode = getWebcamMode(cfg.id);
     const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
 
+    let powerHTML = '';
+    if (status && status.power && status.power.available) {
+        const isBusy = state === 'printing' || state === 'paused';
+        const onClass = status.power.on ? 'power-btn-active power-on' : '';
+        const offClass = !status.power.on ? 'power-btn-active power-off' : '';
+        const offDisabled = isBusy ? 'disabled title="Cannot turn off while printing"' : '';
+        powerHTML = `<span class="power-btn-group" data-field="power"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on')">&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off')" ${offDisabled}>Off</button></span>`;
+    }
+
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
+                ${powerHTML}
                 <span class="printer-url">${esc(cfg.url)}</span>
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">OctoPrint &#8599;</a>
             </div>
@@ -210,6 +245,10 @@ function renderPrintingStats(cfg, status) {
     let layerCell = '';
     if (job.total_layers > 0) {
         layerCell = `<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`;
+    }
+
+    if (status.power && status.power.watts > 0) {
+        tempCells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(status.power.watts)}<span class="stat-unit">W</span></div></div>`);
     }
 
     return `
@@ -262,6 +301,9 @@ function renderIdleStats(status, state) {
         cells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>`);
         if (temps.has_chamber) {
             cells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
+        }
+        if (status.power && status.power.watts > 0) {
+            cells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(status.power.watts)}<span class="stat-unit">W</span></div></div>`);
         }
         tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
     }
@@ -324,6 +366,19 @@ function updateCard(card, printer) {
         stateEl.className = `printer-state state-${state}`;
     }
 
+    // Update power buttons
+    const powerGroup = card.querySelector('[data-field="power"]');
+    if (powerGroup && status && status.power && status.power.available) {
+        const btns = powerGroup.querySelectorAll('.power-toggle-btn');
+        const isBusy = state === 'printing' || state === 'paused';
+        if (btns[0]) btns[0].className = `power-toggle-btn ${status.power.on ? 'power-btn-active power-on' : ''}`;
+        if (btns[1]) {
+            btns[1].className = `power-toggle-btn ${!status.power.on ? 'power-btn-active power-off' : ''}`;
+            btns[1].disabled = isBusy;
+            btns[1].title = isBusy ? 'Cannot turn off while printing' : '';
+        }
+    }
+
     if (isPrinting && status.job) {
         const job = status.job;
         const progress = Math.round(job.progress || 0);
@@ -344,12 +399,18 @@ function updateCard(card, printer) {
         if (job.total_layers > 0) {
             setStatValue(card, 'layer', job.current_layer, `/ ${job.total_layers}`);
         }
+        if (status.power && status.power.watts > 0) {
+            setStatValue(card, 'watts', Math.round(status.power.watts), 'W');
+        }
     } else if (status && status.temps) {
         const temps = status.temps;
         setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '°C' : 'off'}`);
         setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '°C' : 'off'}`);
         if (temps.has_chamber) {
             setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
+        }
+        if (status.power && status.power.watts > 0) {
+            setStatValue(card, 'watts', Math.round(status.power.watts), 'W');
         }
     }
 }

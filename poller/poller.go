@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -142,6 +143,16 @@ func (p *Poller) GetSnapshotURL(id int64) string {
 		return pp.plugin.GetSnapshotURL()
 	}
 	return ""
+}
+
+func (p *Poller) SetPowerState(ctx context.Context, id int64, on bool) error {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.SetPowerState(ctx, on)
 }
 
 func (p *Poller) GetThumbnailURL(id int64) string {
