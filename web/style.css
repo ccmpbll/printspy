@@ -212,6 +212,10 @@ header .printer-count {
 .state-offline { background: var(--warning-bg); color: var(--warning); }
 .state-disconnected { background: var(--bg-tertiary); color: var(--text-secondary); }
 
+.print-controls {
+    display: inline-flex;
+    gap: 0.3rem;
+}
 .power-btn-group {
     display: inline-flex;
     border-radius: var(--radius);
@@ -219,10 +223,10 @@ header .printer-count {
     border: 1px solid var(--border);
 }
 .power-toggle-btn {
-    font-size: 0.7rem;
-    padding: 0.15rem 0.5rem;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
     border: none;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     color: var(--text-secondary);
     cursor: pointer;
     font-weight: 500;
@@ -238,10 +242,6 @@ header .printer-count {
     display: inline-flex;
     gap: 0.35rem;
     margin-left: 0.5rem;
-}
-.btn-power {
-    font-size: 0.7rem;
-    padding: 0.2rem 0.5rem;
 }
 
 .printer-url {
@@ -844,4 +844,73 @@ header .printer-count {
     .modal-wide {
         max-width: 100%;
     }
+}
+
+/* Recent prints dropdown */
+.recent-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.recent-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 0.35rem;
+    min-width: 400px;
+    max-width: 500px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    z-index: 10;
+    padding: 0.4rem;
+    display: none;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.recent-dropdown.open .recent-menu {
+    display: flex;
+}
+.recent-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.5rem;
+    border-radius: var(--radius);
+    font-size: 0.8rem;
+}
+.recent-item:hover {
+    background: var(--bg-secondary);
+}
+.recent-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+.recent-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+.recent-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 0.8rem;
+}
+.recent-meta {
+    color: var(--text-tertiary);
+    font-size: 0.7rem;
+}
+.recent-status-success { color: var(--success); }
+.recent-status-failed { color: var(--error); }
+.recent-status-new { color: var(--accent); }
+.btn-reprint {
+    white-space: nowrap;
 }

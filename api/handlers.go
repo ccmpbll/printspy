@@ -67,6 +67,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
+	mux.HandleFunc("/api/file-thumbnail/", h.handleFileThumbnailProxy)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +164,12 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.getPrintHistory(w, r, id)
 		case "power":
 			h.handlePower(w, r, id)
+		case "recent":
+			h.getRecentPrints(w, r, id)
+		case "print":
+			h.startPrint(w, r, id)
+		case "control":
+			h.controlPrint(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -510,6 +517,86 @@ func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"results": results})
 }
 
+// Print history and control
+
+func (h *Handler) getRecentPrints(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 5
+	if v, err := h.db.GetSetting("recent_files_count"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	files, err := h.poller.GetRecentFiles(r.Context(), id, limit)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if files == nil {
+		files = []models.RecentFile{}
+	}
+	jsonResponse(w, files)
+}
+
+func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Origin string `json:"origin"`
+		Path   string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Path == "" {
+		jsonError(w, "path is required", http.StatusBadRequest)
+		return
+	}
+	if req.Origin == "" {
+		req.Origin = "local"
+	}
+
+	status := h.poller.GetStatus(id)
+	if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+		jsonError(w, "printer is busy", http.StatusConflict)
+		return
+	}
+
+	if err := h.poller.StartPrint(r.Context(), id, req.Origin, req.Path); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
+}
+
+func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Action string `json:"action"` // "pause", "resume", "cancel"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.poller.ControlPrint(r.Context(), id, req.Action); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
+}
+
 // Webcam/Thumbnail proxies
 
 func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
@@ -661,6 +748,51 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/file-thumbnail/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid printer id", http.StatusBadRequest)
+		return
+	}
+
+	thumbPath := r.URL.Query().Get("path")
+	if thumbPath == "" {
+		http.Error(w, "path parameter required", http.StatusBadRequest)
+		return
+	}
+
+	if strings.Contains(thumbPath, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	printer, err := h.db.GetPrinter(id)
+	if err != nil {
+		http.Error(w, "printer not found", http.StatusNotFound)
+		return
+	}
+
+	thumbURL := strings.TrimRight(printer.URL, "/") + "/" + strings.TrimLeft(thumbPath, "/")
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
+	if err != nil {
+		http.Error(w, "failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("X-Api-Key", printer.APIKey)
+
+	resp, err := h.proxy.Do(req)
+	if err != nil {
+		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Cache-Control", "max-age=3600")
+	io.Copy(w, resp.Body)
+}
+
 func validateSetting(key, value string) (string, error) {
 	switch key {
 	case "snapshot_interval":
@@ -672,6 +804,17 @@ func validateSetting(key, value string) (string, error) {
 			n = 3
 		} else if n > 300 {
 			n = 300
+		}
+		return strconv.Itoa(n), nil
+	case "recent_files_count":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("recent_files_count must be a number")
+		}
+		if n < 1 {
+			n = 1
+		} else if n > 20 {
+			n = 20
 		}
 		return strconv.Itoa(n), nil
 	default:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"log"
 	"net/http"
 	"net/url"
@@ -496,6 +497,111 @@ func (p *Plugin) setTasmotaPower(ctx context.Context, on bool) error {
 	return err
 }
 
+func (p *Plugin) GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error) {
+	data, err := p.doGet(ctx, "/api/files?recursive=true")
+	if err != nil {
+		return nil, err
+	}
+
+	var resp struct {
+		Files []octoprintFile `json:"files"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, err
+	}
+
+	var files []models.RecentFile
+	collectFiles(resp.Files, &files)
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].UploadedAt > files[j].UploadedAt
+	})
+
+	if len(files) > limit {
+		files = files[:limit]
+	}
+	return files, nil
+}
+
+type octoprintFile struct {
+	Name      string  `json:"name"`
+	Path      string  `json:"path"`
+	Origin    string  `json:"origin"`
+	Type      string  `json:"type"`
+	Size      int64   `json:"size"`
+	Date      int64   `json:"date"`
+	Thumbnail string  `json:"thumbnail"`
+	Children  []octoprintFile `json:"children"`
+	Prints *struct {
+		Success int `json:"success"`
+		Failure int `json:"failure"`
+		Last    *struct {
+			Date    float64 `json:"date"`
+			Success bool    `json:"success"`
+		} `json:"last"`
+	} `json:"prints"`
+}
+
+func collectFiles(files []octoprintFile, out *[]models.RecentFile) {
+	for _, f := range files {
+		if f.Type == "folder" && len(f.Children) > 0 {
+			collectFiles(f.Children, out)
+			continue
+		}
+		if f.Type != "machinecode" {
+			continue
+		}
+		rf := models.RecentFile{
+			FileName:      f.Name,
+			Path:          f.Path,
+			Origin:        f.Origin,
+			UploadedAt:    f.Date,
+			SizeMB:        float64(f.Size) / (1024 * 1024),
+			ThumbnailPath: f.Thumbnail,
+		}
+		if f.Prints != nil {
+			rf.SuccessCount = f.Prints.Success
+			rf.FailureCount = f.Prints.Failure
+			if f.Prints.Last != nil {
+				rf.LastPrinted = int64(f.Prints.Last.Date)
+				rf.LastSuccess = &f.Prints.Last.Success
+			}
+		}
+		*out = append(*out, rf)
+	}
+}
+
+func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
+	_, err := p.doPost(ctx, "/api/files/"+location+"/"+path, map[string]any{
+		"command": "select",
+		"print":   true,
+	})
+	return err
+}
+
+func (p *Plugin) PausePrint(ctx context.Context) error {
+	_, err := p.doPost(ctx, "/api/job", map[string]string{
+		"command": "pause",
+		"action":  "pause",
+	})
+	return err
+}
+
+func (p *Plugin) ResumePrint(ctx context.Context) error {
+	_, err := p.doPost(ctx, "/api/job", map[string]string{
+		"command": "pause",
+		"action":  "resume",
+	})
+	return err
+}
+
+func (p *Plugin) CancelPrint(ctx context.Context) error {
+	_, err := p.doPost(ctx, "/api/job", map[string]string{
+		"command": "cancel",
+	})
+	return err
+}
+
 func (p *Plugin) fetchPowerState(ctx context.Context) *models.PowerState {
 	if p.hasPlugin("tasmota") {
 		return p.fetchTasmotaPower(ctx)
@@ -596,7 +702,7 @@ func (p *Plugin) doPost(ctx context.Context, path string, body any) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("octoprint API returned %d", resp.StatusCode)
 	}
 	return data, nil

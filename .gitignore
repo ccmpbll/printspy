@@ -2,3 +2,4 @@ printspy
 *.db
 /data/
 config.yaml
+.devdata/

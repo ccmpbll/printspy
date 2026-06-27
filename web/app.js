@@ -61,6 +61,100 @@ function updateHeaderCount() {
 
 // Power control
 
+// Recent prints and reprint
+
+async function loadRecentPrints(printerId) {
+    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
+    if (!card) return;
+    const container = card.querySelector('[data-field="recent-prints"]');
+    if (!container) return;
+
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/recent`);
+        if (!resp.ok) { container.innerHTML = ''; return; }
+        const prints = await resp.json();
+        if (!prints || prints.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        container.innerHTML = `
+            <div class="recent-dropdown">
+                <button class="btn btn-sm btn-recent-toggle" onclick="event.stopPropagation();toggleRecentDropdown(this.parentElement)">&#128196; Recent files (${prints.length})</button>
+                <div class="recent-menu">${prints.map(p => {
+                    const thumb = p.thumbnail_path ? `<img class="recent-thumb" src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(p.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
+                    let status = 'New';
+                    let statusClass = 'recent-status-new';
+                    if (p.success_count > 0 && p.last_success !== false) {
+                        status = `${p.success_count}x printed`;
+                        statusClass = 'recent-status-success';
+                    } else if (p.last_success === false) {
+                        status = 'Failed';
+                        statusClass = 'recent-status-failed';
+                    }
+                    const btnLabel = p.success_count > 0 ? '&#8634; Reprint' : '&#9654; Print';
+                    return `<div class="recent-item">
+                        ${thumb}
+                        <div class="recent-item-info">
+                            <span class="recent-name" title="${esc(p.file_name)}">${esc(p.file_name)}</span>
+                            <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(p.uploaded_at)}</span>
+                        </div>
+                        <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();startReprint(this)" title="Print">${btnLabel}</button>
+                    </div>`;
+                }).join('')}
+                </div>
+            </div>`;
+    } catch (e) { container.innerHTML = ''; }
+}
+
+function toggleRecentDropdown(el) {
+    const wasOpen = el.classList.contains('open');
+    document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
+    if (!wasOpen) el.classList.add('open');
+}
+
+async function startReprint(btn) {
+    const printerId = btn.dataset.printer;
+    const origin = btn.dataset.origin;
+    const path = btn.dataset.path;
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/print`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({origin, path}),
+        });
+        if (!resp.ok) {
+            const data = await resp.json();
+            if (data.error) alert(data.error);
+        }
+    } catch (e) {}
+}
+
+function formatDate(unixTs) {
+    if (!unixTs) return '';
+    const d = new Date(unixTs * 1000);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 86400000) return 'today';
+    if (diff < 172800000) return 'yesterday';
+    if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+    return d.toLocaleDateString();
+}
+
+// Print control
+
+async function controlPrint(printerId, action) {
+    if (action === 'cancel' && !confirm('Cancel this print?')) return;
+    try {
+        await fetch(`/api/printers/${printerId}/control`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({action}),
+        });
+    } catch (e) {}
+}
+
+// Power control
+
 async function setPower(printerId, action) {
     try {
         await fetch(`/api/printers/${printerId}/power`, {
@@ -173,6 +267,9 @@ function updateDashboard() {
     if (structureChanged) {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
+        printers.forEach(p => {
+            if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
+        });
     }
 }
 
@@ -202,12 +299,26 @@ function renderPrinterCard(printer) {
         powerHTML = `<span class="power-btn-group" data-field="power"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on')">&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off')" ${offDisabled}>Off</button></span>`;
     }
 
+    let controlHTML = '';
+    if (state === 'printing') {
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();controlPrint(${cfg.id},'pause')">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();controlPrint(${cfg.id},'cancel')">&#9724; Cancel</button></span>`;
+    } else if (state === 'paused') {
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();controlPrint(${cfg.id},'resume')">&#9654; Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();controlPrint(${cfg.id},'cancel')">&#9724; Cancel</button></span>`;
+    }
+
+    let recentHTML = '';
+    if (state === 'idle') {
+        recentHTML = `<span class="recent-prints" data-field="recent-prints"></span>`;
+    }
+
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 ${powerHTML}
+                ${controlHTML}
+                ${recentHTML}
                 <span class="printer-url">${esc(cfg.url)}</span>
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">OctoPrint &#8599;</a>
             </div>
@@ -314,6 +425,7 @@ function renderIdleStats(status, state) {
 
     const msgClass = state === 'error' ? 'idle-message msg-error' :
                      state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
+
     return `<div class="${msgClass}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
 }
 
@@ -330,6 +442,7 @@ function updateCard(card, printer) {
 
     if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown)) {
         card.outerHTML = renderPrinterCard(printer);
+        if (state === 'idle') loadRecentPrints(cfg.id);
         return;
     }
 
@@ -436,6 +549,7 @@ function setStatValue(card, field, main, unit) {
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
+        document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
     });
     renderSettingsPrinterList();
     document.getElementById('settings-modal').classList.add('active');
@@ -634,6 +748,7 @@ async function saveSettings(e) {
     e.preventDefault();
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
+        recent_files_count: document.getElementById('setting-recent-files').value,
     };
     await fetch('/api/settings', {
         method: 'PUT',
@@ -682,7 +797,16 @@ document.querySelectorAll('.modal-overlay').forEach(modal => {
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeModal();
+    if (e.key === 'Escape') {
+        closeModal();
+        document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
+    }
+});
+
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.recent-dropdown')) {
+        document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
+    }
 });
 
 // Initialize

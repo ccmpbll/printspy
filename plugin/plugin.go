@@ -17,6 +17,11 @@ type PrinterPlugin interface {
 	GetThumbnailURL(ctx context.Context) string
 	GetPrinterName(ctx context.Context) string
 	SetPowerState(ctx context.Context, on bool) error
+	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
+	StartPrint(ctx context.Context, location, path string) error
+	PausePrint(ctx context.Context) error
+	ResumePrint(ctx context.Context) error
+	CancelPrint(ctx context.Context) error
 }
 
 type PluginFactory func(config models.PrinterConfig) PrinterPlugin

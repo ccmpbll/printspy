@@ -67,6 +67,19 @@ type PrinterStatus struct {
 	LastUpdated  time.Time    `json:"last_updated"`
 }
 
+type RecentFile struct {
+	FileName      string  `json:"file_name"`
+	Path          string  `json:"path"`
+	Origin        string  `json:"origin"`
+	UploadedAt    int64   `json:"uploaded_at"`
+	SuccessCount  int     `json:"success_count"`
+	FailureCount  int     `json:"failure_count"`
+	LastPrinted   int64   `json:"last_printed,omitempty"`
+	LastSuccess   *bool   `json:"last_success,omitempty"`
+	SizeMB        float64 `json:"size_mb,omitempty"`
+	ThumbnailPath string  `json:"thumbnail_path,omitempty"`
+}
+
 type PrinterWithStatus struct {
 	Config PrinterConfig  `json:"config"`
 	Status *PrinterStatus `json:"status"`

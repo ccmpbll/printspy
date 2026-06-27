@@ -145,6 +145,45 @@ func (p *Poller) GetSnapshotURL(id int64) string {
 	return ""
 }
 
+func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]models.RecentFile, error) {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.GetRecentFiles(ctx, limit)
+}
+
+func (p *Poller) StartPrint(ctx context.Context, id int64, location, path string) error {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.StartPrint(ctx, location, path)
+}
+
+func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) error {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("printer %d not found", id)
+	}
+	switch action {
+	case "pause":
+		return pp.plugin.PausePrint(ctx)
+	case "resume":
+		return pp.plugin.ResumePrint(ctx)
+	case "cancel":
+		return pp.plugin.CancelPrint(ctx)
+	default:
+		return fmt.Errorf("unknown action: %s", action)
+	}
+}
+
 func (p *Poller) SetPowerState(ctx context.Context, id int64, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
