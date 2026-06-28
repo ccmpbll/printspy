@@ -2,11 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/md5"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,6 +111,7 @@ type printerRequest struct {
 	Type         string `json:"type"`
 	URL          string `json:"url"`
 	APIKey       string `json:"api_key"`
+	Username     string `json:"username"`
 	Enabled      bool   `json:"enabled"`
 	PollInterval int    `json:"poll_interval"`
 }
@@ -123,6 +128,7 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 		Type:         req.Type,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
+		Username:     req.Username,
 		PollInterval: req.PollInterval,
 	}
 
@@ -199,8 +205,9 @@ func (h *Handler) getPrinter(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	jsonResponse(w, struct {
 		models.PrinterConfig
-		APIKey string `json:"api_key"`
-	}{*printer, printer.APIKey})
+		APIKey   string `json:"api_key"`
+		Username string `json:"username"`
+	}{*printer, printer.APIKey, printer.Username})
 }
 
 func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64) {
@@ -215,6 +222,7 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		Type:         req.Type,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
+		Username:     req.Username,
 		Enabled:      req.Enabled,
 		PollInterval: req.PollInterval,
 	}
@@ -249,9 +257,10 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type   string `json:"type"`
-		URL    string `json:"url"`
-		APIKey string `json:"api_key"`
+		Type     string `json:"type"`
+		URL      string `json:"url"`
+		APIKey   string `json:"api_key"`
+		Username string `json:"username"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -261,7 +270,7 @@ func (h *Handler) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 		req.Type = "octoprint"
 	}
 
-	cfg := models.PrinterConfig{Type: req.Type, URL: req.URL, APIKey: req.APIKey}
+	cfg := models.PrinterConfig{Type: req.Type, URL: req.URL, APIKey: req.APIKey, Username: req.Username}
 	pl, err := plugin.Create(cfg)
 	if err != nil {
 		jsonError(w, "unsupported printer type", http.StatusBadRequest)
@@ -622,6 +631,7 @@ type configExportPrinter struct {
 	Type         string `yaml:"type"`
 	URL          string `yaml:"url"`
 	APIKey       string `yaml:"api_key"`
+	Username     string `yaml:"username,omitempty"`
 	PollInterval int    `yaml:"poll_interval"`
 	Enabled      bool   `yaml:"enabled"`
 }
@@ -658,6 +668,7 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 			Type:         full.Type,
 			URL:          full.URL,
 			APIKey:       full.APIKey,
+			Username:     full.Username,
 			PollInterval: full.PollInterval,
 			Enabled:      full.Enabled,
 		}
@@ -704,6 +715,7 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 			Type:         ep.Type,
 			URL:          ep.URL,
 			APIKey:       ep.APIKey,
+			Username:     ep.Username,
 			PollInterval: ep.PollInterval,
 			Enabled:      ep.Enabled,
 		}
@@ -813,7 +825,11 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("X-Api-Key", printer.APIKey)
+	if printer.Type == "prusalink" {
+		req.SetBasicAuth(printer.Username, printer.APIKey)
+	} else {
+		req.Header.Set("X-Api-Key", printer.APIKey)
+	}
 
 	resp, err := h.proxy.Do(req)
 	if err != nil {
@@ -822,6 +838,27 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
+		authHeader := resp.Header.Get("WWW-Authenticate")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, snapshotURL, nil)
+		digestAuth := buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, "/api/v1/cameras/snap", authHeader)
+		req2.Header.Set("Authorization", digestAuth)
+		resp2, err := h.proxy.Do(req2)
+		if err != nil {
+			h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] digest auth failed for %s: %v", id, snapshotURL, err)
+			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
+			return
+		}
+		defer resp2.Body.Close()
+		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
+		w.Header().Set("Cache-Control", "no-cache, no-store")
+		io.Copy(w, resp2.Body)
+		return
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		h.logOnce(fmt.Sprintf("snapshot-status-%d", id), 30*time.Second, "[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
@@ -857,7 +894,11 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("X-Api-Key", printer.APIKey)
+	if printer.Type == "prusalink" {
+		req.SetBasicAuth(printer.Username, printer.APIKey)
+	} else {
+		req.Header.Set("X-Api-Key", printer.APIKey)
+	}
 
 	resp, err := h.proxy.Do(req)
 	if err != nil {
@@ -865,6 +906,27 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
+		authHeader := resp.Header.Get("WWW-Authenticate")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		parsed, _ := url.Parse(thumbURL)
+		uriPath := parsed.Path
+		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
+		req2.Header.Set("Authorization", buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
+		resp2, err := h.proxy.Do(req2)
+		if err != nil {
+			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
+			return
+		}
+		defer resp2.Body.Close()
+		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
+		w.Header().Set("Cache-Control", "no-cache")
+		io.Copy(w, resp2.Body)
+		return
+	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
@@ -902,7 +964,11 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("X-Api-Key", printer.APIKey)
+	if printer.Type == "prusalink" {
+		req.SetBasicAuth(printer.Username, printer.APIKey)
+	} else {
+		req.Header.Set("X-Api-Key", printer.APIKey)
+	}
 
 	resp, err := h.proxy.Do(req)
 	if err != nil {
@@ -910,6 +976,26 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
+		authHeader := resp.Header.Get("WWW-Authenticate")
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		uriPath := "/" + strings.TrimLeft(thumbPath, "/")
+		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
+		req2.Header.Set("Authorization", buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
+		resp2, err := h.proxy.Do(req2)
+		if err != nil {
+			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
+			return
+		}
+		defer resp2.Body.Close()
+		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
+		w.Header().Set("Cache-Control", "max-age=3600")
+		io.Copy(w, resp2.Body)
+		return
+	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "max-age=3600")
@@ -954,6 +1040,70 @@ func validateSetting(key, value string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}
+}
+
+func buildDigestAuth(username, password, method, uri, wwwAuth string) string {
+	params := make(map[string]string)
+	header := strings.TrimPrefix(wwwAuth, "Digest ")
+	inQuote := false
+	start := 0
+	for i := 0; i < len(header); i++ {
+		if header[i] == '"' {
+			inQuote = !inQuote
+		} else if header[i] == ',' && !inQuote {
+			parseDigestParam(header[start:i], params)
+			start = i + 1
+		}
+	}
+	if start < len(header) {
+		parseDigestParam(header[start:], params)
+	}
+
+	realm := params["realm"]
+	nonce := params["nonce"]
+	qop := params["qop"]
+
+	h1 := md5Hash(username + ":" + realm + ":" + password)
+	h2 := md5Hash(method + ":" + uri)
+
+	b := make([]byte, 8)
+	crand.Read(b)
+	cnonce := hex.EncodeToString(b)
+	nc := "00000001"
+
+	var response string
+	if strings.Contains(qop, "auth") {
+		response = md5Hash(h1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + h2)
+	} else {
+		response = md5Hash(h1 + ":" + nonce + ":" + h2)
+	}
+
+	auth := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
+		username, realm, nonce, uri, response)
+	if qop != "" {
+		auth += fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, nc, cnonce)
+	}
+	if opaque, ok := params["opaque"]; ok {
+		auth += fmt.Sprintf(`, opaque="%s"`, opaque)
+	}
+	return auth
+}
+
+func parseDigestParam(s string, params map[string]string) {
+	s = strings.TrimSpace(s)
+	eq := strings.IndexByte(s, '=')
+	if eq < 0 {
+		return
+	}
+	key := strings.TrimSpace(s[:eq])
+	val := strings.TrimSpace(s[eq+1:])
+	val = strings.Trim(val, `"`)
+	params[key] = val
+}
+
+func md5Hash(s string) string {
+	h := md5.Sum([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

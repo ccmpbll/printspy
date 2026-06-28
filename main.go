@@ -16,6 +16,7 @@ import (
 	"github.com/ccmpbll/printspy/poller"
 
 	_ "github.com/ccmpbll/printspy/plugin/octoprint"
+	_ "github.com/ccmpbll/printspy/plugin/prusalink"
 )
 
 var version = "dev"

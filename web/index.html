@@ -46,16 +46,21 @@
                 </div>
                 <div class="form-group">
                     <label for="printer-type">Type</label>
-                    <select id="printer-type">
+                    <select id="printer-type" onchange="onPrinterTypeChange()">
                         <option value="octoprint">OctoPrint</option>
+                        <option value="prusalink">PrusaLink</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label for="printer-url">URL</label>
                     <input type="url" id="printer-url" placeholder="http://192.168.1.40" required>
                 </div>
+                <div class="form-group" id="username-group" style="display:none">
+                    <label for="printer-username">Username</label>
+                    <input type="text" id="printer-username" placeholder="maker" value="maker">
+                </div>
                 <div class="form-group">
-                    <label for="printer-apikey">API Key</label>
+                    <label for="printer-apikey" id="apikey-label">API Key</label>
                     <input type="text" id="printer-apikey" placeholder="Your OctoPrint API key" required>
                 </div>
                 <div class="form-group">

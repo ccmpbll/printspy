@@ -71,12 +71,15 @@ func (db *DB) migrate() error {
 	// Migration: add sort_order column if missing (existing databases)
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
 
+	// Migration: add username column for PrusaLink digest auth
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN username TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 
 func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, type, url, api_key, enabled, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, url, api_key, username, enabled, poll_interval, sort_order, created_at, updated_at
 		FROM printers ORDER BY sort_order, id
 	`)
 	if err != nil {
@@ -88,7 +91,7 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	for rows.Next() {
 		var p models.PrinterConfig
 		var enabled int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
@@ -101,9 +104,9 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	var p models.PrinterConfig
 	var enabled int
 	err := db.conn.QueryRow(`
-		SELECT id, name, type, url, api_key, enabled, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, url, api_key, username, enabled, poll_interval, sort_order, created_at, updated_at
 		FROM printers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -126,9 +129,9 @@ func (db *DB) CreatePrinter(p *models.PrinterConfig) error {
 	p.SortOrder = maxOrder + 1
 
 	result, err := db.conn.Exec(`
-		INSERT INTO printers (name, type, url, api_key, enabled, poll_interval, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, p.Name, p.Type, p.URL, p.APIKey, enabled, p.PollInterval, p.SortOrder)
+		INSERT INTO printers (name, type, url, api_key, username, enabled, poll_interval, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.Type, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -142,9 +145,9 @@ func (db *DB) UpdatePrinter(p *models.PrinterConfig) error {
 		enabled = 1
 	}
 	_, err := db.conn.Exec(`
-		UPDATE printers SET name=?, type=?, url=?, api_key=?, enabled=?, poll_interval=?, updated_at=CURRENT_TIMESTAMP
+		UPDATE printers SET name=?, type=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?
-	`, p.Name, p.Type, p.URL, p.APIKey, enabled, p.PollInterval, p.ID)
+	`, p.Name, p.Type, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.ID)
 	return err
 }
 
@@ -189,6 +192,14 @@ func (db *DB) GetPrintHistory(printerID int64, limit int) ([]models.PrintHistory
 		history = append(history, h)
 	}
 	return history, rows.Err()
+}
+
+func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO print_history (printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM)
+	return err
 }
 
 // Settings

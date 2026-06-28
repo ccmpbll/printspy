@@ -19,6 +19,7 @@ type PrinterConfig struct {
 	Type         string `json:"type"`
 	URL          string `json:"url"`
 	APIKey       string `json:"-"`
+	Username     string `json:"username,omitempty"`
 	Enabled      bool   `json:"enabled"`
 	PollInterval int    `json:"poll_interval"`
 	SortOrder    int    `json:"sort_order"`

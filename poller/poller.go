@@ -337,5 +337,51 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		}
 	}
 
+	p.trackPrintHistory(id, prevState, status, prev)
+
 	p.broadcast(id, status)
+}
+
+func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus) {
+	wasPrinting := prevState == models.StatePrinting || prevState == models.StatePaused
+	nowDone := status.State == models.StateIdle || status.State == models.StateError || status.State == models.StateOffline
+
+	if !wasPrinting || !nowDone {
+		return
+	}
+
+	fileName := ""
+	elapsed := 0
+	filament := 0.0
+	if prev != nil && prev.Job != nil {
+		fileName = prev.Job.FileName
+		elapsed = prev.Job.ElapsedSecs
+		filament = prev.Job.FilamentUsedMM
+	}
+	if fileName == "" {
+		return
+	}
+
+	result := "completed"
+	if status.State == models.StateError {
+		result = "failed"
+	} else if prev != nil && prev.Job != nil && prev.Job.Progress < 99 {
+		result = "cancelled"
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	h := &models.PrintHistory{
+		PrinterID:      id,
+		FileName:       fileName,
+		StartedAt:      time.Now().Add(-time.Duration(elapsed) * time.Second).UTC().Format(time.RFC3339),
+		CompletedAt:    now,
+		DurationSecs:   elapsed,
+		Result:         result,
+		FilamentUsedMM: filament,
+	}
+	if err := p.db.InsertPrintHistory(h); err != nil {
+		log.Printf("[printer:%d] failed to record print history: %v", id, err)
+	} else {
+		log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, fileName, result, elapsed)
+	}
 }

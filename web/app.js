@@ -292,7 +292,7 @@ function renderPrinterCard(printer) {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
-    const wcMode = getWebcamMode(cfg.id);
+    const wcMode = cfg.type === 'prusalink' ? 'snapshot' : getWebcamMode(cfg.id);
     const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
 
     let powerHTML = '';
@@ -329,8 +329,7 @@ function renderPrinterCard(printer) {
                 ${powerHTML}
                 ${controlHTML}
                 ${recentHTML}
-                <span class="printer-url">${esc(cfg.url)}</span>
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">OctoPrint &#8599;</a>
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper">
@@ -338,7 +337,7 @@ function renderPrinterCard(printer) {
                         <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="webcamError(this,${isPrinting})">
                         <div class="webcam-placeholder" style="display:none">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
-                        <button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>
+                        ${cfg.type !== 'prusalink' ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
                     </div>
                 </div>
                 <div class="printer-stats">
@@ -406,7 +405,7 @@ function renderIdleStats(status, state) {
     const detailMsg = status && status.state_message ? status.state_message : '';
     let stateMsg;
     if (state === 'offline') {
-        stateMsg = detailMsg || 'Unable to reach OctoPrint';
+        stateMsg = detailMsg || 'Unable to reach printer';
     } else if (state === 'disconnected') {
         stateMsg = 'Printer disconnected';
     } else if (state === 'error') {
@@ -471,7 +470,7 @@ function updateCard(card, printer) {
                              state === 'disconnected' ? 'idle-message msg-disconnected' :
                              state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
             idleMsg.className = msgClass;
-            if (state === 'offline') idleMsg.textContent = detailMsg || 'Unable to reach OctoPrint';
+            if (state === 'offline') idleMsg.textContent = detailMsg || 'Unable to reach printer';
             else if (state === 'disconnected') idleMsg.textContent = 'Printer disconnected';
             else if (state === 'error') idleMsg.textContent = detailMsg || 'Printer reported an error';
             else idleMsg.textContent = 'Ready for next job';
@@ -592,7 +591,7 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-info">
                     <span class="settings-printer-name">${esc(cfg.name)}</span>
-                    <span class="settings-printer-url">${esc(cfg.url)}</span>
+                    <span class="settings-printer-url">${esc(cfg.url)} (${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'})</span>
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
@@ -626,15 +625,28 @@ async function movePrinter(id, direction) {
 
 // Add/Edit printer modals
 
+function onPrinterTypeChange() {
+    const type = document.getElementById('printer-type').value;
+    const isPrusalink = type === 'prusalink';
+    document.getElementById('username-group').style.display = isPrusalink ? '' : 'none';
+    document.getElementById('apikey-label').textContent = isPrusalink ? 'Password' : 'API Key';
+    document.getElementById('printer-apikey').placeholder = isPrusalink ? 'Your PrusaLink password' : 'Your OctoPrint API key';
+    if (isPrusalink && !document.getElementById('printer-username').value) {
+        document.getElementById('printer-username').value = 'maker';
+    }
+}
+
 function openAddModal() {
     document.getElementById('modal-title').textContent = 'Add printer';
     document.getElementById('printer-id').value = '';
     document.getElementById('printer-name').value = '';
     document.getElementById('printer-type').value = 'octoprint';
     document.getElementById('printer-url').value = '';
+    document.getElementById('printer-username').value = 'maker';
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = '10';
     document.getElementById('test-btn').style.display = 'inline-flex';
+    onPrinterTypeChange();
     hideTestResult();
     document.getElementById('printer-modal').classList.add('active');
 }
@@ -650,8 +662,10 @@ async function openEditModal(id) {
     document.getElementById('printer-type').value = cfg.type;
     document.getElementById('printer-url').value = cfg.url;
     document.getElementById('printer-apikey').value = '';
+    document.getElementById('printer-username').value = cfg.username || 'maker';
     document.getElementById('printer-poll').value = cfg.poll_interval;
     document.getElementById('test-btn').style.display = 'inline-flex';
+    onPrinterTypeChange();
     hideTestResult();
     document.getElementById('printer-modal').classList.add('active');
 
@@ -660,6 +674,7 @@ async function openEditModal(id) {
         if (resp.ok) {
             const data = await resp.json();
             document.getElementById('printer-apikey').value = data.api_key || '';
+            if (data.username) document.getElementById('printer-username').value = data.username;
         }
     } catch (e) {}
 }
@@ -678,11 +693,13 @@ function hideTestResult() {
 async function savePrinter(e) {
     e.preventDefault();
     const id = document.getElementById('printer-id').value;
+    const printerType = document.getElementById('printer-type').value;
     const data = {
         name: document.getElementById('printer-name').value,
-        type: document.getElementById('printer-type').value,
+        type: printerType,
         url: document.getElementById('printer-url').value.replace(/\/+$/, ''),
         api_key: document.getElementById('printer-apikey').value,
+        username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
         poll_interval: parseInt(document.getElementById('printer-poll').value) || 10,
         enabled: true,
     };
@@ -738,10 +755,14 @@ async function testConnection() {
     el.textContent = 'Testing connection...';
 
     try {
+        const testBody = {type: printerType, url: printerURL, api_key: apiKey};
+        if (printerType === 'prusalink') {
+            testBody.username = document.getElementById('printer-username').value;
+        }
         const resp = await fetch('/api/test', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({type: printerType, url: printerURL, api_key: apiKey}),
+            body: JSON.stringify(testBody),
         });
         const data = await resp.json();
         if (data.success) {
