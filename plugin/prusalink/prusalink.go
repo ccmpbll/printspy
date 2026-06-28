@@ -2,9 +2,6 @@ package prusalink
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
 )
@@ -331,7 +329,7 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 		if err != nil {
 			return nil, 0, err
 		}
-		digestAuth := buildDigestAuth(p.config.Username, p.config.APIKey, http.MethodGet, path, authHeader)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodGet, path, authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
 		resp2, err := p.client.Do(req2)
@@ -412,7 +410,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		if body != nil {
 			req2.Header.Set("Content-Type", "application/json")
 		}
-		digestAuth := buildDigestAuth(p.config.Username, p.config.APIKey, method, path, authHeader)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, method, path, authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
 		resp2, err := p.client.Do(req2)
@@ -439,88 +437,6 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		return nil, fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(data))
 	}
 	return data, nil
-}
-
-// HTTP Digest authentication
-
-func buildDigestAuth(username, password, method, uri, wwwAuth string) string {
-	params := parseDigestChallenge(wwwAuth)
-	realm := params["realm"]
-	nonce := params["nonce"]
-	qop := params["qop"]
-
-	ha1 := md5Hash(username + ":" + realm + ":" + password)
-	ha2 := md5Hash(method + ":" + uri)
-
-	cnonce := generateCNonce()
-	nc := "00000001"
-
-	var response string
-	if qop == "auth" || qop == "auth,auth-int" || strings.Contains(qop, "auth") {
-		response = md5Hash(ha1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + ha2)
-	} else {
-		response = md5Hash(ha1 + ":" + nonce + ":" + ha2)
-	}
-
-	auth := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
-		username, realm, nonce, uri, response)
-
-	if qop != "" {
-		auth += fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, nc, cnonce)
-	}
-	if opaque, ok := params["opaque"]; ok {
-		auth += fmt.Sprintf(`, opaque="%s"`, opaque)
-	}
-
-	return auth
-}
-
-func parseDigestChallenge(header string) map[string]string {
-	params := make(map[string]string)
-	header = strings.TrimPrefix(header, "Digest ")
-
-	parts := splitDigestParams(header)
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		eq := strings.IndexByte(part, '=')
-		if eq < 0 {
-			continue
-		}
-		key := strings.TrimSpace(part[:eq])
-		val := strings.TrimSpace(part[eq+1:])
-		val = strings.Trim(val, `"`)
-		params[key] = val
-	}
-	return params
-}
-
-func splitDigestParams(s string) []string {
-	var parts []string
-	inQuote := false
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '"' {
-			inQuote = !inQuote
-		} else if s[i] == ',' && !inQuote {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		parts = append(parts, s[start:])
-	}
-	return parts
-}
-
-func md5Hash(s string) string {
-	h := md5.Sum([]byte(s))
-	return hex.EncodeToString(h[:])
-}
-
-func generateCNonce() string {
-	b := make([]byte, 8)
-	rand.Read(b)
-	return hex.EncodeToString(b)
 }
 
 // State mapping

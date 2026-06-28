@@ -2,9 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/md5"
-	crand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
@@ -844,8 +842,13 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
-		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, snapshotURL, nil)
-		digestAuth := buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, "/api/v1/cameras/snap", authHeader)
+		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, snapshotURL, nil)
+		if err != nil {
+			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
+			return
+		}
+		parsed, _ := url.Parse(snapshotURL)
+		digestAuth := digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, parsed.Path, authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 		resp2, err := h.proxy.Do(req2)
 		if err != nil {
@@ -913,9 +916,12 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 
 		parsed, _ := url.Parse(thumbURL)
-		uriPath := parsed.Path
-		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
-		req2.Header.Set("Authorization", buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
+		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
+		if err != nil {
+			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
+			return
+		}
+		req2.Header.Set("Authorization", digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, parsed.Path, authHeader))
 		resp2, err := h.proxy.Do(req2)
 		if err != nil {
 			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
@@ -983,8 +989,12 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		resp.Body.Close()
 
 		uriPath := "/" + strings.TrimLeft(thumbPath, "/")
-		req2, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
-		req2.Header.Set("Authorization", buildDigestAuth(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
+		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
+		if err != nil {
+			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
+			return
+		}
+		req2.Header.Set("Authorization", digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
 		resp2, err := h.proxy.Do(req2)
 		if err != nil {
 			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
@@ -1040,70 +1050,6 @@ func validateSetting(key, value string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}
-}
-
-func buildDigestAuth(username, password, method, uri, wwwAuth string) string {
-	params := make(map[string]string)
-	header := strings.TrimPrefix(wwwAuth, "Digest ")
-	inQuote := false
-	start := 0
-	for i := 0; i < len(header); i++ {
-		if header[i] == '"' {
-			inQuote = !inQuote
-		} else if header[i] == ',' && !inQuote {
-			parseDigestParam(header[start:i], params)
-			start = i + 1
-		}
-	}
-	if start < len(header) {
-		parseDigestParam(header[start:], params)
-	}
-
-	realm := params["realm"]
-	nonce := params["nonce"]
-	qop := params["qop"]
-
-	h1 := md5Hash(username + ":" + realm + ":" + password)
-	h2 := md5Hash(method + ":" + uri)
-
-	b := make([]byte, 8)
-	crand.Read(b)
-	cnonce := hex.EncodeToString(b)
-	nc := "00000001"
-
-	var response string
-	if strings.Contains(qop, "auth") {
-		response = md5Hash(h1 + ":" + nonce + ":" + nc + ":" + cnonce + ":auth:" + h2)
-	} else {
-		response = md5Hash(h1 + ":" + nonce + ":" + h2)
-	}
-
-	auth := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
-		username, realm, nonce, uri, response)
-	if qop != "" {
-		auth += fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, nc, cnonce)
-	}
-	if opaque, ok := params["opaque"]; ok {
-		auth += fmt.Sprintf(`, opaque="%s"`, opaque)
-	}
-	return auth
-}
-
-func parseDigestParam(s string, params map[string]string) {
-	s = strings.TrimSpace(s)
-	eq := strings.IndexByte(s, '=')
-	if eq < 0 {
-		return
-	}
-	key := strings.TrimSpace(s[:eq])
-	val := strings.TrimSpace(s[eq+1:])
-	val = strings.Trim(val, `"`)
-	params[key] = val
-}
-
-func md5Hash(s string) string {
-	h := md5.Sum([]byte(s))
-	return hex.EncodeToString(h[:])
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

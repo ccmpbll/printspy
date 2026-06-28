@@ -228,7 +228,8 @@ function webcamError(img, isPrinting) {
     img.style.display = 'none';
     container.querySelector('.webcam-placeholder').style.display = 'block';
     container.querySelector('.webcam-badge').style.display = 'none';
-    container.querySelector('.webcam-toggle').style.display = 'none';
+    const toggle = container.querySelector('.webcam-toggle');
+    if (toggle) toggle.style.display = 'none';
     if (!isPrinting) container.classList.add('webcam-collapsed');
 }
 
@@ -422,8 +423,8 @@ function renderIdleStats(status, state) {
         if (temps.has_chamber) {
             cells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
         }
-        if (status.power && status.power.watts > 0) {
-            cells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(status.power.watts)}<span class="stat-unit">W</span></div></div>`);
+        if (totalWatts(status.power) > 0) {
+            cells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
         }
         tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
     }
@@ -800,6 +801,9 @@ async function saveSettings(e) {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     closeModal();
+    printers.forEach(p => {
+        if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
+    });
 }
 
 let snapshotTimer = null;
