@@ -842,15 +842,8 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
-		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, snapshotURL, nil)
-		if err != nil {
-			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
-			return
-		}
 		parsed, _ := url.Parse(snapshotURL)
-		digestAuth := digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, parsed.Path, authHeader)
-		req2.Header.Set("Authorization", digestAuth)
-		resp2, err := h.proxy.Do(req2)
+		resp2, err := h.digestRetry(r, snapshotURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
 		if err != nil {
 			h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] digest auth failed for %s: %v", id, snapshotURL, err)
 			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
@@ -870,6 +863,16 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	io.Copy(w, resp.Body)
+}
+
+// digestRetry re-issues a GET with a digest Authorization header built from a 401's WWW-Authenticate challenge.
+func (h *Handler) digestRetry(r *http.Request, targetURL, uriPath, username, apiKey, authHeader string) (*http.Response, error) {
+	req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req2.Header.Set("Authorization", digestauth.BuildHeader(username, apiKey, http.MethodGet, uriPath, authHeader))
+	return h.proxy.Do(req2)
 }
 
 func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
@@ -916,13 +919,7 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		resp.Body.Close()
 
 		parsed, _ := url.Parse(thumbURL)
-		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		req2.Header.Set("Authorization", digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, parsed.Path, authHeader))
-		resp2, err := h.proxy.Do(req2)
+		resp2, err := h.digestRetry(r, thumbURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
 		if err != nil {
 			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 			return
@@ -989,13 +986,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		resp.Body.Close()
 
 		uriPath := "/" + strings.TrimLeft(thumbPath, "/")
-		req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		req2.Header.Set("Authorization", digestauth.BuildHeader(printer.Username, printer.APIKey, http.MethodGet, uriPath, authHeader))
-		resp2, err := h.proxy.Do(req2)
+		resp2, err := h.digestRetry(r, thumbURL, uriPath, printer.Username, printer.APIKey, authHeader)
 		if err != nil {
 			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 			return

@@ -63,6 +63,12 @@ function updateHeaderCount() {
 
 // Recent prints and reprint
 
+function reloadIdlePrinterRecentPrints() {
+    printers.forEach(p => {
+        if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
+    });
+}
+
 async function loadRecentPrints(printerId) {
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
     if (!card) return;
@@ -273,9 +279,7 @@ function updateDashboard() {
     if (structureChanged) {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
-        printers.forEach(p => {
-            if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
-        });
+        reloadIdlePrinterRecentPrints();
     }
 }
 
@@ -801,9 +805,7 @@ async function saveSettings(e) {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     closeModal();
-    printers.forEach(p => {
-        if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
-    });
+    reloadIdlePrinterRecentPrints();
 }
 
 let snapshotTimer = null;
