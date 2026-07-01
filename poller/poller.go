@@ -245,15 +245,7 @@ func (s *subscriber) Done() <-chan struct{} {
 }
 
 func (p *Poller) BroadcastRefresh() {
-	msg := SSEMessage{Event: "refresh", Data: []byte(`{}`)}
-	p.subMu.Lock()
-	defer p.subMu.Unlock()
-	for s := range p.subscribers {
-		select {
-		case s.ch <- msg:
-		default:
-		}
-	}
+	p.sendToAll(SSEMessage{Event: "refresh", Data: []byte(`{}`)})
 }
 
 func (p *Poller) broadcast(printerID int64, status *models.PrinterStatus) {
@@ -267,7 +259,10 @@ func (p *Poller) broadcast(printerID int64, status *models.PrinterStatus) {
 		return
 	}
 
-	msg := SSEMessage{Event: "status", Data: data}
+	p.sendToAll(SSEMessage{Event: "status", Data: data})
+}
+
+func (p *Poller) sendToAll(msg SSEMessage) {
 	p.subMu.Lock()
 	defer p.subMu.Unlock()
 	for s := range p.subscribers {

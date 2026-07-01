@@ -46,13 +46,3 @@ func Create(config models.PrinterConfig) (PrinterPlugin, error) {
 	}
 	return factory(config), nil
 }
-
-func RegisteredTypes() []string {
-	mu.RLock()
-	defer mu.RUnlock()
-	types := make([]string, 0, len(registry))
-	for t := range registry {
-		types = append(types, t)
-	}
-	return types
-}
