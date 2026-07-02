@@ -22,7 +22,7 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 ## Supported platforms
 
 - **OctoPrint** — fully supported
-- **PrusaLink** — experimental (MK4/MK4S/MK3.9/Mini+/XL/Core One)
+- **PrusaLink** — experimental (Only tested on MK4S and Core One)
 
 Plugin architecture — new platforms are straightforward to add.
 
