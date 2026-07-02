@@ -1,46 +1,30 @@
 # <img src="web/logo.png" alt="" width="64"> PrintSpy
 ![Build Status](https://img.shields.io/github/actions/workflow/status/ccmpbll/printspy/build.yaml) ![Docker Image Size](https://img.shields.io/docker/image-size/ccmpbll/printspy/latest) ![Docker Pulls](https://img.shields.io/docker/pulls/ccmpbll/printspy.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)
 
-A self-hosted dashboard for monitoring multiple 3D printers from a single web interface.
+A self-hosted dashboard for monitoring multiple 3D printers — OctoPrint and PrusaLink — from a single web interface.
 
-> **Early Development** — PrintSpy is brand new and under active development. Things will break, APIs will change, and features are still being added. Feedback and contributions are welcome, but expect rough edges.
+> **Early Development** — expect rough edges, breaking changes, and evolving APIs. Feedback and contributions welcome.
 
 ## What it does
 
-PrintSpy connects to your 3D printers and displays their status on a single dashboard. Each printer gets a row showing:
-
-- Live webcam feed or periodic snapshots (toggleable per printer)
-- GCode thumbnail for the current print
-- Print progress, elapsed time, remaining time, and ETA
-- Hotend, bed, and chamber temperatures (chamber shown when detected)
-- Layer progress (when DisplayLayerProgress plugin is installed)
-- Smart plug power state and control (when Tasmota or PSU Control plugin is installed)
-- Live power consumption in watts (Tasmota devices with energy monitoring)
-- Direct link to each printer's native web interface
-
-Status updates are pushed in real-time via Server-Sent Events (SSE). Printers are managed through the settings page — no config files required. Just run the container, open the browser, and add your printers.
+Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, layer progress (OctoPrint + DisplayLayerProgress), and smart plug power state/control (Tasmota or PSU Control). Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
 ## Features
 
-- **Real-time updates** via SSE — no manual refresh needed
-- **Auto-detection** of camera stack (mjpg-streamer / camera-streamer) and printer name
-- **Plugin detection** — queries installed OctoPrint plugins to enable features like layer progress
-- **Smart plug integration** — monitors and controls power via OctoPrint-Tasmota or PSU Control plugins, with multi-plug support and energy monitoring (watts) for Tasmota devices
-- **Print control** — pause, resume, and cancel prints directly from the dashboard
-- **Recent files** — browse recently uploaded files per printer with thumbnails, print status, and one-click reprint
-- **Config backup** — export and import printer configuration and settings as YAML
-- **Snapshot/live toggle** — choose between periodic snapshots or live MJPEG stream per printer
-- **Printer reordering** — arrange printers in any order from the settings page
-- **Responsive layout** — works on desktop, tablet, and mobile
-- **Dark mode** — follows system preference
-- **Error reporting** — connection status banner, OctoPrint error passthrough, camera status differentiation
-- **Multi-arch** — runs on x86 and ARM (Raspberry Pi)
+- Real-time SSE updates, no manual refresh
+- Auto-detects camera stack, printer name, and installed plugins
+- Smart plug power control + energy monitoring (Tasmota, PSU Control)
+- Print control (pause/resume/cancel) and one-click reprint from recent files
+- Config backup/restore as YAML
+- Snapshot/live toggle, printer reordering, dark mode, responsive layout
+- Multi-arch (x86 + ARM)
 
 ## Supported platforms
 
-- **OctoPrint** — fully supported today
+- **OctoPrint** — fully supported
+- **PrusaLink** — experimental (MK4/MK4S/MK3.9/Mini+/XL/Core One)
 
-PrintSpy uses a plugin architecture, so adding support for new printer platforms is straightforward.
+Plugin architecture — new platforms are straightforward to add.
 
 ## Quick start
 
@@ -110,7 +94,7 @@ PrintSpy is in early development. If you'd like to contribute:
 
 - Open an issue to discuss before submitting large changes
 - Bug reports with `docker logs` output are especially helpful
-- Plugin implementations for PrusaLink or Moonraker/Klipper are welcome
+- Plugin implementations for Moonraker/Klipper are welcome
 
 ## License
 
