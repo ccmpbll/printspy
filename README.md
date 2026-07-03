@@ -7,14 +7,15 @@ A self-hosted dashboard for monitoring multiple 3D printers — OctoPrint and Pr
 
 ## What it does
 
-Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, layer progress (OctoPrint + DisplayLayerProgress), and smart plug power state/control (Tasmota or PSU Control). Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
+Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, layer progress (OctoPrint + DisplayLayerProgress), and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
 ## Features
 
 - Real-time SSE updates, no manual refresh
 - Auto-detects camera stack, printer name, and installed plugins
-- Smart plug power control + energy monitoring (Tasmota, PSU Control)
+- Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
 - Print control (pause/resume/cancel) and one-click reprint from recent files
+- Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Snapshot/live toggle, printer reordering, dark mode, responsive layout
 - Multi-arch (x86 + ARM)
@@ -62,6 +63,10 @@ All printer management is done through the web UI — open the settings page to 
 
 First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Users. No roles or permission tiers — every account has full access.
 
+### Smart plugs
+
+OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink, Klipper, or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
+
 ### Environment variables
 
 | Variable | Default | Description |
@@ -85,7 +90,7 @@ First run redirects to a setup page to create the first account. Add or remove a
 ## Building from source
 
 ```bash
-# Tested with Go 1.26, requires CGO (for SQLite)
+# Requires Go 1.25+ and CGO (for SQLite)
 make build
 
 # Or with Docker
