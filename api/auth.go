@@ -344,14 +344,15 @@ const authPageHead = `<!DOCTYPE html>
 <style>
 .auth-page { display:flex; align-items:center; justify-content:center; min-height:100vh; }
 .auth-card { width:100%; max-width:360px; background:var(--bg-primary); border:1px solid var(--border); border-radius:var(--radius-lg); padding:2rem; }
-.auth-card h1 { display:flex; align-items:center; gap:0.5rem; font-size:1.25rem; margin-bottom:1.5rem; }
-.auth-card img { width:28px; height:28px; }
+.auth-card .logo { display:block; width:100%; max-width:280px; height:auto; margin:0 auto 1.5rem; }
+.auth-card h1 { font-size:1.25rem; margin-bottom:1.5rem; }
 .auth-error { background:var(--error-bg); color:var(--error); padding:0.5rem 0.75rem; border-radius:var(--radius); font-size:0.875rem; margin-bottom:1rem; display:none; }
 </style>
 </head>
 <body>
 <div class="auth-page"><div class="auth-card">
-<h1><img src="/logo.png" alt=""> PrintSpy</h1>
+<img class="logo" src="/logo.png" alt="">
+<h1>PrintSpy</h1>
 <div class="auth-error" id="auth-error"></div>
 `
 
