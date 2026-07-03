@@ -574,7 +574,7 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "ip is required", http.StatusBadRequest)
 			return
 		}
-		id, err := h.db.CreateSmartPlug(req.IP, req.Idx, req.Label, req.PrinterID)
+		id, err := h.db.CreateSmartPlug(req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID)
 		if err != nil {
 			jsonError(w, "failed to create smart plug", http.StatusInternalServerError)
 			return
@@ -590,6 +590,7 @@ type smartPlugRequest struct {
 	IP        string `json:"ip"`
 	Idx       string `json:"idx"`
 	Label     string `json:"label"`
+	HideLabel bool   `json:"hide_label"`
 	PrinterID *int64 `json:"printer_id"`
 }
 
@@ -611,7 +612,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "ip is required", http.StatusBadRequest)
 			return
 		}
-		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.PrinterID); err != nil {
+		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID); err != nil {
 			jsonError(w, "failed to update smart plug", http.StatusInternalServerError)
 			return
 		}

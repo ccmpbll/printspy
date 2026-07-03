@@ -28,7 +28,7 @@ func TestGetState(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	ps, err := newTestClient().GetState(context.Background(), host, "1", "Printer")
+	ps, err := newTestClient().GetState(context.Background(), host, "1", "Printer", false)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestGetStateSingleRelayFallback(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	ps, err := newTestClient().GetState(context.Background(), host, "1", "")
+	ps, err := newTestClient().GetState(context.Background(), host, "1", "", false)
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestGetStateUnexpectedResponse(t *testing.T) {
 	defer srv.Close()
 
 	host := strings.TrimPrefix(srv.URL, "http://")
-	if _, err := newTestClient().GetState(context.Background(), host, "1", ""); err == nil {
+	if _, err := newTestClient().GetState(context.Background(), host, "1", "", false); err == nil {
 		t.Error("expected error for response with no POWER key, got nil")
 	}
 }

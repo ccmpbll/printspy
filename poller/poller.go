@@ -405,7 +405,7 @@ func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.
 	client := smartplug.New()
 	var states []models.PowerState
 	for _, sp := range plugs {
-		ps, err := client.GetState(ctx, sp.IP, sp.Idx, sp.Label)
+		ps, err := client.GetState(ctx, sp.IP, sp.Idx, sp.Label, sp.HideLabel)
 		if err != nil {
 			log.Printf("[printer:%d] smart plug %s:%s unreachable: %v", id, sp.IP, sp.Idx, err)
 			continue

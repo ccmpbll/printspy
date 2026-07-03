@@ -52,6 +52,7 @@ func (db *DB) migrate() error {
 			ip TEXT NOT NULL,
 			idx TEXT NOT NULL DEFAULT '1',
 			label TEXT NOT NULL DEFAULT '',
+			hide_label INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
@@ -143,7 +144,7 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 
 func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
 	rows, err := db.conn.Query(`
-		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, COALESCE(p.name, '')
+		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
 		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
 		ORDER BY sp.id
 	`)
@@ -156,7 +157,7 @@ func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
 
 func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
 	rows, err := db.conn.Query(`
-		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, COALESCE(p.name, '')
+		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
 		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
 		WHERE sp.printer_id = ? ORDER BY sp.id
 	`, printerID)
@@ -172,35 +173,37 @@ func scanSmartPlugs(rows *sql.Rows) ([]models.SmartPlug, error) {
 	for rows.Next() {
 		var sp models.SmartPlug
 		var printerID sql.NullInt64
-		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &sp.PrinterName); err != nil {
+		var hideLabel int
+		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &hideLabel, &sp.PrinterName); err != nil {
 			return nil, err
 		}
 		if printerID.Valid {
 			sp.PrinterID = &printerID.Int64
 		}
+		sp.HideLabel = hideLabel == 1
 		plugs = append(plugs, sp)
 	}
 	return plugs, rows.Err()
 }
 
-func (db *DB) CreateSmartPlug(ip, idx, label string, printerID *int64) (int64, error) {
+func (db *DB) CreateSmartPlug(ip, idx, label string, hideLabel bool, printerID *int64) (int64, error) {
 	if idx == "" {
 		idx = "1"
 	}
-	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label) VALUES (?, ?, ?, ?)`,
-		printerID, ip, idx, label)
+	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label, hide_label) VALUES (?, ?, ?, ?, ?)`,
+		printerID, ip, idx, label, hideLabel)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, printerID *int64) error {
+func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, printerID *int64) error {
 	if idx == "" {
 		idx = "1"
 	}
-	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, printer_id=? WHERE id=?`,
-		ip, idx, label, printerID, id)
+	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=? WHERE id=?`,
+		ip, idx, label, hideLabel, printerID, id)
 	return err
 }
 

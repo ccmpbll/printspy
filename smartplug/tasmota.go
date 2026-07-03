@@ -26,7 +26,7 @@ func New() *Client {
 	return &Client{http: &http.Client{Timeout: 5 * time.Second, Transport: netguard.Transport()}}
 }
 
-func (c *Client) GetState(ctx context.Context, ip, idx, label string) (*models.PowerState, error) {
+func (c *Client) GetState(ctx context.Context, ip, idx, label string, hideLabel bool) (*models.PowerState, error) {
 	data, err := c.command(ctx, ip, "Power"+idx)
 	if err != nil {
 		return nil, err
@@ -44,10 +44,11 @@ func (c *Client) GetState(ctx context.Context, ip, idx, label string) (*models.P
 	}
 
 	ps := &models.PowerState{
-		ID:     ip + ":" + idx,
-		Label:  label,
-		On:     state == "ON",
-		Source: "tasmota-direct",
+		ID:        ip + ":" + idx,
+		Label:     label,
+		HideLabel: hideLabel,
+		On:        state == "ON",
+		Source:    "tasmota-direct",
 	}
 
 	if data, err := c.command(ctx, ip, "Status 8"); err == nil {

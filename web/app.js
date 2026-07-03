@@ -309,7 +309,7 @@ function renderPrinterCard(printer) {
             const offClass = !ps.on ? 'power-btn-active power-off' : '';
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
             const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
-            const label = ps.label ? esc(ps.label) + ' ' : '';
+            const label = ps.label && !ps.hide_label ? esc(ps.label) + ' ' : '';
             return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
@@ -606,7 +606,7 @@ function renderSettingsSmartPlugList(plugs) {
         <div class="settings-printer-row">
             <div class="settings-printer-info">
                 <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
-                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}</span>
+                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}${p.hide_label ? ' — label hidden' : ''}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
@@ -628,6 +628,7 @@ function openAddSmartPlugModal() {
     document.getElementById('plug-ip').value = '';
     document.getElementById('plug-idx').value = '1';
     document.getElementById('plug-label').value = '';
+    document.getElementById('plug-hide-label').checked = false;
     populatePlugPrinterOptions(null);
     document.getElementById('smartplug-modal').classList.add('active');
 }
@@ -640,6 +641,7 @@ function openEditSmartPlugModal(id) {
     document.getElementById('plug-ip').value = plug.ip;
     document.getElementById('plug-idx').value = plug.idx;
     document.getElementById('plug-label').value = plug.label;
+    document.getElementById('plug-hide-label').checked = !!plug.hide_label;
     populatePlugPrinterOptions(plug.printer_id);
     document.getElementById('smartplug-modal').classList.add('active');
 }
@@ -652,6 +654,7 @@ async function saveSmartPlug(e) {
         ip: document.getElementById('plug-ip').value,
         idx: document.getElementById('plug-idx').value || '1',
         label: document.getElementById('plug-label').value,
+        hide_label: document.getElementById('plug-hide-label').checked,
         printer_id: printerIdStr ? parseInt(printerIdStr) : null,
     };
 

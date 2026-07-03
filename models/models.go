@@ -36,6 +36,7 @@ type SmartPlug struct {
 	IP          string `json:"ip"`
 	Idx         string `json:"idx"`
 	Label       string `json:"label"`
+	HideLabel   bool   `json:"hide_label"`
 }
 
 type Temperatures struct {
@@ -60,14 +61,15 @@ type JobInfo struct {
 }
 
 type PowerState struct {
-	ID       string  `json:"id"`
-	Label    string  `json:"label,omitempty"`
-	On       bool    `json:"on"`
-	Source   string  `json:"source,omitempty"`
-	Watts    float64 `json:"watts,omitempty"`
-	Voltage  float64 `json:"voltage,omitempty"`
-	Current  float64 `json:"current,omitempty"`
-	TotalKWh float64 `json:"total_kwh,omitempty"`
+	ID        string  `json:"id"`
+	Label     string  `json:"label,omitempty"`
+	HideLabel bool    `json:"hide_label,omitempty"`
+	On        bool    `json:"on"`
+	Source    string  `json:"source,omitempty"`
+	Watts     float64 `json:"watts,omitempty"`
+	Voltage   float64 `json:"voltage,omitempty"`
+	Current   float64 `json:"current,omitempty"`
+	TotalKWh  float64 `json:"total_kwh,omitempty"`
 }
 
 type PrinterStatus struct {
