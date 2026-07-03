@@ -1,20 +1,51 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/base32"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ccmpbll/printspy/auth"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
 	loginMaxAttempts = 5
 	loginWindow      = 15 * time.Minute
 	minPasswordLen   = 8
+
+	sessionCookieName = "printspy_session"
+	sessionDuration   = 30 * 24 * time.Hour
 )
+
+func hashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
+func checkPassword(hash, password string) bool {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
+func newSessionToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b), nil
+}
+
+// createUser hashes password and inserts a new user row.
+func (h *Handler) createUser(username, password string) (int64, error) {
+	hash, err := hashPassword(password)
+	if err != nil {
+		return 0, err
+	}
+	return h.db.CreateUser(username, hash)
+}
 
 // RequireAuth gates every request behind a login. Users bootstrap through
 // /setup on first run; after that /login issues a session cookie.
@@ -50,7 +81,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 }
 
 func (h *Handler) currentUser(r *http.Request) (string, bool) {
-	cookie, err := r.Cookie(auth.CookieName)
+	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil {
 		return "", false
 	}
@@ -62,16 +93,16 @@ func (h *Handler) currentUser(r *http.Request) (string, bool) {
 }
 
 func (h *Handler) startSession(w http.ResponseWriter, username string) error {
-	token, err := auth.NewSessionToken()
+	token, err := newSessionToken()
 	if err != nil {
 		return err
 	}
-	expiresAt := time.Now().Add(auth.SessionDuration)
+	expiresAt := time.Now().Add(sessionDuration)
 	if err := h.db.CreateSession(token, username, expiresAt); err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name:     auth.CookieName,
+		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
@@ -149,12 +180,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		hash, err := auth.HashPassword(password)
-		if err != nil {
-			jsonError(w, "failed to create user", http.StatusInternalServerError)
-			return
-		}
-		if _, err := h.db.CreateUser(username, hash); err != nil {
+		if _, err := h.createUser(username, password); err != nil {
 			http.Redirect(w, r, "/setup?error=1", http.StatusFound)
 			return
 		}
@@ -199,7 +225,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		user, err := h.db.GetUserByUsername(username)
-		if err != nil || !auth.CheckPassword(user.PasswordHash, password) {
+		if err != nil || !checkPassword(user.PasswordHash, password) {
 			h.recordLoginFailure(username)
 			http.Redirect(w, r, "/login?error=1", http.StatusFound)
 			return
@@ -218,10 +244,10 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie(auth.CookieName); err == nil {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		h.db.DeleteSession(cookie.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: auth.CookieName, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
@@ -253,12 +279,7 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
 			return
 		}
-		hash, err := auth.HashPassword(req.Password)
-		if err != nil {
-			jsonError(w, "failed to create user", http.StatusInternalServerError)
-			return
-		}
-		id, err := h.db.CreateUser(req.Username, hash)
+		id, err := h.createUser(req.Username, req.Password)
 		if err != nil {
 			jsonError(w, "username already exists", http.StatusConflict)
 			return
