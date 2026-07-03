@@ -100,6 +100,9 @@ func (db *DB) migrate() error {
 	// Migration: add username column for PrusaLink digest auth
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN username TEXT NOT NULL DEFAULT ''`)
 
+	// Migration: add hide_label column to smart_plugs if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
