@@ -36,7 +36,7 @@ docker run -d \
   ccmpbll/printspy:latest
 ```
 
-Open `http://localhost:8080`, click the settings gear, and add your first printer. You'll need the printer's URL and OctoPrint API key.
+Open `http://localhost:8080` — first run prompts you to create a login. Once in, click the settings gear and add your first printer. You'll need the printer's URL and OctoPrint API key.
 
 ### Docker Compose
 
@@ -57,6 +57,10 @@ volumes:
 ## Configuration
 
 All printer management is done through the web UI — open the settings page to add, edit, reorder, and remove printers. No config files needed.
+
+### Login
+
+First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Users. No roles or permission tiers — every account has full access.
 
 ### Environment variables
 

@@ -65,7 +65,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr, Handler: nosniff(mux)}
+	server := &http.Server{Addr: addr, Handler: nosniff(handler.RequireAuth(mux))}
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)

@@ -60,13 +60,13 @@ type PowerState struct {
 }
 
 type PrinterStatus struct {
-	State        PrinterState  `json:"state"`
-	StateMessage string        `json:"state_message,omitempty"`
-	Temps        Temperatures  `json:"temps"`
-	Job          *JobInfo      `json:"job"`
-	Power        []PowerState  `json:"power,omitempty"`
-	ThumbnailURL string        `json:"thumbnail_url,omitempty"`
-	LastUpdated  time.Time     `json:"last_updated"`
+	State        PrinterState `json:"state"`
+	StateMessage string       `json:"state_message,omitempty"`
+	Temps        Temperatures `json:"temps"`
+	Job          *JobInfo     `json:"job"`
+	Power        []PowerState `json:"power,omitempty"`
+	ThumbnailURL string       `json:"thumbnail_url,omitempty"`
+	LastUpdated  time.Time    `json:"last_updated"`
 }
 
 type RecentFile struct {
@@ -96,4 +96,11 @@ type PrintHistory struct {
 	DurationSecs   int     `json:"duration_secs"`
 	Result         string  `json:"result"`
 	FilamentUsedMM float64 `json:"filament_used_mm"`
+}
+
+type User struct {
+	ID           int64  `json:"id"`
+	Username     string `json:"username"`
+	PasswordHash string `json:"-"`
+	CreatedAt    string `json:"created_at"`
 }
