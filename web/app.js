@@ -607,12 +607,11 @@ function renderSettingsSmartPlugList(plugs) {
         return;
     }
     list.innerHTML = plugs.map(p => `
-        <div class="settings-printer-row">
-            <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
-                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)}</span>
-            </div>
-            <select onchange="reassignSmartPlug(${p.id}, this.value)">
+        <div class="settings-printer-row" data-plug-id="${p.id}">
+            <input type="text" class="plug-ip-edit" value="${esc(p.ip)}" style="flex:1" onchange="saveSmartPlugRow(this)">
+            <input type="text" class="plug-idx-edit" value="${esc(p.idx)}" style="width:50px" onchange="saveSmartPlugRow(this)">
+            <input type="text" class="plug-label-edit" placeholder="Label" value="${esc(p.label)}" style="flex:1" onchange="saveSmartPlugRow(this)">
+            <select onchange="saveSmartPlugRow(this)">
                 <option value="">Unassigned</option>
                 ${assignablePrinterOptions(p.printer_id)}
             </select>
@@ -620,6 +619,23 @@ function renderSettingsSmartPlugList(plugs) {
                 <button class="btn btn-sm btn-danger" onclick="deleteSmartPlug(${p.id})" title="Delete">&times;</button>
             </div>
         </div>`).join('');
+}
+
+async function saveSmartPlugRow(el) {
+    const row = el.closest('.settings-printer-row');
+    const id = parseInt(row.dataset.plugId);
+    const ip = row.querySelector('.plug-ip-edit').value;
+    const idx = row.querySelector('.plug-idx-edit').value || '1';
+    const label = row.querySelector('.plug-label-edit').value;
+    const printerIdStr = row.querySelector('select').value;
+    try {
+        await fetch(`/api/smartplugs/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ip, idx, label, printer_id: printerIdStr ? parseInt(printerIdStr) : null}),
+        });
+        loadSmartPlugs();
+    } catch (e) {}
 }
 
 async function addSmartPlug(e) {
@@ -639,25 +655,6 @@ async function addSmartPlug(e) {
             document.getElementById('new-plug-label').value = '';
             loadSmartPlugs();
         }
-    } catch (e) {}
-}
-
-async function reassignSmartPlug(id, printerIdStr) {
-    const plugs = await (await fetch('/api/smartplugs')).json();
-    const plug = plugs.find(p => p.id === id);
-    if (!plug) return;
-    try {
-        await fetch(`/api/smartplugs/${id}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                ip: plug.ip,
-                idx: plug.idx,
-                label: plug.label,
-                printer_id: printerIdStr ? parseInt(printerIdStr) : null,
-            }),
-        });
-        loadSmartPlugs();
     } catch (e) {}
 }
 
