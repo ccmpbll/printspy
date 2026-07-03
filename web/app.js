@@ -501,16 +501,20 @@ function updateCard(card, printer) {
         const isBusy = state === 'printing' || state === 'paused';
         const singlePlug = status.power.length === 1;
         status.power.forEach(ps => {
-            const group = card.querySelector(`[data-field="power"][data-plug-id="${ps.id}"]`);
-            if (!group) return;
-            const btns = group.querySelectorAll('.power-toggle-btn');
+            // Same physical plug can appear more than once (e.g. auto-detected
+            // by a plugin AND separately assigned as a direct smart plug) --
+            // both share the same data-plug-id, so update every match.
+            const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            if (btns[0]) btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
-            if (btns[1]) {
-                btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
-                btns[1].disabled = isBusy && isPrinterPlug;
-                btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
-            }
+            groups.forEach(group => {
+                const btns = group.querySelectorAll('.power-toggle-btn');
+                if (btns[0]) btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
+                if (btns[1]) {
+                    btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
+                    btns[1].disabled = isBusy && isPrinterPlug;
+                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
+                }
+            });
         });
     }
 
