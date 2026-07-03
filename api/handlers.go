@@ -86,6 +86,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/users", h.handleUsers)
 	mux.HandleFunc("/api/users/", h.handleUserByID)
 	mux.HandleFunc("/api/account/password", h.handleChangePassword)
+	mux.HandleFunc("/api/smartplugs", h.handleSmartPlugs)
+	mux.HandleFunc("/api/smartplugs/", h.handleSmartPlugByID)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {
@@ -118,28 +120,13 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 }
 
 type printerRequest struct {
-	Name         string             `json:"name"`
-	Type         string             `json:"type"`
-	URL          string             `json:"url"`
-	APIKey       string             `json:"api_key"`
-	Username     string             `json:"username"`
-	Enabled      bool               `json:"enabled"`
-	PollInterval int                `json:"poll_interval"`
-	SmartPlugs   []models.SmartPlug `json:"smart_plugs"`
-}
-
-// syncSmartPlugs replaces a printer's smart plug rows to match plugs, unless
-// the printer is OctoPrint (which auto-detects power control instead) in
-// which case any configured plugs are cleared. Updates p.SmartPlugs in place.
-func (h *Handler) syncSmartPlugs(p *models.PrinterConfig, plugs []models.SmartPlug) error {
-	if p.Type == "octoprint" {
-		plugs = nil
-	}
-	if err := h.db.ReplaceSmartPlugs(p.ID, plugs); err != nil {
-		return err
-	}
-	p.SmartPlugs = plugs
-	return nil
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	URL          string `json:"url"`
+	APIKey       string `json:"api_key"`
+	Username     string `json:"username"`
+	Enabled      bool   `json:"enabled"`
+	PollInterval int    `json:"poll_interval"`
 }
 
 func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
@@ -172,10 +159,6 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.CreatePrinter(&p); err != nil {
 		jsonError(w, "failed to create printer", http.StatusInternalServerError)
-		return
-	}
-	if err := h.syncSmartPlugs(&p, req.SmartPlugs); err != nil {
-		jsonError(w, "failed to save smart plugs", http.StatusInternalServerError)
 		return
 	}
 
@@ -259,10 +242,6 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 
 	if err := h.db.UpdatePrinter(&p); err != nil {
 		jsonError(w, "failed to update printer", http.StatusInternalServerError)
-		return
-	}
-	if err := h.syncSmartPlugs(&p, req.SmartPlugs); err != nil {
-		jsonError(w, "failed to save smart plugs", http.StatusInternalServerError)
 		return
 	}
 
@@ -571,6 +550,83 @@ func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]any{"results": results})
+}
+
+// Smart plugs — managed independently of printers, optionally assigned to one.
+
+func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		plugs, err := h.db.ListAllSmartPlugs()
+		if err != nil {
+			jsonError(w, "failed to list smart plugs", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, plugs)
+
+	case http.MethodPost:
+		var req smartPlugRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.IP == "" {
+			jsonError(w, "ip is required", http.StatusBadRequest)
+			return
+		}
+		id, err := h.db.CreateSmartPlug(req.IP, req.Idx, req.Label, req.PrinterID)
+		if err != nil {
+			jsonError(w, "failed to create smart plug", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]int64{"id": id})
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+type smartPlugRequest struct {
+	IP        string `json:"ip"`
+	Idx       string `json:"idx"`
+	Label     string `json:"label"`
+	PrinterID *int64 `json:"printer_id"`
+}
+
+func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/smartplugs/"), 10, 64)
+	if err != nil {
+		jsonError(w, "invalid smart plug id", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var req smartPlugRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.IP == "" {
+			jsonError(w, "ip is required", http.StatusBadRequest)
+			return
+		}
+		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.PrinterID); err != nil {
+			jsonError(w, "failed to update smart plug", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodDelete:
+		if err := h.db.DeleteSmartPlug(id); err != nil {
+			jsonError(w, "failed to delete smart plug", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 // Print history and control

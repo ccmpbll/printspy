@@ -16,10 +16,8 @@ import (
 )
 
 type polledPrinter struct {
-	plugin      plugin.PrinterPlugin
-	cancel      context.CancelFunc
-	printerType string
-	smartPlugs  []models.SmartPlug
+	plugin plugin.PrinterPlugin
+	cancel context.CancelFunc
 }
 
 type SSEMessage struct {
@@ -99,10 +97,8 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	pp := &polledPrinter{
-		plugin:      pl,
-		cancel:      cancel,
-		printerType: config.Type,
-		smartPlugs:  config.SmartPlugs,
+		plugin: pl,
+		cancel: cancel,
 	}
 	p.printers[config.ID] = pp
 
@@ -207,7 +203,11 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
-	for _, sp := range pp.smartPlugs {
+	plugs, err := p.db.ListSmartPlugs(id)
+	if err != nil {
+		return err
+	}
+	for _, sp := range plugs {
 		if sp.IP+":"+sp.Idx == plugID {
 			return smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
 		}
@@ -316,8 +316,8 @@ func (p *Poller) poll(ctx context.Context, id int64, pp *polledPrinter) {
 		}
 	}
 
-	if pp.printerType != "octoprint" && len(pp.smartPlugs) > 0 {
-		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, pp.smartPlugs)...)
+	if plugs, err := p.db.ListSmartPlugs(id); err == nil && len(plugs) > 0 {
+		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, plugs)...)
 	}
 
 	p.mu.Lock()

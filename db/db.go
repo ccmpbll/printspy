@@ -48,12 +48,12 @@ func (db *DB) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS smart_plugs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			printer_id INTEGER NOT NULL,
+			printer_id INTEGER,
 			ip TEXT NOT NULL,
 			idx TEXT NOT NULL DEFAULT '1',
 			label TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
+			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
 
 		CREATE TABLE IF NOT EXISTS print_history (
@@ -120,10 +120,6 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
-		p.SmartPlugs, err = db.ListSmartPlugs(p.ID)
-		if err != nil {
-			return nil, err
-		}
 		printers = append(printers, p)
 	}
 	return printers, rows.Err()
@@ -140,56 +136,77 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 		return nil, err
 	}
 	p.Enabled = enabled == 1
-	if p.SmartPlugs, err = db.ListSmartPlugs(p.ID); err != nil {
-		return nil, err
-	}
 	return &p, nil
 }
 
-func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
-	rows, err := db.conn.Query(`SELECT id, ip, idx, label FROM smart_plugs WHERE printer_id = ? ORDER BY id`, printerID)
+// Smart plugs — managed independently of printers, optionally assigned to one.
+
+func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
+	rows, err := db.conn.Query(`
+		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, COALESCE(p.name, '')
+		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
+		ORDER BY sp.id
+	`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+	return scanSmartPlugs(rows)
+}
 
+func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
+	rows, err := db.conn.Query(`
+		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, COALESCE(p.name, '')
+		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
+		WHERE sp.printer_id = ? ORDER BY sp.id
+	`, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSmartPlugs(rows)
+}
+
+func scanSmartPlugs(rows *sql.Rows) ([]models.SmartPlug, error) {
 	var plugs []models.SmartPlug
 	for rows.Next() {
 		var sp models.SmartPlug
-		if err := rows.Scan(&sp.ID, &sp.IP, &sp.Idx, &sp.Label); err != nil {
+		var printerID sql.NullInt64
+		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &sp.PrinterName); err != nil {
 			return nil, err
+		}
+		if printerID.Valid {
+			sp.PrinterID = &printerID.Int64
 		}
 		plugs = append(plugs, sp)
 	}
 	return plugs, rows.Err()
 }
 
-// ReplaceSmartPlugs overwrites a printer's smart plug list. Simplest correct
-// semantics for a small repeatable list edited wholesale from the UI.
-func (db *DB) ReplaceSmartPlugs(printerID int64, plugs []models.SmartPlug) error {
-	tx, err := db.conn.Begin()
+func (db *DB) CreateSmartPlug(ip, idx, label string, printerID *int64) (int64, error) {
+	if idx == "" {
+		idx = "1"
+	}
+	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label) VALUES (?, ?, ?, ?)`,
+		printerID, ip, idx, label)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer tx.Rollback()
+	return result.LastInsertId()
+}
 
-	if _, err := tx.Exec(`DELETE FROM smart_plugs WHERE printer_id = ?`, printerID); err != nil {
-		return err
+func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, printerID *int64) error {
+	if idx == "" {
+		idx = "1"
 	}
-	for _, sp := range plugs {
-		if sp.IP == "" {
-			continue
-		}
-		idx := sp.Idx
-		if idx == "" {
-			idx = "1"
-		}
-		if _, err := tx.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label) VALUES (?, ?, ?, ?)`,
-			printerID, sp.IP, idx, sp.Label); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, printer_id=? WHERE id=?`,
+		ip, idx, label, printerID, id)
+	return err
+}
+
+func (db *DB) DeleteSmartPlug(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM smart_plugs WHERE id = ?`, id)
+	return err
 }
 
 func (db *DB) CreatePrinter(p *models.PrinterConfig) error {

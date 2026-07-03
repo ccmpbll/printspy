@@ -576,7 +576,94 @@ function openSettings() {
     });
     renderSettingsPrinterList();
     loadUsers();
+    loadSmartPlugs();
     document.getElementById('settings-modal').classList.add('active');
+}
+
+// Smart plugs (direct Tasmota, managed independently of printers)
+
+async function loadSmartPlugs() {
+    try {
+        const resp = await fetch('/api/smartplugs');
+        const plugs = await resp.json();
+        renderSettingsSmartPlugList(plugs || []);
+    } catch (e) {}
+}
+
+function assignablePrinterOptions(selectedId) {
+    return printers
+        .filter(p => p.config.type !== 'octoprint')
+        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
+        .join('');
+}
+
+function renderSettingsSmartPlugList(plugs) {
+    const list = document.getElementById('settings-smartplug-list');
+    if (!plugs.length) {
+        list.innerHTML = '<div class="settings-empty">No smart plugs configured yet.</div>';
+        return;
+    }
+    list.innerHTML = plugs.map(p => `
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
+                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)}</span>
+            </div>
+            <select onchange="reassignSmartPlug(${p.id}, this.value)">
+                <option value="">Unassigned</option>
+                ${assignablePrinterOptions(p.printer_id)}
+            </select>
+            <div class="settings-printer-actions">
+                <button class="btn btn-sm btn-danger" onclick="deleteSmartPlug(${p.id})" title="Delete">&times;</button>
+            </div>
+        </div>`).join('');
+}
+
+async function addSmartPlug(e) {
+    e.preventDefault();
+    const ip = document.getElementById('new-plug-ip').value;
+    const idx = document.getElementById('new-plug-idx').value || '1';
+    const label = document.getElementById('new-plug-label').value;
+    try {
+        const resp = await fetch('/api/smartplugs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ip, idx, label}),
+        });
+        if (resp.ok) {
+            document.getElementById('new-plug-ip').value = '';
+            document.getElementById('new-plug-idx').value = '1';
+            document.getElementById('new-plug-label').value = '';
+            loadSmartPlugs();
+        }
+    } catch (e) {}
+}
+
+async function reassignSmartPlug(id, printerIdStr) {
+    const plugs = await (await fetch('/api/smartplugs')).json();
+    const plug = plugs.find(p => p.id === id);
+    if (!plug) return;
+    try {
+        await fetch(`/api/smartplugs/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                ip: plug.ip,
+                idx: plug.idx,
+                label: plug.label,
+                printer_id: printerIdStr ? parseInt(printerIdStr) : null,
+            }),
+        });
+        loadSmartPlugs();
+    } catch (e) {}
+}
+
+async function deleteSmartPlug(id) {
+    if (!confirm('Remove this smart plug?')) return;
+    try {
+        await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
+        loadSmartPlugs();
+    } catch (e) {}
 }
 
 // Account
@@ -720,29 +807,6 @@ function onPrinterTypeChange() {
     if (isPrusalink && !document.getElementById('printer-username').value) {
         document.getElementById('printer-username').value = 'maker';
     }
-    document.getElementById('smartplugs-group').style.display = type === 'octoprint' ? 'none' : '';
-}
-
-// Smart plugs (direct Tasmota, non-OctoPrint printers only)
-
-function addSmartPlugRow(ip, idx, label) {
-    const row = document.createElement('div');
-    row.className = 'settings-printer-row';
-    row.style.gap = '0.5rem';
-    row.innerHTML = `
-        <input type="text" class="plug-ip" placeholder="192.168.1.60" value="${esc(ip || '')}" style="flex:1">
-        <input type="text" class="plug-idx" placeholder="1" value="${esc(idx || '1')}" style="width:50px">
-        <input type="text" class="plug-label" placeholder="Label" value="${esc(label || '')}" style="flex:1">
-        <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.settings-printer-row').remove()">&times;</button>`;
-    document.getElementById('smartplug-list').appendChild(row);
-}
-
-function collectSmartPlugs() {
-    return Array.from(document.querySelectorAll('#smartplug-list .settings-printer-row')).map(row => ({
-        ip: row.querySelector('.plug-ip').value,
-        idx: row.querySelector('.plug-idx').value || '1',
-        label: row.querySelector('.plug-label').value,
-    })).filter(p => p.ip);
 }
 
 function openAddModal() {
@@ -754,7 +818,6 @@ function openAddModal() {
     document.getElementById('printer-username').value = 'maker';
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = '10';
-    document.getElementById('smartplug-list').innerHTML = '';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -774,7 +837,6 @@ async function openEditModal(id) {
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-username').value = cfg.username || 'maker';
     document.getElementById('printer-poll').value = cfg.poll_interval;
-    document.getElementById('smartplug-list').innerHTML = '';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -786,7 +848,6 @@ async function openEditModal(id) {
             const data = await resp.json();
             document.getElementById('printer-apikey').value = data.api_key || '';
             if (data.username) document.getElementById('printer-username').value = data.username;
-            (data.smart_plugs || []).forEach(p => addSmartPlugRow(p.ip, p.idx, p.label));
         }
     } catch (e) {}
 }
@@ -814,7 +875,6 @@ async function savePrinter(e) {
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
         poll_interval: parseInt(document.getElementById('printer-poll').value) || 10,
         enabled: true,
-        smart_plugs: printerType === 'octoprint' ? [] : collectSmartPlugs(),
     };
 
     try {

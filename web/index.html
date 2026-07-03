@@ -74,12 +74,6 @@
                     <label for="printer-poll">Poll interval (seconds)</label>
                     <input type="number" id="printer-poll" value="10" min="5" max="300">
                 </div>
-                <div class="form-group" id="smartplugs-group" style="display:none">
-                    <label>Smart plugs (Tasmota)</label>
-                    <div class="form-hint">Not auto-detected for this printer type. Add Tasmota devices directly by IP.</div>
-                    <div id="smartplug-list"></div>
-                    <button type="button" class="btn btn-sm" onclick="addSmartPlugRow()" style="margin-top:0.5rem">+ Add plug</button>
-                </div>
                 <div class="test-result" id="test-result"></div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>
@@ -154,6 +148,29 @@
                         <div style="flex:1">
                             <label for="new-user-password">Password</label>
                             <input type="password" id="new-user-password" required minlength="8">
+                        </div>
+                        <button type="submit" class="btn btn-primary">+ Add</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="settings-section">
+                <h3>Smart plugs (Tasmota)</h3>
+                <div class="form-hint">For printer types with no plugin manager to auto-detect power control (PrusaLink, Klipper). Add a plug, then assign it to a printer.</div>
+                <div id="settings-smartplug-list" style="margin-top:0.5rem"></div>
+                <form onsubmit="addSmartPlug(event)" style="margin-top:0.75rem">
+                    <div class="form-group" style="display:flex;gap:0.5rem;align-items:flex-end">
+                        <div style="flex:1">
+                            <label for="new-plug-ip">IP</label>
+                            <input type="text" id="new-plug-ip" placeholder="192.168.1.60" required>
+                        </div>
+                        <div style="width:60px">
+                            <label for="new-plug-idx">Idx</label>
+                            <input type="text" id="new-plug-idx" placeholder="1" value="1">
+                        </div>
+                        <div style="flex:1">
+                            <label for="new-plug-label">Label</label>
+                            <input type="text" id="new-plug-label" placeholder="Printer">
                         </div>
                         <button type="submit" class="btn btn-primary">+ Add</button>
                     </div>
