@@ -46,6 +46,16 @@ func (db *DB) migrate() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS smart_plugs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			printer_id INTEGER NOT NULL,
+			ip TEXT NOT NULL,
+			idx TEXT NOT NULL DEFAULT '1',
+			label TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE CASCADE
+		);
+
 		CREATE TABLE IF NOT EXISTS print_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			printer_id INTEGER NOT NULL,
@@ -110,6 +120,10 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
+		p.SmartPlugs, err = db.ListSmartPlugs(p.ID)
+		if err != nil {
+			return nil, err
+		}
 		printers = append(printers, p)
 	}
 	return printers, rows.Err()
@@ -126,7 +140,56 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 		return nil, err
 	}
 	p.Enabled = enabled == 1
+	if p.SmartPlugs, err = db.ListSmartPlugs(p.ID); err != nil {
+		return nil, err
+	}
 	return &p, nil
+}
+
+func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
+	rows, err := db.conn.Query(`SELECT id, ip, idx, label FROM smart_plugs WHERE printer_id = ? ORDER BY id`, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var plugs []models.SmartPlug
+	for rows.Next() {
+		var sp models.SmartPlug
+		if err := rows.Scan(&sp.ID, &sp.IP, &sp.Idx, &sp.Label); err != nil {
+			return nil, err
+		}
+		plugs = append(plugs, sp)
+	}
+	return plugs, rows.Err()
+}
+
+// ReplaceSmartPlugs overwrites a printer's smart plug list. Simplest correct
+// semantics for a small repeatable list edited wholesale from the UI.
+func (db *DB) ReplaceSmartPlugs(printerID int64, plugs []models.SmartPlug) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM smart_plugs WHERE printer_id = ?`, printerID); err != nil {
+		return err
+	}
+	for _, sp := range plugs {
+		if sp.IP == "" {
+			continue
+		}
+		idx := sp.Idx
+		if idx == "" {
+			idx = "1"
+		}
+		if _, err := tx.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label) VALUES (?, ?, ?, ?)`,
+			printerID, sp.IP, idx, sp.Label); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (db *DB) CreatePrinter(p *models.PrinterConfig) error {

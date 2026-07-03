@@ -74,6 +74,12 @@
                     <label for="printer-poll">Poll interval (seconds)</label>
                     <input type="number" id="printer-poll" value="10" min="5" max="300">
                 </div>
+                <div class="form-group" id="smartplugs-group" style="display:none">
+                    <label>Smart plugs (Tasmota)</label>
+                    <div class="form-hint">Not auto-detected for this printer type. Add Tasmota devices directly by IP.</div>
+                    <div id="smartplug-list"></div>
+                    <button type="button" class="btn btn-sm" onclick="addSmartPlugRow()" style="margin-top:0.5rem">+ Add plug</button>
+                </div>
                 <div class="test-result" id="test-result"></div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal()">Cancel</button>

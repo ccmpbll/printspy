@@ -14,17 +14,27 @@ const (
 )
 
 type PrinterConfig struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	URL          string `json:"url"`
-	APIKey       string `json:"-"`
-	Username     string `json:"username,omitempty"`
-	Enabled      bool   `json:"enabled"`
-	PollInterval int    `json:"poll_interval"`
-	SortOrder    int    `json:"sort_order"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID           int64       `json:"id"`
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	URL          string      `json:"url"`
+	APIKey       string      `json:"-"`
+	Username     string      `json:"username,omitempty"`
+	Enabled      bool        `json:"enabled"`
+	PollInterval int         `json:"poll_interval"`
+	SortOrder    int         `json:"sort_order"`
+	SmartPlugs   []SmartPlug `json:"smart_plugs,omitempty"`
+	CreatedAt    string      `json:"created_at"`
+	UpdatedAt    string      `json:"updated_at"`
+}
+
+// SmartPlug is a directly-configured Tasmota device for printer types (PrusaLink,
+// Klipper) that have no plugin manager to auto-detect power control through.
+type SmartPlug struct {
+	ID    int64  `json:"id"`
+	IP    string `json:"ip"`
+	Idx   string `json:"idx"`
+	Label string `json:"label"`
 }
 
 type Temperatures struct {

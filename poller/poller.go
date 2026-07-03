@@ -12,11 +12,14 @@ import (
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
+	"github.com/ccmpbll/printspy/smartplug"
 )
 
 type polledPrinter struct {
-	plugin plugin.PrinterPlugin
-	cancel context.CancelFunc
+	plugin      plugin.PrinterPlugin
+	cancel      context.CancelFunc
+	printerType string
+	smartPlugs  []models.SmartPlug
 }
 
 type SSEMessage struct {
@@ -96,8 +99,10 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	pp := &polledPrinter{
-		plugin: pl,
-		cancel: cancel,
+		plugin:      pl,
+		cancel:      cancel,
+		printerType: config.Type,
+		smartPlugs:  config.SmartPlugs,
 	}
 	p.printers[config.ID] = pp
 
@@ -106,7 +111,7 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
-		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
+		p.pollLoop(ctx, config.ID, config.Name, pp, interval)
 	}()
 }
 
@@ -202,6 +207,11 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
+	for _, sp := range pp.smartPlugs {
+		if sp.IP+":"+sp.Idx == plugID {
+			return smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
+		}
+	}
 	return pp.plugin.SetPowerState(ctx, plugID, on)
 }
 
@@ -273,17 +283,17 @@ func (p *Poller) sendToAll(msg SSEMessage) {
 	}
 }
 
-func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, interval time.Duration) {
+func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pp *polledPrinter, interval time.Duration) {
 	log.Printf("starting poller for printer %d (%s) every %s", id, name, interval)
 
-	if err := pl.Connect(ctx); err != nil {
+	if err := pp.plugin.Connect(ctx); err != nil {
 		log.Printf("[printer:%d] initial connect failed: %v (will retry on poll)", id, err)
 	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	p.poll(ctx, id, pl)
+	p.poll(ctx, id, pp)
 
 	for {
 		select {
@@ -291,19 +301,23 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.
 			log.Printf("stopping poller for printer %d (%s)", id, name)
 			return
 		case <-ticker.C:
-			p.poll(ctx, id, pl)
+			p.poll(ctx, id, pp)
 		}
 	}
 }
 
-func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
-	status, err := pl.GetStatus(ctx)
+func (p *Poller) poll(ctx context.Context, id int64, pp *polledPrinter) {
+	status, err := pp.plugin.GetStatus(ctx)
 	if err != nil {
 		log.Printf("[printer:%d] poll error: %v", id, err)
 		status = &models.PrinterStatus{
 			State:       models.StateOffline,
 			LastUpdated: time.Now(),
 		}
+	}
+
+	if pp.printerType != "octoprint" && len(pp.smartPlugs) > 0 {
+		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, pp.smartPlugs)...)
 	}
 
 	p.mu.Lock()
@@ -335,6 +349,20 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.trackPrintHistory(id, prevState, status, prev)
 
 	p.broadcast(id, status)
+}
+
+func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.SmartPlug) []models.PowerState {
+	client := smartplug.New()
+	var states []models.PowerState
+	for _, sp := range plugs {
+		ps, err := client.GetState(ctx, sp.IP, sp.Idx, sp.Label)
+		if err != nil {
+			log.Printf("[printer:%d] smart plug %s:%s unreachable: %v", id, sp.IP, sp.Idx, err)
+			continue
+		}
+		states = append(states, *ps)
+	}
+	return states
 }
 
 func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus) {

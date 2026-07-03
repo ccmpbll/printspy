@@ -118,13 +118,28 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 }
 
 type printerRequest struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	URL          string `json:"url"`
-	APIKey       string `json:"api_key"`
-	Username     string `json:"username"`
-	Enabled      bool   `json:"enabled"`
-	PollInterval int    `json:"poll_interval"`
+	Name         string             `json:"name"`
+	Type         string             `json:"type"`
+	URL          string             `json:"url"`
+	APIKey       string             `json:"api_key"`
+	Username     string             `json:"username"`
+	Enabled      bool               `json:"enabled"`
+	PollInterval int                `json:"poll_interval"`
+	SmartPlugs   []models.SmartPlug `json:"smart_plugs"`
+}
+
+// syncSmartPlugs replaces a printer's smart plug rows to match plugs, unless
+// the printer is OctoPrint (which auto-detects power control instead) in
+// which case any configured plugs are cleared. Updates p.SmartPlugs in place.
+func (h *Handler) syncSmartPlugs(p *models.PrinterConfig, plugs []models.SmartPlug) error {
+	if p.Type == "octoprint" {
+		plugs = nil
+	}
+	if err := h.db.ReplaceSmartPlugs(p.ID, plugs); err != nil {
+		return err
+	}
+	p.SmartPlugs = plugs
+	return nil
 }
 
 func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +172,10 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.db.CreatePrinter(&p); err != nil {
 		jsonError(w, "failed to create printer", http.StatusInternalServerError)
+		return
+	}
+	if err := h.syncSmartPlugs(&p, req.SmartPlugs); err != nil {
+		jsonError(w, "failed to save smart plugs", http.StatusInternalServerError)
 		return
 	}
 
@@ -240,6 +259,10 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 
 	if err := h.db.UpdatePrinter(&p); err != nil {
 		jsonError(w, "failed to update printer", http.StatusInternalServerError)
+		return
+	}
+	if err := h.syncSmartPlugs(&p, req.SmartPlugs); err != nil {
+		jsonError(w, "failed to save smart plugs", http.StatusInternalServerError)
 		return
 	}
 

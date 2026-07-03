@@ -720,6 +720,29 @@ function onPrinterTypeChange() {
     if (isPrusalink && !document.getElementById('printer-username').value) {
         document.getElementById('printer-username').value = 'maker';
     }
+    document.getElementById('smartplugs-group').style.display = type === 'octoprint' ? 'none' : '';
+}
+
+// Smart plugs (direct Tasmota, non-OctoPrint printers only)
+
+function addSmartPlugRow(ip, idx, label) {
+    const row = document.createElement('div');
+    row.className = 'settings-printer-row';
+    row.style.gap = '0.5rem';
+    row.innerHTML = `
+        <input type="text" class="plug-ip" placeholder="192.168.1.60" value="${esc(ip || '')}" style="flex:1">
+        <input type="text" class="plug-idx" placeholder="1" value="${esc(idx || '1')}" style="width:50px">
+        <input type="text" class="plug-label" placeholder="Label" value="${esc(label || '')}" style="flex:1">
+        <button type="button" class="btn btn-sm btn-danger" onclick="this.closest('.settings-printer-row').remove()">&times;</button>`;
+    document.getElementById('smartplug-list').appendChild(row);
+}
+
+function collectSmartPlugs() {
+    return Array.from(document.querySelectorAll('#smartplug-list .settings-printer-row')).map(row => ({
+        ip: row.querySelector('.plug-ip').value,
+        idx: row.querySelector('.plug-idx').value || '1',
+        label: row.querySelector('.plug-label').value,
+    })).filter(p => p.ip);
 }
 
 function openAddModal() {
@@ -731,6 +754,7 @@ function openAddModal() {
     document.getElementById('printer-username').value = 'maker';
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = '10';
+    document.getElementById('smartplug-list').innerHTML = '';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -750,6 +774,7 @@ async function openEditModal(id) {
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-username').value = cfg.username || 'maker';
     document.getElementById('printer-poll').value = cfg.poll_interval;
+    document.getElementById('smartplug-list').innerHTML = '';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -761,6 +786,7 @@ async function openEditModal(id) {
             const data = await resp.json();
             document.getElementById('printer-apikey').value = data.api_key || '';
             if (data.username) document.getElementById('printer-username').value = data.username;
+            (data.smart_plugs || []).forEach(p => addSmartPlugRow(p.ip, p.idx, p.label));
         }
     } catch (e) {}
 }
@@ -788,6 +814,7 @@ async function savePrinter(e) {
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
         poll_interval: parseInt(document.getElementById('printer-poll').value) || 10,
         enabled: true,
+        smart_plugs: printerType === 'octoprint' ? [] : collectSmartPlugs(),
     };
 
     try {
