@@ -309,7 +309,7 @@ function renderPrinterCard(printer) {
             const offClass = !ps.on ? 'power-btn-active power-off' : '';
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
             const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
-            const label = !singlePlug && ps.label ? esc(ps.label) + ' ' : '';
+            const label = ps.label ? esc(ps.label) + ' ' : '';
             return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
