@@ -592,7 +592,6 @@ async function loadSmartPlugs() {
 
 function assignablePrinterOptions(selectedId) {
     return printers
-        .filter(p => p.config.type !== 'octoprint')
         .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
         .join('');
 }

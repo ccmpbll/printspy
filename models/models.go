@@ -28,8 +28,7 @@ type PrinterConfig struct {
 }
 
 // SmartPlug is a directly-configured Tasmota device, managed independently of
-// printers and optionally assigned to one — for printer types (PrusaLink,
-// Klipper) with no plugin manager to auto-detect power control through.
+// printers and optionally assigned to any one of them.
 type SmartPlug struct {
 	ID          int64  `json:"id"`
 	PrinterID   *int64 `json:"printer_id"`

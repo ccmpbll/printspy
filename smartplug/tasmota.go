@@ -1,6 +1,8 @@
-// Package smartplug talks directly to Tasmota devices over their HTTP API,
-// for printer types (PrusaLink, Klipper) that have no plugin manager to
-// auto-detect power control through the way OctoPrint does.
+// Package smartplug talks directly to Tasmota devices over their HTTP API.
+// Plugs are managed independently of printers and can be assigned to any
+// printer, regardless of type — including OctoPrint printers that already
+// auto-detect their own power plugins, for cases like a second plug an
+// auto-detected one doesn't cover.
 package smartplug
 
 import (
