@@ -196,12 +196,13 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
-// SetPowerState toggles a plug, then kicks off a re-poll in the background
-// so the dashboard reflects the change without waiting for the next
-// scheduled poll tick. The re-poll runs async — it includes a full printer
-// status fetch (pl.GetStatus), which can take up to that plugin's HTTP
-// timeout if the printer is slow or unreachable, and toggling a plug
-// shouldn't block on that.
+// SetPowerState toggles a plug. On success it immediately patches the
+// cached status with the new on/off value and broadcasts that — the device
+// already ACKed the command, so this isn't optimistic, it's just not
+// waiting on an unrelated full printer poll (temps, job, thumbnail) to
+// confirm what's already known. A full poll still runs in the background
+// to reconcile everything else (watts, printer state), but the visible
+// plug toggle doesn't wait on it.
 func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
@@ -228,8 +229,38 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 		setErr = pp.plugin.SetPowerState(ctx, plugID, on)
 	}
 
+	if setErr == nil {
+		p.patchPowerState(id, plugID, on)
+	}
 	go p.poll(context.Background(), id, pp)
 	return setErr
+}
+
+// patchPowerState flips a single plug's on/off value in the cached status
+// and broadcasts it, without waiting on a full printer poll.
+func (p *Poller) patchPowerState(id int64, plugID string, on bool) {
+	p.mu.Lock()
+	status, ok := p.cache[id]
+	if !ok || status == nil {
+		p.mu.Unlock()
+		return
+	}
+	patched := *status
+	patched.Power = append([]models.PowerState(nil), status.Power...)
+	found := false
+	for i := range patched.Power {
+		if patched.Power[i].ID == plugID {
+			patched.Power[i].On = on
+			found = true
+			break
+		}
+	}
+	p.cache[id] = &patched
+	p.mu.Unlock()
+
+	if found {
+		p.broadcast(id, &patched)
+	}
 }
 
 func (p *Poller) GetThumbnailURL(id int64) string {
