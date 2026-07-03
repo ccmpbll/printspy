@@ -586,18 +586,14 @@ function openSettings() {
 
 // Smart plugs (direct Tasmota, managed independently of printers)
 
+let smartPlugs = [];
+
 async function loadSmartPlugs() {
     try {
         const resp = await fetch('/api/smartplugs');
-        const plugs = await resp.json();
-        renderSettingsSmartPlugList(plugs || []);
+        smartPlugs = (await resp.json()) || [];
+        renderSettingsSmartPlugList(smartPlugs);
     } catch (e) {}
-}
-
-function assignablePrinterOptions(selectedId) {
-    return printers
-        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
-        .join('');
 }
 
 function renderSettingsSmartPlugList(plugs) {
@@ -607,53 +603,66 @@ function renderSettingsSmartPlugList(plugs) {
         return;
     }
     list.innerHTML = plugs.map(p => `
-        <div class="settings-printer-row" data-plug-id="${p.id}">
-            <input type="text" class="plug-ip-edit" value="${esc(p.ip)}" style="flex:1" onchange="saveSmartPlugRow(this)">
-            <input type="text" class="plug-idx-edit" value="${esc(p.idx)}" style="width:50px" onchange="saveSmartPlugRow(this)">
-            <input type="text" class="plug-label-edit" placeholder="Label" value="${esc(p.label)}" style="flex:1" onchange="saveSmartPlugRow(this)">
-            <select onchange="saveSmartPlugRow(this)">
-                <option value="">Unassigned</option>
-                ${assignablePrinterOptions(p.printer_id)}
-            </select>
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
+                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}</span>
+            </div>
             <div class="settings-printer-actions">
+                <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteSmartPlug(${p.id})" title="Delete">&times;</button>
             </div>
         </div>`).join('');
 }
 
-async function saveSmartPlugRow(el) {
-    const row = el.closest('.settings-printer-row');
-    const id = parseInt(row.dataset.plugId);
-    const ip = row.querySelector('.plug-ip-edit').value;
-    const idx = row.querySelector('.plug-idx-edit').value || '1';
-    const label = row.querySelector('.plug-label-edit').value;
-    const printerIdStr = row.querySelector('select').value;
-    try {
-        await fetch(`/api/smartplugs/${id}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ip, idx, label, printer_id: printerIdStr ? parseInt(printerIdStr) : null}),
-        });
-        loadSmartPlugs();
-    } catch (e) {}
+function populatePlugPrinterOptions(selectedId) {
+    const select = document.getElementById('plug-printer');
+    select.innerHTML = '<option value="">Unassigned</option>' + printers
+        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
+        .join('');
 }
 
-async function addSmartPlug(e) {
+function openAddSmartPlugModal() {
+    document.getElementById('smartplug-modal-title').textContent = 'Add smart plug';
+    document.getElementById('plug-id').value = '';
+    document.getElementById('plug-ip').value = '';
+    document.getElementById('plug-idx').value = '1';
+    document.getElementById('plug-label').value = '';
+    populatePlugPrinterOptions(null);
+    document.getElementById('smartplug-modal').classList.add('active');
+}
+
+function openEditSmartPlugModal(id) {
+    const plug = smartPlugs.find(p => p.id === id);
+    if (!plug) return;
+    document.getElementById('smartplug-modal-title').textContent = 'Edit smart plug';
+    document.getElementById('plug-id').value = plug.id;
+    document.getElementById('plug-ip').value = plug.ip;
+    document.getElementById('plug-idx').value = plug.idx;
+    document.getElementById('plug-label').value = plug.label;
+    populatePlugPrinterOptions(plug.printer_id);
+    document.getElementById('smartplug-modal').classList.add('active');
+}
+
+async function saveSmartPlug(e) {
     e.preventDefault();
-    const ip = document.getElementById('new-plug-ip').value;
-    const idx = document.getElementById('new-plug-idx').value || '1';
-    const label = document.getElementById('new-plug-label').value;
+    const id = document.getElementById('plug-id').value;
+    const printerIdStr = document.getElementById('plug-printer').value;
+    const data = {
+        ip: document.getElementById('plug-ip').value,
+        idx: document.getElementById('plug-idx').value || '1',
+        label: document.getElementById('plug-label').value,
+        printer_id: printerIdStr ? parseInt(printerIdStr) : null,
+    };
+
     try {
-        const resp = await fetch('/api/smartplugs', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ip, idx, label}),
-        });
+        const resp = id
+            ? await fetch(`/api/smartplugs/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
+            : await fetch('/api/smartplugs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
         if (resp.ok) {
-            document.getElementById('new-plug-ip').value = '';
-            document.getElementById('new-plug-idx').value = '1';
-            document.getElementById('new-plug-label').value = '';
-            loadSmartPlugs();
+            closeModal();
+            await loadSmartPlugs();
+            openSettings();
         }
     } catch (e) {}
 }
