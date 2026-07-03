@@ -575,7 +575,65 @@ function openSettings() {
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
     });
     renderSettingsPrinterList();
+    loadUsers();
     document.getElementById('settings-modal').classList.add('active');
+}
+
+// Users
+
+async function loadUsers() {
+    try {
+        const resp = await fetch('/api/users');
+        const users = await resp.json();
+        renderSettingsUserList(users || []);
+    } catch (e) {}
+}
+
+function renderSettingsUserList(users) {
+    const list = document.getElementById('settings-user-list');
+    list.innerHTML = users.map(u => `
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(u.username)}</span>
+            </div>
+            <div class="settings-printer-actions">
+                <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})" title="Delete">&times;</button>
+            </div>
+        </div>`).join('');
+}
+
+async function addUser(e) {
+    e.preventDefault();
+    const username = document.getElementById('new-user-username').value;
+    const password = document.getElementById('new-user-password').value;
+    try {
+        const resp = await fetch('/api/users', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, password}),
+        });
+        if (resp.ok) {
+            document.getElementById('new-user-username').value = '';
+            document.getElementById('new-user-password').value = '';
+            loadUsers();
+        } else {
+            const err = await resp.json();
+            alert(err.error || 'Failed to add user');
+        }
+    } catch (e) {}
+}
+
+async function deleteUser(id) {
+    if (!confirm('Remove this user?')) return;
+    try {
+        const resp = await fetch(`/api/users/${id}`, {method: 'DELETE'});
+        if (resp.ok) {
+            loadUsers();
+        } else {
+            const err = await resp.json();
+            alert(err.error || 'Failed to delete user');
+        }
+    } catch (e) {}
 }
 
 function renderSettingsPrinterList() {

@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -60,6 +61,20 @@ func (db *DB) migrate() error {
 		CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
+		);
+
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS sessions (
+			token TEXT PRIMARY KEY,
+			username TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_history_printer ON print_history(printer_id);
@@ -237,4 +252,97 @@ func (db *DB) GetAllSettings() (map[string]string, error) {
 		settings[k] = v
 	}
 	return settings, rows.Err()
+}
+
+// Users
+
+func (db *DB) CountUsers() (int, error) {
+	var n int
+	err := db.conn.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&n)
+	return n, err
+}
+
+func (db *DB) ListUsers() ([]models.User, error) {
+	rows, err := db.conn.Query(`SELECT id, username, created_at FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var u models.User
+		if err := rows.Scan(&u.ID, &u.Username, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func (db *DB) GetUserByUsername(username string) (*models.User, error) {
+	var u models.User
+	err := db.conn.QueryRow(`SELECT id, username, password_hash, created_at FROM users WHERE username = ?`, username).
+		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (db *DB) CreateUser(username, passwordHash string) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO users (username, password_hash) VALUES (?, ?)`, username, passwordHash)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) DeleteUser(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM users WHERE id = ?`, id)
+	return err
+}
+
+func (db *DB) GetUser(id int64) (*models.User, error) {
+	var u models.User
+	err := db.conn.QueryRow(`SELECT id, username, created_at FROM users WHERE id = ?`, id).
+		Scan(&u.ID, &u.Username, &u.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// Sessions
+
+func (db *DB) CreateSession(token, username string, expiresAt time.Time) error {
+	_, err := db.conn.Exec(`INSERT INTO sessions (token, username, expires_at) VALUES (?, ?, ?)`, token, username, expiresAt)
+	return err
+}
+
+func (db *DB) GetSessionUser(token string) (string, error) {
+	var username string
+	var expiresAt time.Time
+	err := db.conn.QueryRow(`SELECT username, expires_at FROM sessions WHERE token = ?`, token).Scan(&username, &expiresAt)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if time.Now().After(expiresAt) {
+		db.conn.Exec(`DELETE FROM sessions WHERE token = ?`, token)
+		return "", nil
+	}
+	return username, nil
+}
+
+func (db *DB) DeleteSession(token string) error {
+	_, err := db.conn.Exec(`DELETE FROM sessions WHERE token = ?`, token)
+	return err
+}
+
+func (db *DB) DeleteSessionsForUser(username string) error {
+	_, err := db.conn.Exec(`DELETE FROM sessions WHERE username = ?`, username)
+	return err
 }

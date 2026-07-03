@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/plugin"
@@ -30,6 +30,9 @@ type Handler struct {
 
 	errLogMu   sync.Mutex
 	errLogLast map[string]time.Time
+
+	loginMu    sync.Mutex
+	loginFails map[string][]time.Time
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
@@ -39,6 +42,7 @@ func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
 		ctx:        ctx,
 		proxy:      &http.Client{Timeout: 30 * time.Second, Transport: netguard.Transport()},
 		errLogLast: make(map[string]time.Time),
+		loginFails: make(map[string][]time.Time),
 	}
 }
 
@@ -74,6 +78,11 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
 	mux.HandleFunc("/api/file-thumbnail/", h.handleFileThumbnailProxy)
+	mux.HandleFunc("/setup", h.handleSetup)
+	mux.HandleFunc("/login", h.handleLogin)
+	mux.HandleFunc("/logout", h.handleLogout)
+	mux.HandleFunc("/api/users", h.handleUsers)
+	mux.HandleFunc("/api/users/", h.handleUserByID)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {

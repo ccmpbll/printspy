@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -532,15 +532,15 @@ func (p *Plugin) GetRecentFiles(ctx context.Context, limit int) ([]models.Recent
 }
 
 type octoprintFile struct {
-	Name      string  `json:"name"`
-	Path      string  `json:"path"`
-	Origin    string  `json:"origin"`
-	Type      string  `json:"type"`
-	Size      int64   `json:"size"`
-	Date      int64   `json:"date"`
-	Thumbnail string  `json:"thumbnail"`
+	Name      string          `json:"name"`
+	Path      string          `json:"path"`
+	Origin    string          `json:"origin"`
+	Type      string          `json:"type"`
+	Size      int64           `json:"size"`
+	Date      int64           `json:"date"`
+	Thumbnail string          `json:"thumbnail"`
 	Children  []octoprintFile `json:"children"`
-	Prints *struct {
+	Prints    *struct {
 		Success int `json:"success"`
 		Failure int `json:"failure"`
 		Last    *struct {

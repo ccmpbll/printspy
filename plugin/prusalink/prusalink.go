@@ -223,11 +223,11 @@ func (p *Plugin) GetRecentFiles(ctx context.Context, limit int) ([]models.Recent
 }
 
 type prusalinkFile struct {
-	Name        string  `json:"name"`
-	DisplayName string  `json:"display_name"`
-	Type        string  `json:"type"`
-	Size        int64   `json:"size"`
-	MTimestamp  int64   `json:"m_timestamp"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Type        string `json:"type"`
+	Size        int64  `json:"size"`
+	MTimestamp  int64  `json:"m_timestamp"`
 	Refs        struct {
 		Thumbnail string `json:"thumbnail"`
 		Download  string `json:"download"`
@@ -464,11 +464,11 @@ func mapState(state string) models.PrinterState {
 
 type statusResponse struct {
 	Printer struct {
-		State       string  `json:"state"`
-		TempNozzle  float64 `json:"temp_nozzle"`
+		State        string  `json:"state"`
+		TempNozzle   float64 `json:"temp_nozzle"`
 		TargetNozzle float64 `json:"target_nozzle"`
-		TempBed     float64 `json:"temp_bed"`
-		TargetBed   float64 `json:"target_bed"`
+		TempBed      float64 `json:"temp_bed"`
+		TargetBed    float64 `json:"target_bed"`
 	} `json:"printer"`
 	Job *struct {
 		ID       int     `json:"id"`
