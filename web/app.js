@@ -309,7 +309,7 @@ function renderPrinterCard(printer) {
             const offClass = !ps.on ? 'power-btn-active power-off' : '';
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
             const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
-            const label = ps.label && !ps.hide_label ? esc(ps.label) + ' ' : '';
+            const label = esc(plugLabel(ps));
             return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
@@ -506,7 +506,7 @@ function updateCard(card, printer) {
             // both share the same data-plug-id, so update every match.
             const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const label = ps.label && !ps.hide_label ? ps.label + ' ' : '';
+            const label = plugLabel(ps);
             groups.forEach(group => {
                 const btns = group.querySelectorAll('.power-toggle-btn');
                 if (btns[0]) {
@@ -1019,6 +1019,10 @@ function computeETA(remainingSecs) {
 function esc(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function plugLabel(ps) {
+    return ps.label && !ps.hide_label ? ps.label + ' ' : '';
 }
 
 // Config export/import

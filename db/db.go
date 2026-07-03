@@ -145,12 +145,13 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 
 // Smart plugs — managed independently of printers, optionally assigned to one.
 
+const smartPlugSelect = `
+	SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
+	FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
+`
+
 func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
-	rows, err := db.conn.Query(`
-		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
-		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
-		ORDER BY sp.id
-	`)
+	rows, err := db.conn.Query(smartPlugSelect + ` ORDER BY sp.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -159,11 +160,7 @@ func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
 }
 
 func (db *DB) GetSmartPlug(id int64) (*models.SmartPlug, error) {
-	rows, err := db.conn.Query(`
-		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
-		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
-		WHERE sp.id = ?
-	`, id)
+	rows, err := db.conn.Query(smartPlugSelect+`WHERE sp.id = ?`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -179,11 +176,7 @@ func (db *DB) GetSmartPlug(id int64) (*models.SmartPlug, error) {
 }
 
 func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
-	rows, err := db.conn.Query(`
-		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
-		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
-		WHERE sp.printer_id = ? ORDER BY sp.id
-	`, printerID)
+	rows, err := db.conn.Query(smartPlugSelect+`WHERE sp.printer_id = ? ORDER BY sp.id`, printerID)
 	if err != nil {
 		return nil, err
 	}
