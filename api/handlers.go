@@ -85,6 +85,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/logout", h.handleLogout)
 	mux.HandleFunc("/api/users", h.handleUsers)
 	mux.HandleFunc("/api/users/", h.handleUserByID)
+	mux.HandleFunc("/api/account/password", h.handleChangePassword)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {

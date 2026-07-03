@@ -303,6 +303,11 @@ func (db *DB) DeleteUser(id int64) error {
 	return err
 }
 
+func (db *DB) UpdateUserPassword(username, passwordHash string) error {
+	_, err := db.conn.Exec(`UPDATE users SET password_hash = ? WHERE username = ?`, passwordHash, username)
+	return err
+}
+
 func (db *DB) GetUser(id int64) (*models.User, error) {
 	var u models.User
 	err := db.conn.QueryRow(`SELECT id, username, created_at FROM users WHERE id = ?`, id).

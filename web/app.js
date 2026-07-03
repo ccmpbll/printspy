@@ -579,6 +579,29 @@ function openSettings() {
     document.getElementById('settings-modal').classList.add('active');
 }
 
+// Account
+
+async function changePassword(e) {
+    e.preventDefault();
+    const current_password = document.getElementById('current-password').value;
+    const new_password = document.getElementById('new-password').value;
+    try {
+        const resp = await fetch('/api/account/password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({current_password, new_password}),
+        });
+        if (resp.ok) {
+            document.getElementById('current-password').value = '';
+            document.getElementById('new-password').value = '';
+            alert('Password changed.');
+        } else {
+            const err = await resp.json();
+            alert(err.error || 'Failed to change password');
+        }
+    } catch (e) {}
+}
+
 // Users
 
 async function loadUsers() {

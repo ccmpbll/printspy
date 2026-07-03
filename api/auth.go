@@ -333,6 +333,49 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	username, ok := h.currentUser(r)
+	if !ok {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.NewPassword) < minPasswordLen {
+		jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.db.GetUserByUsername(username)
+	if err != nil || !checkPassword(user.PasswordHash, req.CurrentPassword) {
+		jsonError(w, "current password is incorrect", http.StatusUnauthorized)
+		return
+	}
+
+	hash, err := hashPassword(req.NewPassword)
+	if err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.UpdateUserPassword(username, hash); err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 const authPageHead = `<!DOCTYPE html>
 <html lang="en">
 <head>

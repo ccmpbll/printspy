@@ -120,6 +120,23 @@
             </div>
 
             <div class="settings-section">
+                <h3>Your account</h3>
+                <form onsubmit="changePassword(event)">
+                    <div class="form-group">
+                        <label for="current-password">Current password</label>
+                        <input type="password" id="current-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="new-password">New password</label>
+                        <input type="password" id="new-password" required minlength="8">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Change password</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="settings-section">
                 <h3>Users</h3>
                 <div id="settings-user-list"></div>
                 <form onsubmit="addUser(event)" style="margin-top:0.75rem">
