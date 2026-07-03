@@ -33,6 +33,8 @@ type Handler struct {
 
 	loginMu    sync.Mutex
 	loginFails map[string][]time.Time
+
+	setupMu sync.Mutex
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {

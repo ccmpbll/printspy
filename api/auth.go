@@ -138,8 +138,11 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Re-check under the same race window a concurrent setup POST could hit;
-		// the users.username UNIQUE constraint is the real backstop.
+		// Single mutex around check-then-insert closes the race between two
+		// concurrent /setup POSTs both seeing zero users.
+		h.setupMu.Lock()
+		defer h.setupMu.Unlock()
+
 		n, err := h.db.CountUsers()
 		if err != nil || n > 0 {
 			http.Redirect(w, r, "/login", http.StatusFound)
