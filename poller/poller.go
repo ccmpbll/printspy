@@ -196,9 +196,12 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
-// SetPowerState toggles a plug and immediately re-polls the printer, so the
-// dashboard reflects the change without waiting for the next scheduled poll
-// tick (which could be up to poll_interval away).
+// SetPowerState toggles a plug, then kicks off a re-poll in the background
+// so the dashboard reflects the change without waiting for the next
+// scheduled poll tick. The re-poll runs async — it includes a full printer
+// status fetch (pl.GetStatus), which can take up to that plugin's HTTP
+// timeout if the printer is slow or unreachable, and toggling a plug
+// shouldn't block on that.
 func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
@@ -225,7 +228,7 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 		setErr = pp.plugin.SetPowerState(ctx, plugID, on)
 	}
 
-	p.poll(ctx, id, pp)
+	go p.poll(context.Background(), id, pp)
 	return setErr
 }
 
