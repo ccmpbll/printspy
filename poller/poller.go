@@ -107,7 +107,7 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
-		p.pollLoop(ctx, config.ID, config.Name, pp, interval)
+		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
 	}()
 }
 
@@ -232,7 +232,7 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	if setErr == nil {
 		p.patchPowerState(id, plugID, on)
 	}
-	go p.poll(context.Background(), id, pp)
+	go p.poll(context.Background(), id, pp.plugin)
 	return setErr
 }
 
@@ -333,17 +333,17 @@ func (p *Poller) sendToAll(msg SSEMessage) {
 	}
 }
 
-func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pp *polledPrinter, interval time.Duration) {
+func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, interval time.Duration) {
 	log.Printf("starting poller for printer %d (%s) every %s", id, name, interval)
 
-	if err := pp.plugin.Connect(ctx); err != nil {
+	if err := pl.Connect(ctx); err != nil {
 		log.Printf("[printer:%d] initial connect failed: %v (will retry on poll)", id, err)
 	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	p.poll(ctx, id, pp)
+	p.poll(ctx, id, pl)
 
 	for {
 		select {
@@ -351,13 +351,13 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pp *polled
 			log.Printf("stopping poller for printer %d (%s)", id, name)
 			return
 		case <-ticker.C:
-			p.poll(ctx, id, pp)
+			p.poll(ctx, id, pl)
 		}
 	}
 }
 
-func (p *Poller) poll(ctx context.Context, id int64, pp *polledPrinter) {
-	status, err := pp.plugin.GetStatus(ctx)
+func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
+	status, err := pl.GetStatus(ctx)
 	if err != nil {
 		log.Printf("[printer:%d] poll error: %v", id, err)
 		status = &models.PrinterStatus{
