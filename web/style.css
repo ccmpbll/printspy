@@ -581,8 +581,9 @@ header .printer-count {
 }
 
 .form-group input,
-.form-group select {
-    width: 100%;
+.form-group select,
+.settings-printer-row input,
+.settings-printer-row select {
     padding: 0.5rem 0.75rem;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -591,8 +592,15 @@ header .printer-count {
     font-size: 0.85rem;
 }
 
+.form-group input,
+.form-group select {
+    width: 100%;
+}
+
 .form-group input:focus,
-.form-group select:focus {
+.form-group select:focus,
+.settings-printer-row input:focus,
+.settings-printer-row select:focus {
     outline: none;
     border-color: var(--accent);
 }
