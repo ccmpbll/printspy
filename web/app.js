@@ -506,9 +506,13 @@ function updateCard(card, printer) {
             // both share the same data-plug-id, so update every match.
             const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
+            const label = ps.label && !ps.hide_label ? ps.label + ' ' : '';
             groups.forEach(group => {
                 const btns = group.querySelectorAll('.power-toggle-btn');
-                if (btns[0]) btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
+                if (btns[0]) {
+                    btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
+                    btns[0].textContent = `${label}⚡ On`;
+                }
                 if (btns[1]) {
                     btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
                     btns[1].disabled = isBusy && isPrinterPlug;
