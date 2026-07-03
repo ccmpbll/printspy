@@ -13,6 +13,7 @@ import (
 const (
 	loginMaxAttempts = 5
 	loginWindow      = 15 * time.Minute
+	minPasswordLen   = 8
 )
 
 // RequireAuth gates every request behind a login. Users bootstrap through
@@ -132,7 +133,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 		}
 		username := strings.TrimSpace(r.FormValue("username"))
 		password := r.FormValue("password")
-		if username == "" || password == "" {
+		if username == "" || len(password) < minPasswordLen {
 			http.Redirect(w, r, "/setup?error=1", http.StatusFound)
 			return
 		}
@@ -241,8 +242,12 @@ func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Username = strings.TrimSpace(req.Username)
-		if req.Username == "" || req.Password == "" {
-			jsonError(w, "username and password are required", http.StatusBadRequest)
+		if req.Username == "" {
+			jsonError(w, "username is required", http.StatusBadRequest)
+			return
+		}
+		if len(req.Password) < minPasswordLen {
+			jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
 			return
 		}
 		hash, err := auth.HashPassword(req.Password)
