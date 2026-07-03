@@ -309,7 +309,7 @@ function renderPrinterCard(printer) {
             const offClass = !ps.on ? 'power-btn-active power-off' : '';
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
             const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
-            const label = !singlePlug && ps.label ? esc(ps.label) + ' ' : '';
+            const label = esc(plugLabel(ps));
             return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
@@ -501,16 +501,24 @@ function updateCard(card, printer) {
         const isBusy = state === 'printing' || state === 'paused';
         const singlePlug = status.power.length === 1;
         status.power.forEach(ps => {
-            const group = card.querySelector(`[data-field="power"][data-plug-id="${ps.id}"]`);
-            if (!group) return;
-            const btns = group.querySelectorAll('.power-toggle-btn');
+            // Same physical plug can appear more than once (e.g. auto-detected
+            // by a plugin AND separately assigned as a direct smart plug) --
+            // both share the same data-plug-id, so update every match.
+            const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            if (btns[0]) btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
-            if (btns[1]) {
-                btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
-                btns[1].disabled = isBusy && isPrinterPlug;
-                btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
-            }
+            const label = plugLabel(ps);
+            groups.forEach(group => {
+                const btns = group.querySelectorAll('.power-toggle-btn');
+                if (btns[0]) {
+                    btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
+                    btns[0].textContent = `${label}⚡ On`;
+                }
+                if (btns[1]) {
+                    btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
+                    btns[1].disabled = isBusy && isPrinterPlug;
+                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
+                }
+            });
         });
     }
 
@@ -576,7 +584,102 @@ function openSettings() {
     });
     renderSettingsPrinterList();
     loadUsers();
+    loadSmartPlugs();
     document.getElementById('settings-modal').classList.add('active');
+}
+
+// Smart plugs (direct Tasmota, managed independently of printers)
+
+let smartPlugs = [];
+
+async function loadSmartPlugs() {
+    try {
+        const resp = await fetch('/api/smartplugs');
+        smartPlugs = (await resp.json()) || [];
+        renderSettingsSmartPlugList(smartPlugs);
+    } catch (e) {}
+}
+
+function renderSettingsSmartPlugList(plugs) {
+    const list = document.getElementById('settings-smartplug-list');
+    if (!plugs.length) {
+        list.innerHTML = '<div class="settings-empty">No smart plugs configured yet.</div>';
+        return;
+    }
+    list.innerHTML = plugs.map(p => `
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
+                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}${p.hide_label ? ' — label hidden' : ''}</span>
+            </div>
+            <div class="settings-printer-actions">
+                <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteSmartPlug(${p.id})" title="Delete">&times;</button>
+            </div>
+        </div>`).join('');
+}
+
+function populatePlugPrinterOptions(selectedId) {
+    const select = document.getElementById('plug-printer');
+    select.innerHTML = '<option value="">Unassigned</option>' + printers
+        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
+        .join('');
+}
+
+function openAddSmartPlugModal() {
+    document.getElementById('smartplug-modal-title').textContent = 'Add smart plug';
+    document.getElementById('plug-id').value = '';
+    document.getElementById('plug-ip').value = '';
+    document.getElementById('plug-idx').value = '1';
+    document.getElementById('plug-label').value = '';
+    document.getElementById('plug-hide-label').checked = false;
+    populatePlugPrinterOptions(null);
+    document.getElementById('smartplug-modal').classList.add('active');
+}
+
+function openEditSmartPlugModal(id) {
+    const plug = smartPlugs.find(p => p.id === id);
+    if (!plug) return;
+    document.getElementById('smartplug-modal-title').textContent = 'Edit smart plug';
+    document.getElementById('plug-id').value = plug.id;
+    document.getElementById('plug-ip').value = plug.ip;
+    document.getElementById('plug-idx').value = plug.idx;
+    document.getElementById('plug-label').value = plug.label;
+    document.getElementById('plug-hide-label').checked = !!plug.hide_label;
+    populatePlugPrinterOptions(plug.printer_id);
+    document.getElementById('smartplug-modal').classList.add('active');
+}
+
+async function saveSmartPlug(e) {
+    e.preventDefault();
+    const id = document.getElementById('plug-id').value;
+    const printerIdStr = document.getElementById('plug-printer').value;
+    const data = {
+        ip: document.getElementById('plug-ip').value,
+        idx: document.getElementById('plug-idx').value || '1',
+        label: document.getElementById('plug-label').value,
+        hide_label: document.getElementById('plug-hide-label').checked,
+        printer_id: printerIdStr ? parseInt(printerIdStr) : null,
+    };
+
+    try {
+        const resp = id
+            ? await fetch(`/api/smartplugs/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
+            : await fetch('/api/smartplugs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+        if (resp.ok) {
+            closeModal();
+            await loadSmartPlugs();
+            openSettings();
+        }
+    } catch (e) {}
+}
+
+async function deleteSmartPlug(id) {
+    if (!confirm('Remove this smart plug?')) return;
+    try {
+        await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
+        loadSmartPlugs();
+    } catch (e) {}
 }
 
 // Account
@@ -916,6 +1019,10 @@ function computeETA(remainingSecs) {
 function esc(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function plugLabel(ps) {
+    return ps.label && !ps.hide_label ? ps.label + ' ' : '';
 }
 
 // Config export/import

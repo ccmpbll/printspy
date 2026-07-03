@@ -12,6 +12,7 @@ import (
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
+	"github.com/ccmpbll/printspy/smartplug"
 )
 
 type polledPrinter struct {
@@ -195,6 +196,27 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
+// Repoll re-polls a printer immediately instead of waiting for the next
+// scheduled tick. Used when something outside the poll loop changes a
+// printer's smart plug assignment/label, so the dashboard reflects it right
+// away rather than sitting stale until the next tick.
+func (p *Poller) Repoll(ctx context.Context, id int64) {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return
+	}
+	p.poll(ctx, id, pp.plugin)
+}
+
+// SetPowerState toggles a plug. On success it immediately patches the
+// cached status with the new on/off value and broadcasts that — the device
+// already ACKed the command, so this isn't optimistic, it's just not
+// waiting on an unrelated full printer poll (temps, job, thumbnail) to
+// confirm what's already known. A full poll still runs in the background
+// to reconcile everything else (watts, printer state), but the visible
+// plug toggle doesn't wait on it.
 func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
@@ -202,7 +224,59 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
-	return pp.plugin.SetPowerState(ctx, plugID, on)
+
+	plugs, err := p.db.ListSmartPlugs(id)
+	if err != nil {
+		return err
+	}
+
+	var setErr error
+	direct := false
+	for _, sp := range plugs {
+		if sp.IP+":"+sp.Idx == plugID {
+			setErr = smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
+			direct = true
+			break
+		}
+	}
+	if !direct {
+		setErr = pp.plugin.SetPowerState(ctx, plugID, on)
+	}
+
+	if setErr == nil {
+		p.patchPowerState(id, plugID, on)
+	}
+	go p.poll(context.Background(), id, pp.plugin)
+	return setErr
+}
+
+// patchPowerState flips a single plug's on/off value in the cached status
+// and broadcasts it, without waiting on a full printer poll.
+func (p *Poller) patchPowerState(id int64, plugID string, on bool) {
+	p.mu.Lock()
+	status, ok := p.cache[id]
+	if !ok || status == nil {
+		p.mu.Unlock()
+		return
+	}
+	patched := *status
+	patched.Power = append([]models.PowerState(nil), status.Power...)
+	found := false
+	for i := range patched.Power {
+		// Multiple entries can share an ID if the same physical device is
+		// both auto-detected (e.g. OctoPrint's own Tasmota plugin) and
+		// separately assigned as a direct smart plug — patch all of them.
+		if patched.Power[i].ID == plugID {
+			patched.Power[i].On = on
+			found = true
+		}
+	}
+	p.cache[id] = &patched
+	p.mu.Unlock()
+
+	if found {
+		p.broadcast(id, &patched)
+	}
 }
 
 func (p *Poller) GetThumbnailURL(id int64) string {
@@ -306,6 +380,10 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		}
 	}
 
+	if plugs, err := p.db.ListSmartPlugs(id); err == nil && len(plugs) > 0 {
+		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, plugs)...)
+	}
+
 	p.mu.Lock()
 	prev := p.cache[id]
 	p.cache[id] = status
@@ -335,6 +413,20 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.trackPrintHistory(id, prevState, status, prev)
 
 	p.broadcast(id, status)
+}
+
+func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.SmartPlug) []models.PowerState {
+	client := smartplug.New()
+	var states []models.PowerState
+	for _, sp := range plugs {
+		ps, err := client.GetState(ctx, sp.IP, sp.Idx, sp.Label, sp.HideLabel)
+		if err != nil {
+			log.Printf("[printer:%d] smart plug %s:%s unreachable: %v", id, sp.IP, sp.Idx, err)
+			continue
+		}
+		states = append(states, *ps)
+	}
+	return states
 }
 
 func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus) {

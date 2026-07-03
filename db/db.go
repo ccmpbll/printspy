@@ -46,6 +46,17 @@ func (db *DB) migrate() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		CREATE TABLE IF NOT EXISTS smart_plugs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			printer_id INTEGER,
+			ip TEXT NOT NULL,
+			idx TEXT NOT NULL DEFAULT '1',
+			label TEXT NOT NULL DEFAULT '',
+			hide_label INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS print_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			printer_id INTEGER NOT NULL,
@@ -89,6 +100,9 @@ func (db *DB) migrate() error {
 	// Migration: add username column for PrusaLink digest auth
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN username TEXT NOT NULL DEFAULT ''`)
 
+	// Migration: add hide_label column to smart_plugs if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
@@ -127,6 +141,91 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	}
 	p.Enabled = enabled == 1
 	return &p, nil
+}
+
+// Smart plugs — managed independently of printers, optionally assigned to one.
+
+const smartPlugSelect = `
+	SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
+	FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
+`
+
+func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
+	rows, err := db.conn.Query(smartPlugSelect + ` ORDER BY sp.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSmartPlugs(rows)
+}
+
+func (db *DB) GetSmartPlug(id int64) (*models.SmartPlug, error) {
+	rows, err := db.conn.Query(smartPlugSelect+`WHERE sp.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	plugs, err := scanSmartPlugs(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(plugs) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &plugs[0], nil
+}
+
+func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
+	rows, err := db.conn.Query(smartPlugSelect+`WHERE sp.printer_id = ? ORDER BY sp.id`, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanSmartPlugs(rows)
+}
+
+func scanSmartPlugs(rows *sql.Rows) ([]models.SmartPlug, error) {
+	var plugs []models.SmartPlug
+	for rows.Next() {
+		var sp models.SmartPlug
+		var printerID sql.NullInt64
+		var hideLabel int
+		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &hideLabel, &sp.PrinterName); err != nil {
+			return nil, err
+		}
+		if printerID.Valid {
+			sp.PrinterID = &printerID.Int64
+		}
+		sp.HideLabel = hideLabel == 1
+		plugs = append(plugs, sp)
+	}
+	return plugs, rows.Err()
+}
+
+func (db *DB) CreateSmartPlug(ip, idx, label string, hideLabel bool, printerID *int64) (int64, error) {
+	if idx == "" {
+		idx = "1"
+	}
+	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label, hide_label) VALUES (?, ?, ?, ?, ?)`,
+		printerID, ip, idx, label, hideLabel)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, printerID *int64) error {
+	if idx == "" {
+		idx = "1"
+	}
+	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=? WHERE id=?`,
+		ip, idx, label, hideLabel, printerID, id)
+	return err
+}
+
+func (db *DB) DeleteSmartPlug(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM smart_plugs WHERE id = ?`, id)
+	return err
 }
 
 func (db *DB) CreatePrinter(p *models.PrinterConfig) error {

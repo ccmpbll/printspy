@@ -27,6 +27,18 @@ type PrinterConfig struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
+// SmartPlug is a directly-configured Tasmota device, managed independently of
+// printers and optionally assigned to any one of them.
+type SmartPlug struct {
+	ID          int64  `json:"id"`
+	PrinterID   *int64 `json:"printer_id"`
+	PrinterName string `json:"printer_name,omitempty"`
+	IP          string `json:"ip"`
+	Idx         string `json:"idx"`
+	Label       string `json:"label"`
+	HideLabel   bool   `json:"hide_label"`
+}
+
 type Temperatures struct {
 	HotendActual  float64 `json:"hotend_actual"`
 	HotendTarget  float64 `json:"hotend_target"`
@@ -49,14 +61,15 @@ type JobInfo struct {
 }
 
 type PowerState struct {
-	ID       string  `json:"id"`
-	Label    string  `json:"label,omitempty"`
-	On       bool    `json:"on"`
-	Source   string  `json:"source,omitempty"`
-	Watts    float64 `json:"watts,omitempty"`
-	Voltage  float64 `json:"voltage,omitempty"`
-	Current  float64 `json:"current,omitempty"`
-	TotalKWh float64 `json:"total_kwh,omitempty"`
+	ID        string  `json:"id"`
+	Label     string  `json:"label,omitempty"`
+	HideLabel bool    `json:"hide_label,omitempty"`
+	On        bool    `json:"on"`
+	Source    string  `json:"source,omitempty"`
+	Watts     float64 `json:"watts,omitempty"`
+	Voltage   float64 `json:"voltage,omitempty"`
+	Current   float64 `json:"current,omitempty"`
+	TotalKWh  float64 `json:"total_kwh,omitempty"`
 }
 
 type PrinterStatus struct {

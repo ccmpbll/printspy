@@ -76,8 +76,47 @@
                 </div>
                 <div class="test-result" id="test-result"></div>
                 <div class="form-actions">
-                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                    <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
                     <button type="button" class="btn" id="test-btn" onclick="testConnection()">Test connection</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add/Edit Smart Plug Modal -->
+    <div class="modal-overlay" id="smartplug-modal">
+        <div class="modal">
+            <h2 id="smartplug-modal-title">Add smart plug</h2>
+            <form id="smartplug-form" onsubmit="saveSmartPlug(event)">
+                <input type="hidden" id="plug-id" value="">
+                <div class="form-group">
+                    <label for="plug-ip">IP</label>
+                    <input type="text" id="plug-ip" placeholder="192.168.1.60" required>
+                </div>
+                <div class="form-group">
+                    <label for="plug-idx">Relay index</label>
+                    <input type="text" id="plug-idx" placeholder="1" value="1">
+                    <div class="form-hint">Which relay to control on multi-relay Tasmota devices. Leave as 1 for a normal single-outlet plug.</div>
+                </div>
+                <div class="form-group">
+                    <label for="plug-label">Label</label>
+                    <input type="text" id="plug-label" placeholder="Printer">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="plug-hide-label" style="width:auto">
+                        Hide label on dashboard power button
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="plug-printer">Assigned printer</label>
+                    <select id="plug-printer">
+                        <option value="">Unassigned</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
                     <button type="submit" class="btn btn-primary">Save</button>
                 </div>
             </form>
@@ -93,6 +132,13 @@
                 <h3>Printers</h3>
                 <div id="settings-printer-list"></div>
                 <button class="btn btn-primary" onclick="closeModal();openAddModal()" style="margin-top:0.75rem">+ Add printer</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Smart plugs (Tasmota)</h3>
+                <div class="form-hint">Talk directly to a Tasmota device, independent of any auto-detected plugins. Add a plug, then assign it to any printer.</div>
+                <div id="settings-smartplug-list" style="margin-top:0.5rem"></div>
+                <button class="btn btn-primary" onclick="closeModal();openAddSmartPlugModal()" style="margin-top:0.75rem">+ Add plug</button>
             </div>
 
             <div class="settings-section">
