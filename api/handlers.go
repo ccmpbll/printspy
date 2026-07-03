@@ -579,6 +579,9 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "failed to create smart plug", http.StatusInternalServerError)
 			return
 		}
+		if req.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *req.PrinterID)
+		}
 		jsonResponse(w, map[string]int64{"id": id})
 
 	default:
@@ -612,16 +615,27 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "ip is required", http.StatusBadRequest)
 			return
 		}
+		existing, _ := h.db.GetSmartPlug(id)
 		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID); err != nil {
 			jsonError(w, "failed to update smart plug", http.StatusInternalServerError)
 			return
 		}
+		if existing != nil && existing.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+		}
+		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
+			go h.poller.Repoll(h.ctx, *req.PrinterID)
+		}
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
+		existing, _ := h.db.GetSmartPlug(id)
 		if err := h.db.DeleteSmartPlug(id); err != nil {
 			jsonError(w, "failed to delete smart plug", http.StatusInternalServerError)
 			return
+		}
+		if existing != nil && existing.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *existing.PrinterID)
 		}
 		w.WriteHeader(http.StatusNoContent)
 

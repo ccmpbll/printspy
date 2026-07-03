@@ -158,6 +158,26 @@ func (db *DB) ListAllSmartPlugs() ([]models.SmartPlug, error) {
 	return scanSmartPlugs(rows)
 }
 
+func (db *DB) GetSmartPlug(id int64) (*models.SmartPlug, error) {
+	rows, err := db.conn.Query(`
+		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
+		FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
+		WHERE sp.id = ?
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	plugs, err := scanSmartPlugs(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(plugs) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &plugs[0], nil
+}
+
 func (db *DB) ListSmartPlugs(printerID int64) ([]models.SmartPlug, error) {
 	rows, err := db.conn.Query(`
 		SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')

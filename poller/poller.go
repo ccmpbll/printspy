@@ -196,6 +196,20 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
+// Repoll re-polls a printer immediately instead of waiting for the next
+// scheduled tick. Used when something outside the poll loop changes a
+// printer's smart plug assignment/label, so the dashboard reflects it right
+// away rather than sitting stale until the next tick.
+func (p *Poller) Repoll(ctx context.Context, id int64) {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return
+	}
+	p.poll(ctx, id, pp.plugin)
+}
+
 // SetPowerState toggles a plug. On success it immediately patches the
 // cached status with the new on/off value and broadcasts that — the device
 // already ACKed the command, so this isn't optimistic, it's just not
