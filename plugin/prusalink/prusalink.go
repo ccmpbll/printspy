@@ -14,6 +14,7 @@ import (
 
 	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/models"
+	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/plugin"
 )
 
@@ -38,7 +39,7 @@ func New(config models.PrinterConfig) *Plugin {
 	}
 	return &Plugin{
 		config: config,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: &http.Client{Timeout: 10 * time.Second, Transport: netguard.Transport()},
 	}
 }
 

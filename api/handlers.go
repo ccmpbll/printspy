@@ -16,6 +16,7 @@ import (
 	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
+	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/poller"
 	"gopkg.in/yaml.v3"
@@ -36,7 +37,7 @@ func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
 		db:         database,
 		poller:     p,
 		ctx:        ctx,
-		proxy:      &http.Client{Timeout: 30 * time.Second},
+		proxy:      &http.Client{Timeout: 30 * time.Second, Transport: netguard.Transport()},
 		errLogLast: make(map[string]time.Time),
 	}
 }
@@ -760,11 +761,9 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Api-Key", printer.APIKey)
 
 	log.Printf("[webcam:%d] proxying stream from %s", id, webcamURL)
-	streamClient := &http.Client{
-		Transport: &http.Transport{
-			ResponseHeaderTimeout: 10 * time.Second,
-		},
-	}
+	streamTransport := netguard.Transport()
+	streamTransport.ResponseHeaderTimeout = 10 * time.Second
+	streamClient := &http.Client{Transport: streamTransport}
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		log.Printf("[webcam:%d] connection failed: %v", id, err)

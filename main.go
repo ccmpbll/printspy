@@ -65,7 +65,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr, Handler: mux}
+	server := &http.Server{Addr: addr, Handler: nosniff(mux)}
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -81,6 +81,13 @@ func main() {
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func nosniff(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func findWebDir() string {
