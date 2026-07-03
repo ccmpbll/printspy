@@ -249,10 +249,12 @@ func (p *Poller) patchPowerState(id int64, plugID string, on bool) {
 	patched.Power = append([]models.PowerState(nil), status.Power...)
 	found := false
 	for i := range patched.Power {
+		// Multiple entries can share an ID if the same physical device is
+		// both auto-detected (e.g. OctoPrint's own Tasmota plugin) and
+		// separately assigned as a direct smart plug — patch all of them.
 		if patched.Power[i].ID == plugID {
 			patched.Power[i].On = on
 			found = true
-			break
 		}
 	}
 	p.cache[id] = &patched
