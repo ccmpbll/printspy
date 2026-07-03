@@ -196,6 +196,9 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 	}
 }
 
+// SetPowerState toggles a plug and immediately re-polls the printer, so the
+// dashboard reflects the change without waiting for the next scheduled poll
+// tick (which could be up to poll_interval away).
 func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
@@ -203,16 +206,27 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
+
 	plugs, err := p.db.ListSmartPlugs(id)
 	if err != nil {
 		return err
 	}
+
+	var setErr error
+	direct := false
 	for _, sp := range plugs {
 		if sp.IP+":"+sp.Idx == plugID {
-			return smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
+			setErr = smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
+			direct = true
+			break
 		}
 	}
-	return pp.plugin.SetPowerState(ctx, plugID, on)
+	if !direct {
+		setErr = pp.plugin.SetPowerState(ctx, plugID, on)
+	}
+
+	p.poll(ctx, id, pp)
+	return setErr
 }
 
 func (p *Poller) GetThumbnailURL(id int64) string {
