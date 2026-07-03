@@ -13,7 +13,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: gofmt
         run: |
@@ -31,3 +31,10 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build --build-arg VERSION=ci-test -t printspy:ci-test .
