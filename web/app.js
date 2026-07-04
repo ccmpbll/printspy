@@ -36,7 +36,8 @@ function connectSSE() {
         fetchPrinters();
     });
 
-    eventSource.addEventListener('error', () => {
+    eventSource.addEventListener('error', (e) => {
+        console.warn(`[sse] connection error at ${new Date().toISOString()}, readyState=${eventSource.readyState}`, e);
         showConnectionBanner(true);
     });
 }

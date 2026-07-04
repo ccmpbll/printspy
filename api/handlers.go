@@ -380,6 +380,9 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 	sub := h.poller.Subscribe(r.Context())
 	defer h.poller.Unsubscribe(sub)
 
+	log.Printf("[sse] client connected: %s", r.RemoteAddr)
+	defer log.Printf("[sse] client disconnected: %s", r.RemoteAddr)
+
 	// Send initial full state
 	printers, err := h.db.ListPrinters()
 	if err == nil {
@@ -394,12 +397,21 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ponytail: keeps proxies (Traefik, nginx, etc.) from reaping the connection as idle
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
 		case <-sub.Done():
 			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
 		case msg := <-sub.Chan():
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", msg.Event, msg.Data)
 			flusher.Flush()
