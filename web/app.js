@@ -233,11 +233,32 @@ function toggleWebcamMode(printerId) {
 function webcamError(img, isPrinting) {
     const container = img.parentElement;
     img.style.display = 'none';
-    container.querySelector('.webcam-placeholder').style.display = 'block';
+    container.querySelector('.webcam-placeholder').style.display = 'flex';
     container.querySelector('.webcam-badge').style.display = 'none';
     const toggle = container.querySelector('.webcam-toggle');
     if (toggle) toggle.style.display = 'none';
-    if (!isPrinting) container.classList.add('webcam-collapsed');
+
+    // No camera - fall back to the print thumbnail (current job, or last
+    // loaded file) rather than collapsing the space immediately. Only
+    // collapse (when idle) once the thumbnail also fails to load.
+    const thumb = container.querySelector('.webcam-print-thumb');
+    const text = container.querySelector('.webcam-placeholder-text');
+    const printerId = container.closest('[data-printer-id]')?.dataset.printerId;
+    if (printerId) {
+        thumb.onload = () => {
+            thumb.style.display = 'block';
+            text.style.display = 'none';
+            container.classList.remove('webcam-collapsed');
+        };
+        thumb.onerror = () => {
+            thumb.style.display = 'none';
+            text.style.display = 'block';
+            if (!isPrinting) container.classList.add('webcam-collapsed');
+        };
+        thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
+    } else if (!isPrinting) {
+        container.classList.add('webcam-collapsed');
+    }
 }
 
 function webcamSrc(printerId) {
@@ -341,7 +362,10 @@ function renderPrinterCard(printer) {
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
                         <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="webcamError(this,${isPrinting})">
-                        <div class="webcam-placeholder" style="display:none">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</div>
+                        <div class="webcam-placeholder" style="display:none">
+                            <img class="webcam-print-thumb" style="display:none" alt="">
+                            <span class="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
+                        </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         ${cfg.type !== 'prusalink' ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
                     </div>
