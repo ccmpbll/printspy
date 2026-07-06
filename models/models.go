@@ -39,6 +39,18 @@ type SmartPlug struct {
 	HideLabel   bool   `json:"hide_label"`
 }
 
+// Camera is a directly-configured printspy-cam device, managed independently
+// of printers and optionally assigned to any one of them. When assigned, it
+// overrides whatever webcam a printer's own plugin would otherwise discover.
+type Camera struct {
+	ID          int64  `json:"id"`
+	PrinterID   *int64 `json:"printer_id"`
+	PrinterName string `json:"printer_name,omitempty"`
+	URL         string `json:"url"`
+	Label       string `json:"label"`
+	HideLabel   bool   `json:"hide_label"`
+}
+
 type Temperatures struct {
 	HotendActual  float64 `json:"hotend_actual"`
 	HotendTarget  float64 `json:"hotend_target"`

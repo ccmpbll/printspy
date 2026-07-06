@@ -586,6 +586,7 @@ function openSettings() {
     renderSettingsPrinterList();
     loadUsers();
     loadSmartPlugs();
+    loadCameras();
     document.getElementById('settings-modal').classList.add('active');
 }
 
@@ -680,6 +681,118 @@ async function deleteSmartPlug(id) {
     try {
         await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
         loadSmartPlugs();
+    } catch (e) {}
+}
+
+// Cameras (printspy-cam, managed independently of printers)
+
+let cameras = [];
+
+async function loadCameras() {
+    try {
+        const resp = await fetch('/api/cameras');
+        cameras = (await resp.json()) || [];
+        renderSettingsCameraList(cameras);
+    } catch (e) {}
+}
+
+function renderSettingsCameraList(cams) {
+    const list = document.getElementById('settings-camera-list');
+    if (!cams.length) {
+        list.innerHTML = '<div class="settings-empty">No cameras configured yet.</div>';
+        return;
+    }
+    list.innerHTML = cams.map(c => `
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(c.label || c.url)}</span>
+                <span class="settings-printer-url">${esc(c.url)} — ${c.printer_name ? esc(c.printer_name) : 'Unassigned'}${c.hide_label ? ' — label hidden' : ''}</span>
+            </div>
+            <div class="settings-printer-actions">
+                <button class="btn btn-sm" onclick="closeModal();openEditCameraModal(${c.id})" title="Edit">&#9998; Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteCamera(${c.id})" title="Delete">&times;</button>
+            </div>
+        </div>`).join('');
+}
+
+function populateCameraPrinterOptions(selectedId) {
+    const select = document.getElementById('camera-printer');
+    select.innerHTML = '<option value="">Unassigned</option>' + printers
+        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
+        .join('');
+}
+
+function openAddCameraModal() {
+    document.getElementById('camera-modal-title').textContent = 'Add camera';
+    document.getElementById('camera-id').value = '';
+    document.getElementById('camera-url').value = '';
+    document.getElementById('camera-label').value = '';
+    document.getElementById('camera-hide-label').checked = false;
+    document.getElementById('camera-orientation-group').style.display = 'none';
+    populateCameraPrinterOptions(null);
+    document.getElementById('camera-modal').classList.add('active');
+}
+
+function openEditCameraModal(id) {
+    const cam = cameras.find(c => c.id === id);
+    if (!cam) return;
+    document.getElementById('camera-modal-title').textContent = 'Edit camera';
+    document.getElementById('camera-id').value = cam.id;
+    document.getElementById('camera-url').value = cam.url;
+    document.getElementById('camera-label').value = cam.label;
+    document.getElementById('camera-hide-label').checked = !!cam.hide_label;
+    populateCameraPrinterOptions(cam.printer_id);
+    document.getElementById('camera-orientation-group').style.display = 'block';
+    document.getElementById('camera-hmirror').checked = false;
+    document.getElementById('camera-vflip').checked = false;
+    fetch(`/api/cameras/${id}/settings`).then(r => r.ok ? r.json() : null).then(s => {
+        if (!s) return;
+        document.getElementById('camera-hmirror').checked = !!s.hmirror;
+        document.getElementById('camera-vflip').checked = !!s.vflip;
+    }).catch(() => {});
+    document.getElementById('camera-modal').classList.add('active');
+}
+
+async function saveCamera(e) {
+    e.preventDefault();
+    const id = document.getElementById('camera-id').value;
+    const printerIdStr = document.getElementById('camera-printer').value;
+    const data = {
+        url: document.getElementById('camera-url').value,
+        label: document.getElementById('camera-label').value,
+        hide_label: document.getElementById('camera-hide-label').checked,
+        printer_id: printerIdStr ? parseInt(printerIdStr) : null,
+    };
+
+    try {
+        const resp = id
+            ? await fetch(`/api/cameras/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
+            : await fetch('/api/cameras', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+        if (resp.ok) {
+            closeModal();
+            await loadCameras();
+            openSettings();
+        }
+    } catch (e) {}
+}
+
+async function saveCameraOrientation() {
+    const id = document.getElementById('camera-id').value;
+    if (!id) return;
+    const data = {
+        hmirror: document.getElementById('camera-hmirror').checked,
+        vflip: document.getElementById('camera-vflip').checked,
+    };
+    try {
+        await fetch(`/api/cameras/${id}/settings`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+    } catch (e) {}
+}
+
+async function deleteCamera(id) {
+    if (!confirm('Remove this camera?')) return;
+    try {
+        await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
+        loadCameras();
     } catch (e) {}
 }
 

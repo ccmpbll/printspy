@@ -57,6 +57,16 @@ func (db *DB) migrate() error {
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS cameras (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			printer_id INTEGER,
+			url TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			hide_label INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
+		);
+
 		CREATE TABLE IF NOT EXISTS print_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			printer_id INTEGER NOT NULL,
@@ -225,6 +235,92 @@ func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, p
 
 func (db *DB) DeleteSmartPlug(id int64) error {
 	_, err := db.conn.Exec(`DELETE FROM smart_plugs WHERE id = ?`, id)
+	return err
+}
+
+// Cameras — printspy-cam devices, managed independently of printers, optionally assigned to one.
+
+const cameraSelect = `
+	SELECT c.id, c.printer_id, c.url, c.label, c.hide_label, COALESCE(p.name, '')
+	FROM cameras c LEFT JOIN printers p ON p.id = c.printer_id
+`
+
+func (db *DB) ListAllCameras() ([]models.Camera, error) {
+	rows, err := db.conn.Query(cameraSelect + ` ORDER BY c.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanCameras(rows)
+}
+
+func (db *DB) GetCamera(id int64) (*models.Camera, error) {
+	rows, err := db.conn.Query(cameraSelect+`WHERE c.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cams, err := scanCameras(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(cams) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &cams[0], nil
+}
+
+func (db *DB) GetCameraForPrinter(printerID int64) (*models.Camera, error) {
+	rows, err := db.conn.Query(cameraSelect+`WHERE c.printer_id = ? ORDER BY c.id LIMIT 1`, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cams, err := scanCameras(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(cams) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &cams[0], nil
+}
+
+func scanCameras(rows *sql.Rows) ([]models.Camera, error) {
+	var cams []models.Camera
+	for rows.Next() {
+		var c models.Camera
+		var printerID sql.NullInt64
+		var hideLabel int
+		if err := rows.Scan(&c.ID, &printerID, &c.URL, &c.Label, &hideLabel, &c.PrinterName); err != nil {
+			return nil, err
+		}
+		if printerID.Valid {
+			c.PrinterID = &printerID.Int64
+		}
+		c.HideLabel = hideLabel == 1
+		cams = append(cams, c)
+	}
+	return cams, rows.Err()
+}
+
+func (db *DB) CreateCamera(url, label string, hideLabel bool, printerID *int64) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO cameras (printer_id, url, label, hide_label) VALUES (?, ?, ?, ?)`,
+		printerID, url, label, hideLabel)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) UpdateCamera(id int64, url, label string, hideLabel bool, printerID *int64) error {
+	_, err := db.conn.Exec(`UPDATE cameras SET url=?, label=?, hide_label=?, printer_id=? WHERE id=?`,
+		url, label, hideLabel, printerID, id)
+	return err
+}
+
+func (db *DB) DeleteCamera(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM cameras WHERE id = ?`, id)
 	return err
 }
 

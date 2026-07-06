@@ -123,6 +123,53 @@
         </div>
     </div>
 
+    <!-- Add/Edit Camera Modal -->
+    <div class="modal-overlay" id="camera-modal">
+        <div class="modal">
+            <h2 id="camera-modal-title">Add camera</h2>
+            <form id="camera-form" onsubmit="saveCamera(event)">
+                <input type="hidden" id="camera-id" value="">
+                <div class="form-group">
+                    <label for="camera-url">URL</label>
+                    <input type="url" id="camera-url" placeholder="http://printspy-cam-abcdef.local" required>
+                </div>
+                <div class="form-group">
+                    <label for="camera-label">Label</label>
+                    <input type="text" id="camera-label" placeholder="Printer">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="camera-hide-label" style="width:auto">
+                        Hide label on dashboard webcam feed
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="camera-printer">Assigned printer</label>
+                    <select id="camera-printer">
+                        <option value="">Unassigned</option>
+                    </select>
+                    <div class="form-hint">Overrides that printer's own webcam, if any.</div>
+                </div>
+                <div class="form-group" id="camera-orientation-group" style="display:none">
+                    <label>Orientation</label>
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="camera-hmirror" style="width:auto" onchange="saveCameraOrientation()">
+                        Mirror horizontally
+                    </label>
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="camera-vflip" style="width:auto" onchange="saveCameraOrientation()">
+                        Flip vertically
+                    </label>
+                    <div class="form-hint">Applied live on the camera itself.</div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settings-modal">
         <div class="modal modal-wide">
@@ -139,6 +186,13 @@
                 <div class="form-hint">Talk directly to a Tasmota device, independent of any auto-detected plugins. Add a plug, then assign it to any printer.</div>
                 <div id="settings-smartplug-list" style="margin-top:0.5rem"></div>
                 <button class="btn btn-primary" onclick="closeModal();openAddSmartPlugModal()" style="margin-top:0.75rem">+ Add plug</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Cameras (printspy-cam)</h3>
+                <div class="form-hint">Standalone printspy-cam device, independent of printer type. Add one, then assign it to any printer.</div>
+                <div id="settings-camera-list" style="margin-top:0.5rem"></div>
+                <button class="btn btn-primary" onclick="closeModal();openAddCameraModal()" style="margin-top:0.75rem">+ Add camera</button>
             </div>
 
             <div class="settings-section">
