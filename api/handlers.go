@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -115,8 +114,9 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 	result := make([]models.PrinterWithStatus, len(printers))
 	for i, p := range printers {
 		result[i] = models.PrinterWithStatus{
-			Config: p,
-			Status: statuses[p.ID],
+			Config:    p,
+			Status:    statuses[p.ID],
+			HasCamera: h.hasCameraAssigned(p.ID),
 		}
 	}
 	jsonResponse(w, result)
@@ -195,6 +195,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.startPrint(w, r, id)
 		case "control":
 			h.controlPrint(w, r, id)
+		case "maintenance":
+			h.handleMaintenance(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -248,8 +250,12 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 
+	// UpdatePrinter doesn't touch the maintenance column - re-fetch it so
+	// saving unrelated edits (name, URL, ...) doesn't silently resume
+	// polling a printer that's deliberately paused.
+	current, _ := h.db.GetPrinter(id)
 	h.poller.RemovePrinter(id)
-	if p.Enabled {
+	if p.Enabled && (current == nil || !current.Maintenance) {
 		h.poller.AddPrinter(h.ctx, p)
 	}
 	h.poller.BroadcastRefresh()
@@ -392,7 +398,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		statuses := h.poller.GetAllStatuses()
 		result := make([]models.PrinterWithStatus, len(printers))
 		for i, p := range printers {
-			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID]}
+			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID], HasCamera: h.hasCameraAssigned(p.ID)}
 		}
 		if data, err := json.Marshal(result); err == nil {
 			fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
@@ -513,6 +519,38 @@ func (h *Handler) handlePower(w http.ResponseWriter, r *http.Request, id int64) 
 	}
 
 	jsonResponse(w, map[string]any{"success": true, "power_on": turnOn})
+}
+
+// handleMaintenance toggles a printer out of/into the poll loop on explicit
+// user intent - unlike offline/error/attention, which are inferred from
+// connectivity, this is "I know it's down, stop polling and stop alarming."
+func (h *Handler) handleMaintenance(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Maintenance bool `json:"maintenance"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.SetMaintenance(id, req.Maintenance); err != nil {
+		jsonError(w, "failed to update maintenance state", http.StatusInternalServerError)
+		return
+	}
+
+	if req.Maintenance {
+		h.poller.RemovePrinter(id)
+	} else if printer, err := h.db.GetPrinter(id); err == nil && printer.Enabled {
+		h.poller.AddPrinter(h.ctx, *printer)
+	}
+
+	h.poller.BroadcastRefresh()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
@@ -659,6 +697,11 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) hasCameraAssigned(printerID int64) bool {
+	_, err := h.db.GetCameraForPrinter(printerID)
+	return err == nil
+}
+
 // Cameras — printspy-cam devices, managed independently of printers, optionally assigned to one.
 
 func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
@@ -681,7 +724,7 @@ func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "url is required", http.StatusBadRequest)
 			return
 		}
-		id, err := h.db.CreateCamera(req.URL, req.Label, req.HideLabel, req.PrinterID)
+		id, err := h.db.CreateCamera(req.URL, req.Name, req.PrinterID)
 		if err != nil {
 			jsonError(w, "failed to create camera", http.StatusInternalServerError)
 			return
@@ -689,6 +732,7 @@ func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil {
 			go h.poller.Repoll(h.ctx, *req.PrinterID)
 		}
+		h.poller.BroadcastRefresh()
 		jsonResponse(w, map[string]int64{"id": id})
 
 	default:
@@ -698,8 +742,7 @@ func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
 
 type cameraRequest struct {
 	URL       string `json:"url"`
-	Label     string `json:"label"`
-	HideLabel bool   `json:"hide_label"`
+	Name      string `json:"name"`
 	PrinterID *int64 `json:"printer_id"`
 }
 
@@ -733,7 +776,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		existing, _ := h.db.GetCamera(id)
-		if err := h.db.UpdateCamera(id, req.URL, req.Label, req.HideLabel, req.PrinterID); err != nil {
+		if err := h.db.UpdateCamera(id, req.URL, req.Name, req.PrinterID); err != nil {
 			jsonError(w, "failed to update camera", http.StatusInternalServerError)
 			return
 		}
@@ -743,6 +786,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
 			go h.poller.Repoll(h.ctx, *req.PrinterID)
 		}
+		h.poller.BroadcastRefresh()
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
@@ -754,6 +798,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 		if existing != nil && existing.PrinterID != nil {
 			go h.poller.Repoll(h.ctx, *existing.PrinterID)
 		}
+		h.poller.BroadcastRefresh()
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -788,23 +833,10 @@ func (h *Handler) handleCameraSettings(w http.ResponseWriter, r *http.Request, i
 		io.Copy(w, resp.Body)
 
 	case http.MethodPut:
-		var body struct {
-			HMirror *bool `json:"hmirror"`
-			VFlip   *bool `json:"vflip"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			jsonError(w, "invalid request body", http.StatusBadRequest)
-			return
-		}
-		payload := map[string]any{}
-		if body.HMirror != nil {
-			payload["hmirror"] = *body.HMirror
-		}
-		if body.VFlip != nil {
-			payload["vflip"] = *body.VFlip
-		}
-		buf, _ := json.Marshal(payload)
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base, bytes.NewReader(buf))
+		// Pure passthrough - printspy-cam's own firmware already validates
+		// and ignores anything it doesn't recognize, so there's nothing for
+		// this proxy to decode or re-encode.
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base, r.Body)
 		if err != nil {
 			jsonError(w, "failed to build request", http.StatusInternalServerError)
 			return

@@ -74,7 +74,7 @@ func (p *Poller) Start(ctx context.Context) error {
 		return err
 	}
 	for _, printer := range printers {
-		if printer.Enabled {
+		if printer.Enabled && !printer.Maintenance {
 			p.AddPrinter(ctx, printer)
 		}
 	}

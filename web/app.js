@@ -4,6 +4,29 @@ let prevPrinterIDs = [];
 let eventSource = null;
 let statusCache = {};
 
+// State → card border / idle-message styling and default text, keyed once
+// instead of re-hand-written at every call site (render, incremental update).
+const STATE_META = {
+    error:        {cardClass: 'card-error', msgClass: 'msg-error', defaultMsg: 'Printer reported an error'},
+    attention:    {cardClass: 'card-attention', msgClass: 'msg-attention', defaultMsg: 'Printer needs attention'},
+    offline:      {cardClass: 'card-offline', msgClass: 'msg-offline', defaultMsg: 'Unable to reach printer'},
+    disconnected: {cardClass: 'card-disconnected', msgClass: 'msg-disconnected', defaultMsg: 'Printer disconnected', ignoreDetail: true},
+};
+
+function stateCardClass(state) {
+    return `printer-card ${STATE_META[state] ? STATE_META[state].cardClass : ''}`;
+}
+
+function stateIdleMsgClass(state) {
+    return STATE_META[state] ? `idle-message ${STATE_META[state].msgClass}` : 'idle-message';
+}
+
+function stateIdleMsgText(state, detailMsg) {
+    const meta = STATE_META[state];
+    if (!meta) return 'Ready for next job';
+    return meta.ignoreDetail ? meta.defaultMsg : (detailMsg || meta.defaultMsg);
+}
+
 // SSE connection
 
 function connectSSE() {
@@ -230,8 +253,9 @@ function toggleWebcamMode(printerId) {
     if (placeholder) placeholder.style.display = 'none';
 }
 
-function webcamError(img, isPrinting) {
+function webcamError(img, isPrinting, tryThumb) {
     const container = img.parentElement;
+    const wrapper = container.parentElement;
     img.style.display = 'none';
     container.querySelector('.webcam-placeholder').style.display = 'flex';
     container.querySelector('.webcam-badge').style.display = 'none';
@@ -239,25 +263,30 @@ function webcamError(img, isPrinting) {
     if (toggle) toggle.style.display = 'none';
 
     // No camera - fall back to the print thumbnail (current job, or last
-    // loaded file) rather than collapsing the space immediately. Only
-    // collapse (when idle) once the thumbnail also fails to load.
+    // loaded file) rather than collapsing the space immediately, but only
+    // when idle/printing - a decorative plate render doesn't belong next to
+    // an error/attention/offline card, it just competes with the actual
+    // message for space. Only collapse (when idle) once the thumbnail also
+    // fails to load. Collapsing the wrapper (not just the inner container)
+    // is what actually frees up the row for printer-stats to expand into -
+    // the wrapper has a fixed width that survives the container being hidden.
     const thumb = container.querySelector('.webcam-print-thumb');
     const text = container.querySelector('.webcam-placeholder-text');
     const printerId = container.closest('[data-printer-id]')?.dataset.printerId;
-    if (printerId) {
+    if (tryThumb && printerId) {
         thumb.onload = () => {
             thumb.style.display = 'block';
             text.style.display = 'none';
-            container.classList.remove('webcam-collapsed');
+            wrapper.classList.remove('webcam-collapsed');
         };
         thumb.onerror = () => {
             thumb.style.display = 'none';
             text.style.display = 'block';
-            if (!isPrinting) container.classList.add('webcam-collapsed');
+            if (!isPrinting) wrapper.classList.add('webcam-collapsed');
         };
         thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
     } else if (!isPrinting) {
-        container.classList.add('webcam-collapsed');
+        wrapper.classList.add('webcam-collapsed');
     }
 }
 
@@ -295,7 +324,7 @@ function updateDashboard() {
 
     updateHeaderCount();
 
-    const currentIDs = printers.map(p => p.config.id);
+    const currentIDs = printers.map(p => `${p.config.id}:${p.has_camera}:${p.config.maintenance}`);
     const structureChanged = JSON.stringify(currentIDs) !== JSON.stringify(prevPrinterIDs);
 
     if (structureChanged) {
@@ -305,8 +334,23 @@ function updateDashboard() {
     }
 }
 
+function renderMaintenanceCard(cfg) {
+    return `
+        <div class="printer-card card-maintenance" data-printer-id="${cfg.id}" data-state="maintenance">
+            <div class="printer-header">
+                <span class="printer-name">${esc(cfg.name)}</span>
+                <span class="printer-state state-maintenance">Maintenance</span>
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
+            </div>
+            <div class="printer-body">
+                <div class="idle-message" data-field="idle-msg">In maintenance — polling paused</div>
+            </div>
+        </div>`;
+}
+
 function renderPrinterCard(printer) {
     const cfg = printer.config;
+    if (cfg.maintenance) return renderMaintenanceCard(cfg);
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
@@ -319,8 +363,11 @@ function renderPrinterCard(printer) {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
-    const wcMode = cfg.type === 'prusalink' ? 'snapshot' : getWebcamMode(cfg.id);
-    const cardClass = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
+    // PrusaLink's own webcam integration is snapshot-only, but an assigned
+    // printspy-cam supports live streaming regardless of printer type.
+    const supportsLive = cfg.type !== 'prusalink' || printer.has_camera;
+    const wcMode = supportsLive ? getWebcamMode(cfg.id) : 'snapshot';
+    const cardClass = stateCardClass(state);
 
     let powerHTML = '';
     if (status && status.power && status.power.length > 0) {
@@ -361,13 +408,13 @@ function renderPrinterCard(printer) {
             <div class="printer-body">
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="webcamError(this,${isPrinting})">
+                        <img class="webcam-img" src="${webcamSrc(cfg.id)}" alt="Webcam" onerror="webcamError(this,${isPrinting},${state === 'idle' || isPrinting})">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
                         </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
-                        ${cfg.type !== 'prusalink' ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
+                        ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
                     </div>
                 </div>
                 <div class="printer-stats">
@@ -433,16 +480,7 @@ function renderPrintingStats(cfg, status) {
 function renderIdleStats(status, state) {
     const temps = status ? status.temps : null;
     const detailMsg = status && status.state_message ? status.state_message : '';
-    let stateMsg;
-    if (state === 'offline') {
-        stateMsg = detailMsg || 'Unable to reach printer';
-    } else if (state === 'disconnected') {
-        stateMsg = 'Printer disconnected';
-    } else if (state === 'error') {
-        stateMsg = detailMsg || 'Printer reported an error';
-    } else {
-        stateMsg = 'Ready for next job';
-    }
+    const stateMsg = stateIdleMsgText(state, detailMsg);
 
     let tempsHTML = '';
     if (temps && state !== 'offline' && state !== 'disconnected') {
@@ -462,10 +500,7 @@ function renderIdleStats(status, state) {
         return '';
     }
 
-    const msgClass = state === 'error' ? 'idle-message msg-error' :
-                     state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
-
-    return `<div class="${msgClass}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
+    return `<div class="${stateIdleMsgClass(state)}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
 }
 
 function updateCard(card, printer) {
@@ -482,7 +517,16 @@ function updateCard(card, printer) {
     const hadPower = !!card.querySelector('[data-field="power"]');
     const hasPower = status && status.power && status.power.length > 0;
 
-    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown) || (hasPower && !hadPower)) {
+    // Whether the webcam-failure fallback tries a print thumbnail is baked
+    // into the onerror handler at render time (see renderPrinterCard) - it
+    // needs a full re-render whenever that eligibility flips, or a stale
+    // thumbnail attempt from a prior idle/printing state keeps firing (e.g.
+    // idle -> error still showing the old thumbnail instead of the error
+    // placeholder).
+    const wasThumbEligible = prevState === 'idle' || wasPrinting;
+    const isThumbEligible = state === 'idle' || isPrinting;
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown) || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
         if (state === 'idle') loadRecentPrints(cfg.id);
         return;
@@ -492,18 +536,12 @@ function updateCard(card, printer) {
 
     // Update card border class on state change
     if (prevState !== state) {
-        card.className = `printer-card ${state === 'error' ? 'card-error' : state === 'offline' ? 'card-offline' : state === 'disconnected' ? 'card-disconnected' : ''}`;
+        card.className = stateCardClass(state);
         const idleMsg = card.querySelector('[data-field="idle-msg"]');
         if (idleMsg) {
             const detailMsg = status && status.state_message ? status.state_message : '';
-            const msgClass = state === 'error' ? 'idle-message msg-error' :
-                             state === 'disconnected' ? 'idle-message msg-disconnected' :
-                             state === 'offline' ? 'idle-message msg-offline' : 'idle-message';
-            idleMsg.className = msgClass;
-            if (state === 'offline') idleMsg.textContent = detailMsg || 'Unable to reach printer';
-            else if (state === 'disconnected') idleMsg.textContent = 'Printer disconnected';
-            else if (state === 'error') idleMsg.textContent = detailMsg || 'Printer reported an error';
-            else idleMsg.textContent = 'Ready for next job';
+            idleMsg.className = stateIdleMsgClass(state);
+            idleMsg.textContent = stateIdleMsgText(state, detailMsg);
         }
     }
 
@@ -729,8 +767,8 @@ function renderSettingsCameraList(cams) {
     list.innerHTML = cams.map(c => `
         <div class="settings-printer-row">
             <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(c.label || c.url)}</span>
-                <span class="settings-printer-url">${esc(c.url)} — ${c.printer_name ? esc(c.printer_name) : 'Unassigned'}${c.hide_label ? ' — label hidden' : ''}</span>
+                <span class="settings-printer-name">${esc(c.name || c.url)}</span>
+                <span class="settings-printer-url">${esc(c.url)} — ${c.printer_name ? esc(c.printer_name) : 'Unassigned'}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditCameraModal(${c.id})" title="Edit">&#9998; Edit</button>
@@ -750,8 +788,7 @@ function openAddCameraModal() {
     document.getElementById('camera-modal-title').textContent = 'Add camera';
     document.getElementById('camera-id').value = '';
     document.getElementById('camera-url').value = '';
-    document.getElementById('camera-label').value = '';
-    document.getElementById('camera-hide-label').checked = false;
+    document.getElementById('camera-name').value = '';
     document.getElementById('camera-orientation-group').style.display = 'none';
     populateCameraPrinterOptions(null);
     document.getElementById('camera-modal').classList.add('active');
@@ -763,16 +800,21 @@ function openEditCameraModal(id) {
     document.getElementById('camera-modal-title').textContent = 'Edit camera';
     document.getElementById('camera-id').value = cam.id;
     document.getElementById('camera-url').value = cam.url;
-    document.getElementById('camera-label').value = cam.label;
-    document.getElementById('camera-hide-label').checked = !!cam.hide_label;
+    document.getElementById('camera-name').value = cam.name;
     populateCameraPrinterOptions(cam.printer_id);
     document.getElementById('camera-orientation-group').style.display = 'block';
+    document.getElementById('camera-web-link').href = cam.url;
     document.getElementById('camera-hmirror').checked = false;
     document.getElementById('camera-vflip').checked = false;
     fetch(`/api/cameras/${id}/settings`).then(r => r.ok ? r.json() : null).then(s => {
         if (!s) return;
         document.getElementById('camera-hmirror').checked = !!s.hmirror;
         document.getElementById('camera-vflip').checked = !!s.vflip;
+        if (s.resolution !== undefined) document.getElementById('camera-resolution').value = s.resolution;
+        if (s.quality !== undefined) {
+            document.getElementById('camera-quality').value = s.quality;
+            document.getElementById('camera-quality-val').textContent = s.quality;
+        }
     }).catch(() => {});
     document.getElementById('camera-modal').classList.add('active');
 }
@@ -783,8 +825,7 @@ async function saveCamera(e) {
     const printerIdStr = document.getElementById('camera-printer').value;
     const data = {
         url: document.getElementById('camera-url').value,
-        label: document.getElementById('camera-label').value,
-        hide_label: document.getElementById('camera-hide-label').checked,
+        name: document.getElementById('camera-name').value,
         printer_id: printerIdStr ? parseInt(printerIdStr) : null,
     };
 
@@ -806,6 +847,8 @@ async function saveCameraOrientation() {
     const data = {
         hmirror: document.getElementById('camera-hmirror').checked,
         vflip: document.getElementById('camera-vflip').checked,
+        resolution: parseInt(document.getElementById('camera-resolution').value, 10),
+        quality: parseInt(document.getElementById('camera-quality').value, 10),
     };
     try {
         await fetch(`/api/cameras/${id}/settings`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
@@ -922,10 +965,23 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
+                    <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
                     <button class="btn btn-sm btn-danger" onclick="deletePrinter(${cfg.id})" title="Delete">&times;</button>
                 </div>
             </div>`;
     }).join('');
+}
+
+async function toggleMaintenance(id, maintenance) {
+    try {
+        await fetch(`/api/printers/${id}/maintenance`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({maintenance}),
+        });
+        await fetchPrinters();
+        renderSettingsPrinterList();
+    } catch (e) {}
 }
 
 // Printer reordering

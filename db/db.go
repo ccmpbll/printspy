@@ -61,8 +61,7 @@ func (db *DB) migrate() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			printer_id INTEGER,
 			url TEXT NOT NULL,
-			label TEXT NOT NULL DEFAULT '',
-			hide_label INTEGER NOT NULL DEFAULT 0,
+			name TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
@@ -113,12 +112,15 @@ func (db *DB) migrate() error {
 	// Migration: add hide_label column to smart_plugs if missing (existing databases)
 	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0`)
 
+	// Migration: add maintenance column to printers if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
 func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, type, url, api_key, username, enabled, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
 		FROM printers ORDER BY sort_order, id
 	`)
 	if err != nil {
@@ -129,11 +131,12 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	var printers []models.PrinterConfig
 	for rows.Next() {
 		var p models.PrinterConfig
-		var enabled int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var enabled, maintenance int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
+		p.Maintenance = maintenance == 1
 		printers = append(printers, p)
 	}
 	return printers, rows.Err()
@@ -141,16 +144,22 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 
 func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	var p models.PrinterConfig
-	var enabled int
+	var enabled, maintenance int
 	err := db.conn.QueryRow(`
-		SELECT id, name, type, url, api_key, username, enabled, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
 		FROM printers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	p.Enabled = enabled == 1
+	p.Maintenance = maintenance == 1
 	return &p, nil
+}
+
+func (db *DB) SetMaintenance(id int64, maintenance bool) error {
+	_, err := db.conn.Exec(`UPDATE printers SET maintenance=? WHERE id=?`, maintenance, id)
+	return err
 }
 
 // Smart plugs — managed independently of printers, optionally assigned to one.
@@ -241,7 +250,7 @@ func (db *DB) DeleteSmartPlug(id int64) error {
 // Cameras — printspy-cam devices, managed independently of printers, optionally assigned to one.
 
 const cameraSelect = `
-	SELECT c.id, c.printer_id, c.url, c.label, c.hide_label, COALESCE(p.name, '')
+	SELECT c.id, c.printer_id, c.url, c.name, COALESCE(p.name, '')
 	FROM cameras c LEFT JOIN printers p ON p.id = c.printer_id
 `
 
@@ -291,31 +300,29 @@ func scanCameras(rows *sql.Rows) ([]models.Camera, error) {
 	for rows.Next() {
 		var c models.Camera
 		var printerID sql.NullInt64
-		var hideLabel int
-		if err := rows.Scan(&c.ID, &printerID, &c.URL, &c.Label, &hideLabel, &c.PrinterName); err != nil {
+		if err := rows.Scan(&c.ID, &printerID, &c.URL, &c.Name, &c.PrinterName); err != nil {
 			return nil, err
 		}
 		if printerID.Valid {
 			c.PrinterID = &printerID.Int64
 		}
-		c.HideLabel = hideLabel == 1
 		cams = append(cams, c)
 	}
 	return cams, rows.Err()
 }
 
-func (db *DB) CreateCamera(url, label string, hideLabel bool, printerID *int64) (int64, error) {
-	result, err := db.conn.Exec(`INSERT INTO cameras (printer_id, url, label, hide_label) VALUES (?, ?, ?, ?)`,
-		printerID, url, label, hideLabel)
+func (db *DB) CreateCamera(url, name string, printerID *int64) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO cameras (printer_id, url, name) VALUES (?, ?, ?)`,
+		printerID, url, name)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateCamera(id int64, url, label string, hideLabel bool, printerID *int64) error {
-	_, err := db.conn.Exec(`UPDATE cameras SET url=?, label=?, hide_label=?, printer_id=? WHERE id=?`,
-		url, label, hideLabel, printerID, id)
+func (db *DB) UpdateCamera(id int64, url, name string, printerID *int64) error {
+	_, err := db.conn.Exec(`UPDATE cameras SET url=?, name=?, printer_id=? WHERE id=?`,
+		url, name, printerID, id)
 	return err
 }
 

@@ -100,7 +100,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	}
 
 	status.State = mapState(sr.Printer.State)
-	if status.State == models.StateError {
+	if status.State == models.StateError || status.State == models.StateAttention {
 		status.StateMessage = sr.Printer.State
 	}
 
@@ -451,7 +451,11 @@ func mapState(state string) models.PrinterState {
 		return models.StatePaused
 	case s == "FINISHED", s == "STOPPED", s == "IDLE", s == "READY":
 		return models.StateIdle
-	case strings.Contains(s, "ERROR"), strings.Contains(s, "ATTENTION"):
+	case strings.Contains(s, "ATTENTION"):
+		// ATTENTION covers non-fatal, needs-user-input conditions (filament
+		// runout, MMU prompts, etc) - distinct from a real ERROR state.
+		return models.StateAttention
+	case strings.Contains(s, "ERROR"):
 		return models.StateError
 	case s == "BUSY":
 		return models.StatePrinting

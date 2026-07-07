@@ -9,6 +9,7 @@ const (
 	StatePrinting     PrinterState = "printing"
 	StatePaused       PrinterState = "paused"
 	StateError        PrinterState = "error"
+	StateAttention    PrinterState = "attention"
 	StateOffline      PrinterState = "offline"
 	StateDisconnected PrinterState = "disconnected"
 )
@@ -21,6 +22,7 @@ type PrinterConfig struct {
 	APIKey       string `json:"-"`
 	Username     string `json:"username,omitempty"`
 	Enabled      bool   `json:"enabled"`
+	Maintenance  bool   `json:"maintenance"`
 	PollInterval int    `json:"poll_interval"`
 	SortOrder    int    `json:"sort_order"`
 	CreatedAt    string `json:"created_at"`
@@ -47,8 +49,7 @@ type Camera struct {
 	PrinterID   *int64 `json:"printer_id"`
 	PrinterName string `json:"printer_name,omitempty"`
 	URL         string `json:"url"`
-	Label       string `json:"label"`
-	HideLabel   bool   `json:"hide_label"`
+	Name        string `json:"name"`
 }
 
 type Temperatures struct {
@@ -108,8 +109,9 @@ type RecentFile struct {
 }
 
 type PrinterWithStatus struct {
-	Config PrinterConfig  `json:"config"`
-	Status *PrinterStatus `json:"status"`
+	Config    PrinterConfig  `json:"config"`
+	Status    *PrinterStatus `json:"status"`
+	HasCamera bool           `json:"has_camera"`
 }
 
 type PrintHistory struct {

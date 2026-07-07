@@ -128,6 +128,17 @@ header .printer-count {
     border-color: var(--error);
 }
 
+.btn-maintenance {
+    color: var(--warning);
+    border-color: var(--warning);
+}
+
+.btn-maintenance.active {
+    background: var(--warning);
+    border-color: var(--warning);
+    color: #000;
+}
+
 .btn-sm {
     padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
@@ -171,17 +182,26 @@ header .printer-count {
 }
 
 .printer-card.card-error {
+    border-width: 2px;
     border-color: var(--error);
-    border-left: 3px solid var(--error);
 }
 
 .printer-card.card-offline {
+    border-width: 2px;
     border-color: var(--warning);
-    border-left: 3px solid var(--warning);
     opacity: 0.75;
 }
 
+.printer-card.card-attention {
+    border-width: 2px;
+    border-color: var(--warning);
+}
+
 .printer-card.card-disconnected {
+    opacity: 0.7;
+}
+
+.printer-card.card-maintenance {
     opacity: 0.7;
 }
 
@@ -209,8 +229,10 @@ header .printer-count {
 .state-idle { background: var(--bg-secondary); color: var(--text-secondary); }
 .state-paused { background: var(--warning-bg); color: var(--warning); }
 .state-error { background: var(--error-bg); color: var(--error); }
+.state-attention { background: var(--warning-bg); color: var(--warning); }
 .state-offline { background: var(--warning-bg); color: var(--warning); }
 .state-disconnected { background: var(--bg-tertiary); color: var(--text-secondary); }
+.state-maintenance { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 .print-controls {
     display: inline-flex;
@@ -375,9 +397,10 @@ header .printer-count {
     min-height: 0;
 }
 
-.webcam-collapsed {
-    height: auto;
-    min-height: 0;
+/* Applied to .webcam-wrapper, not .webcam-container - the wrapper carries
+   the fixed width, so hiding only the container would leave the column's
+   space reserved and empty instead of letting printer-stats expand into it. */
+.webcam-wrapper.webcam-collapsed {
     display: none;
 }
 
@@ -517,6 +540,11 @@ header .printer-count {
     color: var(--error);
 }
 
+.idle-message.msg-attention {
+    background: var(--warning-bg);
+    color: var(--warning);
+}
+
 .idle-message.msg-offline {
     background: var(--warning-bg);
     color: var(--warning);
@@ -591,7 +619,7 @@ header .printer-count {
     color: var(--text-secondary);
 }
 
-.form-group input,
+.form-group input:not([type="range"]),
 .form-group select {
     width: 100%;
     padding: 0.5rem 0.75rem;
@@ -602,16 +630,24 @@ header .printer-count {
     font-size: 0.85rem;
 }
 
-.form-group input:focus,
+.form-group input:not([type="range"]):focus,
 .form-group select:focus {
     outline: none;
     border-color: var(--accent);
+}
+
+.form-group input[type="range"] {
+    width: 100%;
 }
 
 .form-hint {
     font-size: 0.7rem;
     color: var(--text-tertiary);
     margin-top: 0.25rem;
+}
+
+.field-spaced {
+    margin-bottom: 0.75rem;
 }
 
 .form-actions {
