@@ -125,6 +125,8 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 type printerRequest struct {
 	Name         string `json:"name"`
 	Type         string `json:"type"`
+	Model        string `json:"model"`
+	HideModel    bool   `json:"hide_model"`
 	URL          string `json:"url"`
 	APIKey       string `json:"api_key"`
 	Username     string `json:"username"`
@@ -142,6 +144,8 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	p := models.PrinterConfig{
 		Name:         req.Name,
 		Type:         req.Type,
+		Model:        req.Model,
+		HideModel:    req.HideModel,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
 		Username:     req.Username,
@@ -238,6 +242,8 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		ID:           id,
 		Name:         req.Name,
 		Type:         req.Type,
+		Model:        req.Model,
+		HideModel:    req.HideModel,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
 		Username:     req.Username,
@@ -338,15 +344,12 @@ func (h *Handler) getPrintHistory(w http.ResponseWriter, r *http.Request, id int
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	history, err := h.db.GetPrintHistory(id, 50)
+	summary, err := h.db.GetPrintHistorySummary(id)
 	if err != nil {
 		jsonError(w, "failed to get history", http.StatusInternalServerError)
 		return
 	}
-	if history == nil {
-		history = []models.PrintHistory{}
-	}
-	jsonResponse(w, history)
+	jsonResponse(w, summary)
 }
 
 func (h *Handler) handleReorder(w http.ResponseWriter, r *http.Request) {
@@ -946,6 +949,8 @@ type configExport struct {
 type configExportPrinter struct {
 	Name         string `yaml:"name"`
 	Type         string `yaml:"type"`
+	Model        string `yaml:"model,omitempty"`
+	HideModel    bool   `yaml:"hide_model,omitempty"`
 	URL          string `yaml:"url"`
 	APIKey       string `yaml:"api_key"`
 	Username     string `yaml:"username,omitempty"`
@@ -983,6 +988,8 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 		export.Printers[i] = configExportPrinter{
 			Name:         full.Name,
 			Type:         full.Type,
+			Model:        full.Model,
+			HideModel:    full.HideModel,
 			URL:          full.URL,
 			APIKey:       full.APIKey,
 			Username:     full.Username,
@@ -1030,6 +1037,8 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		p := models.PrinterConfig{
 			Name:         ep.Name,
 			Type:         ep.Type,
+			Model:        ep.Model,
+			HideModel:    ep.HideModel,
 			URL:          ep.URL,
 			APIKey:       ep.APIKey,
 			Username:     ep.Username,

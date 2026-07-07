@@ -115,12 +115,18 @@ func (db *DB) migrate() error {
 	// Migration: add maintenance column to printers if missing (existing databases)
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`)
 
+	// Migration: add model column to printers if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN model TEXT NOT NULL DEFAULT ''`)
+
+	// Migration: add hide_model column to printers if missing (existing databases)
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN hide_model INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
 func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, type, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
 		FROM printers ORDER BY sort_order, id
 	`)
 	if err != nil {
@@ -131,12 +137,13 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	var printers []models.PrinterConfig
 	for rows.Next() {
 		var p models.PrinterConfig
-		var enabled, maintenance int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		var enabled, maintenance, hideModel int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
 		p.Maintenance = maintenance == 1
+		p.HideModel = hideModel == 1
 		printers = append(printers, p)
 	}
 	return printers, rows.Err()
@@ -144,14 +151,15 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 
 func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	var p models.PrinterConfig
-	var enabled, maintenance int
+	var enabled, maintenance, hideModel int
 	err := db.conn.QueryRow(`
-		SELECT id, name, type, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
+		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at
 		FROM printers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
+	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	p.HideModel = hideModel == 1
 	p.Enabled = enabled == 1
 	p.Maintenance = maintenance == 1
 	return &p, nil
@@ -345,10 +353,15 @@ func (db *DB) CreatePrinter(p *models.PrinterConfig) error {
 	db.conn.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) FROM printers`).Scan(&maxOrder)
 	p.SortOrder = maxOrder + 1
 
+	hideModel := 0
+	if p.HideModel {
+		hideModel = 1
+	}
+
 	result, err := db.conn.Exec(`
-		INSERT INTO printers (name, type, url, api_key, username, enabled, poll_interval, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.Name, p.Type, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.SortOrder)
+		INSERT INTO printers (name, type, model, hide_model, url, api_key, username, enabled, poll_interval, sort_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.SortOrder)
 	if err != nil {
 		return err
 	}
@@ -361,10 +374,14 @@ func (db *DB) UpdatePrinter(p *models.PrinterConfig) error {
 	if p.Enabled {
 		enabled = 1
 	}
+	hideModel := 0
+	if p.HideModel {
+		hideModel = 1
+	}
 	_, err := db.conn.Exec(`
-		UPDATE printers SET name=?, type=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, updated_at=CURRENT_TIMESTAMP
+		UPDATE printers SET name=?, type=?, model=?, hide_model=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?
-	`, p.Name, p.Type, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.ID)
+	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.ID)
 	return err
 }
 
@@ -387,28 +404,95 @@ func (db *DB) DeletePrinter(id int64) error {
 	return err
 }
 
-func (db *DB) GetPrintHistory(printerID int64, limit int) ([]models.PrintHistory, error) {
-	if limit <= 0 {
-		limit = 50
+// PrintHistorySummary is a printer-wide rollup of print_history, shown as a
+// plain-text stat (not a list) so it doesn't compete with the Recent Files
+// dropdown as a second "list of past prints".
+type PrintHistorySummary struct {
+	Count       int     `json:"count"`
+	SuccessRate int     `json:"success_rate"`
+	TotalHours  float64 `json:"total_hours"`
+}
+
+func (db *DB) GetPrintHistorySummary(printerID int64) (*PrintHistorySummary, error) {
+	var count, successCount int
+	var totalSecs float64
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN result = 'completed' THEN 1 ELSE 0 END), 0), COALESCE(SUM(duration_secs), 0)
+		FROM print_history WHERE printer_id = ?
+	`, printerID).Scan(&count, &successCount, &totalSecs)
+	if err != nil {
+		return nil, err
 	}
+	s := &PrintHistorySummary{Count: count, TotalHours: totalSecs / 3600}
+	if count > 0 {
+		s.SuccessRate = int(float64(successCount) / float64(count) * 100)
+	}
+	return s, nil
+}
+
+// FileHistoryStat backfills models.RecentFile's success/failure fields for
+// plugins (PrusaLink) whose own API doesn't expose per-file print stats the
+// way OctoPrint's does natively.
+type FileHistoryStat struct {
+	SuccessCount int
+	FailureCount int
+	LastPrinted  int64
+	LastSuccess  bool
+}
+
+func (db *DB) GetFileHistoryStats(printerID int64) (map[string]FileHistoryStat, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm
-		FROM print_history WHERE printer_id = ? ORDER BY id DESC LIMIT ?
-	`, printerID, limit)
+		SELECT filename,
+			SUM(CASE WHEN result = 'completed' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN result != 'completed' THEN 1 ELSE 0 END)
+		FROM print_history WHERE printer_id = ? GROUP BY filename
+	`, printerID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var history []models.PrintHistory
+	stats := make(map[string]FileHistoryStat)
 	for rows.Next() {
-		var h models.PrintHistory
-		if err := rows.Scan(&h.ID, &h.PrinterID, &h.FileName, &h.StartedAt, &h.CompletedAt, &h.DurationSecs, &h.Result, &h.FilamentUsedMM); err != nil {
+		var filename string
+		var success, failure int
+		if err := rows.Scan(&filename, &success, &failure); err != nil {
 			return nil, err
 		}
-		history = append(history, h)
+		stats[filename] = FileHistoryStat{SuccessCount: success, FailureCount: failure}
 	}
-	return history, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Latest row per filename (MAX(id) - id is monotonic insertion order,
+	// cheaper than parsing completed_at) determines last_printed/last_success.
+	latestRows, err := db.conn.Query(`
+		SELECT filename, completed_at, result FROM print_history
+		WHERE printer_id = ? AND id IN (
+			SELECT MAX(id) FROM print_history WHERE printer_id = ? GROUP BY filename
+		)
+	`, printerID, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer latestRows.Close()
+
+	for latestRows.Next() {
+		var filename, completedAt, result string
+		if err := latestRows.Scan(&filename, &completedAt, &result); err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339, completedAt)
+		if err != nil {
+			continue
+		}
+		stat := stats[filename]
+		stat.LastPrinted = t.Unix()
+		stat.LastSuccess = result == "completed"
+		stats[filename] = stat
+	}
+	return stats, latestRows.Err()
 }
 
 func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {

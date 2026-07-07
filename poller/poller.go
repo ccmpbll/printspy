@@ -224,7 +224,46 @@ func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]mod
 	if !ok {
 		return nil, fmt.Errorf("printer %d not found", id)
 	}
-	return pp.plugin.GetRecentFiles(ctx, limit)
+	files, err := pp.plugin.GetRecentFiles(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	p.backfillFileStats(id, files)
+	return files, nil
+}
+
+// backfillFileStats fills success/failure stats from print_history for
+// plugins whose own API doesn't report per-file stats natively (PrusaLink) -
+// OctoPrint's plugin already populates these directly, so files it touched
+// are left alone.
+func (p *Poller) backfillFileStats(id int64, files []models.RecentFile) {
+	var needsBackfill bool
+	for _, f := range files {
+		if f.SuccessCount == 0 && f.FailureCount == 0 && f.LastPrinted == 0 {
+			needsBackfill = true
+			break
+		}
+	}
+	if !needsBackfill {
+		return
+	}
+
+	stats, err := p.db.GetFileHistoryStats(id)
+	if err != nil || len(stats) == 0 {
+		return
+	}
+	for i, f := range files {
+		if f.SuccessCount != 0 || f.FailureCount != 0 || f.LastPrinted != 0 {
+			continue
+		}
+		if stat, ok := stats[f.FileName]; ok {
+			files[i].SuccessCount = stat.SuccessCount
+			files[i].FailureCount = stat.FailureCount
+			files[i].LastPrinted = stat.LastPrinted
+			lastSuccess := stat.LastSuccess
+			files[i].LastSuccess = &lastSuccess
+		}
+	}
 }
 
 func (p *Poller) StartPrint(ctx context.Context, id int64, location, path string) error {

@@ -42,25 +42,32 @@ func pingHost(host string, timeout time.Duration) error {
 		return fmt.Errorf("write icmp echo: %w", err)
 	}
 
-	conn.SetReadDeadline(time.Now().Add(timeout))
+	deadline := time.Now().Add(timeout)
+	conn.SetReadDeadline(deadline)
 	rb := make([]byte, 512)
-	n, from, err := conn.ReadFrom(rb)
-	if err != nil {
-		return fmt.Errorf("read icmp reply: %w", err)
-	}
-	// Raw ICMP sockets receive all ICMPv4 traffic on the host, not just
-	// replies to this request - a concurrent ping to a different printer
-	// could otherwise be mistaken for this one's reply.
-	if ipAddr, ok := from.(*net.IPAddr); !ok || !ipAddr.IP.Equal(dst.IP) {
-		return fmt.Errorf("reply from unexpected host: %v", from)
-	}
 
-	reply, err := icmp.ParseMessage(1, rb[:n]) // 1 = ICMPv4 protocol number
-	if err != nil {
-		return err
+	// Raw ICMP sockets receive all ICMPv4 traffic on the host, not just
+	// replies to this request - a concurrent ping to a different printer's
+	// reply can arrive first on the same socket. Keep reading until our
+	// own reply shows up or the deadline runs out, instead of bailing on
+	// the first mismatched packet.
+	for {
+		n, from, err := conn.ReadFrom(rb)
+		if err != nil {
+			return fmt.Errorf("read icmp reply: %w", err)
+		}
+		ipAddr, ok := from.(*net.IPAddr)
+		if !ok || !ipAddr.IP.Equal(dst.IP) {
+			continue
+		}
+
+		reply, err := icmp.ParseMessage(1, rb[:n]) // 1 = ICMPv4 protocol number
+		if err != nil {
+			continue
+		}
+		if reply.Type != ipv4.ICMPTypeEchoReply {
+			continue
+		}
+		return nil
 	}
-	if reply.Type != ipv4.ICMPTypeEchoReply {
-		return fmt.Errorf("unexpected icmp reply type: %v", reply.Type)
-	}
-	return nil
 }

@@ -18,6 +18,8 @@ type PrinterConfig struct {
 	ID           int64  `json:"id"`
 	Name         string `json:"name"`
 	Type         string `json:"type"`
+	Model        string `json:"model,omitempty"`
+	HideModel    bool   `json:"hide_model,omitempty"`
 	URL          string `json:"url"`
 	APIKey       string `json:"-"`
 	Username     string `json:"username,omitempty"`

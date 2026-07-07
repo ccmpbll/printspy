@@ -52,6 +52,16 @@
                     <input type="text" id="printer-name" placeholder="My Printer" required>
                 </div>
                 <div class="form-group">
+                    <label for="printer-model">Model</label>
+                    <input type="text" id="printer-model" placeholder="e.g. Core One, MK4S (optional)">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="printer-hide-model" style="width:auto">
+                        Hide model on dashboard card
+                    </label>
+                </div>
+                <div class="form-group">
                     <label for="printer-type">Type</label>
                     <select id="printer-type" onchange="onPrinterTypeChange()">
                         <option value="octoprint">OctoPrint</option>

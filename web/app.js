@@ -90,7 +90,26 @@ function updateHeaderCount() {
 function reloadIdlePrinterRecentPrints() {
     printers.forEach(p => {
         if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
+        loadHistorySummary(p.config.id);
     });
+}
+
+async function loadHistorySummary(printerId) {
+    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
+    if (!card) return;
+    const container = card.querySelector('[data-field="history-summary"]');
+    if (!container) return;
+
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/history`);
+        if (!resp.ok) { container.textContent = ''; return; }
+        const summary = await resp.json();
+        if (!summary || summary.count === 0) {
+            container.textContent = '';
+            return;
+        }
+        container.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
+    } catch (e) { container.textContent = ''; }
 }
 
 async function loadRecentPrints(printerId) {
@@ -394,15 +413,18 @@ function renderPrinterCard(printer) {
     if (state === 'idle') {
         recentHTML = `<span class="recent-prints" data-field="recent-prints"></span>`;
     }
+    const historySummaryHTML = `<span class="history-summary" data-field="history-summary"></span>`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
+                ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 ${powerHTML}
                 ${controlHTML}
                 ${recentHTML}
+                ${historySummaryHTML}
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
             </div>
             <div class="printer-body">
@@ -1024,6 +1046,8 @@ function openAddModal() {
     document.getElementById('modal-title').textContent = 'Add printer';
     document.getElementById('printer-id').value = '';
     document.getElementById('printer-name').value = '';
+    document.getElementById('printer-model').value = '';
+    document.getElementById('printer-hide-model').checked = false;
     document.getElementById('printer-type').value = 'octoprint';
     document.getElementById('printer-url').value = '';
     document.getElementById('printer-username').value = 'maker';
@@ -1043,6 +1067,8 @@ async function openEditModal(id) {
     document.getElementById('modal-title').textContent = 'Edit printer';
     document.getElementById('printer-id').value = cfg.id;
     document.getElementById('printer-name').value = cfg.name;
+    document.getElementById('printer-model').value = cfg.model || '';
+    document.getElementById('printer-hide-model').checked = !!cfg.hide_model;
     document.getElementById('printer-type').value = cfg.type;
     document.getElementById('printer-url').value = cfg.url;
     document.getElementById('printer-apikey').value = '';
@@ -1081,6 +1107,8 @@ async function savePrinter(e) {
     const data = {
         name: document.getElementById('printer-name').value,
         type: printerType,
+        model: document.getElementById('printer-model').value,
+        hide_model: document.getElementById('printer-hide-model').checked,
         url: document.getElementById('printer-url').value.replace(/\/+$/, ''),
         api_key: document.getElementById('printer-apikey').value,
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
