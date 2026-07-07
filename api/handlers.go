@@ -88,6 +88,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/account/password", h.handleChangePassword)
 	mux.HandleFunc("/api/smartplugs", h.handleSmartPlugs)
 	mux.HandleFunc("/api/smartplugs/", h.handleSmartPlugByID)
+	mux.HandleFunc("/api/cameras", h.handleCameras)
+	mux.HandleFunc("/api/cameras/", h.handleCameraByID)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {
@@ -112,8 +114,9 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 	result := make([]models.PrinterWithStatus, len(printers))
 	for i, p := range printers {
 		result[i] = models.PrinterWithStatus{
-			Config: p,
-			Status: statuses[p.ID],
+			Config:    p,
+			Status:    statuses[p.ID],
+			HasCamera: h.hasCameraAssigned(p.ID),
 		}
 	}
 	jsonResponse(w, result)
@@ -192,6 +195,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.startPrint(w, r, id)
 		case "control":
 			h.controlPrint(w, r, id)
+		case "maintenance":
+			h.handleMaintenance(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -245,8 +250,12 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 
+	// UpdatePrinter doesn't touch the maintenance column - re-fetch it so
+	// saving unrelated edits (name, URL, ...) doesn't silently resume
+	// polling a printer that's deliberately paused.
+	current, _ := h.db.GetPrinter(id)
 	h.poller.RemovePrinter(id)
-	if p.Enabled {
+	if p.Enabled && (current == nil || !current.Maintenance) {
 		h.poller.AddPrinter(h.ctx, p)
 	}
 	h.poller.BroadcastRefresh()
@@ -389,7 +398,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		statuses := h.poller.GetAllStatuses()
 		result := make([]models.PrinterWithStatus, len(printers))
 		for i, p := range printers {
-			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID]}
+			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID], HasCamera: h.hasCameraAssigned(p.ID)}
 		}
 		if data, err := json.Marshal(result); err == nil {
 			fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
@@ -510,6 +519,38 @@ func (h *Handler) handlePower(w http.ResponseWriter, r *http.Request, id int64) 
 	}
 
 	jsonResponse(w, map[string]any{"success": true, "power_on": turnOn})
+}
+
+// handleMaintenance toggles a printer out of/into the poll loop on explicit
+// user intent - unlike offline/error/attention, which are inferred from
+// connectivity, this is "I know it's down, stop polling and stop alarming."
+func (h *Handler) handleMaintenance(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Maintenance bool `json:"maintenance"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.SetMaintenance(id, req.Maintenance); err != nil {
+		jsonError(w, "failed to update maintenance state", http.StatusInternalServerError)
+		return
+	}
+
+	if req.Maintenance {
+		h.poller.RemovePrinter(id)
+	} else if printer, err := h.db.GetPrinter(id); err == nil && printer.Enabled {
+		h.poller.AddPrinter(h.ctx, *printer)
+	}
+
+	h.poller.BroadcastRefresh()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
@@ -649,6 +690,165 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		if existing != nil && existing.PrinterID != nil {
 			go h.poller.Repoll(h.ctx, *existing.PrinterID)
 		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) hasCameraAssigned(printerID int64) bool {
+	_, err := h.db.GetCameraForPrinter(printerID)
+	return err == nil
+}
+
+// Cameras — printspy-cam devices, managed independently of printers, optionally assigned to one.
+
+func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cams, err := h.db.ListAllCameras()
+		if err != nil {
+			jsonError(w, "failed to list cameras", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, cams)
+
+	case http.MethodPost:
+		var req cameraRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.URL == "" {
+			jsonError(w, "url is required", http.StatusBadRequest)
+			return
+		}
+		id, err := h.db.CreateCamera(req.URL, req.Name, req.PrinterID)
+		if err != nil {
+			jsonError(w, "failed to create camera", http.StatusInternalServerError)
+			return
+		}
+		if req.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *req.PrinterID)
+		}
+		h.poller.BroadcastRefresh()
+		jsonResponse(w, map[string]int64{"id": id})
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+type cameraRequest struct {
+	URL       string `json:"url"`
+	Name      string `json:"name"`
+	PrinterID *int64 `json:"printer_id"`
+}
+
+func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/cameras/")
+	if idStr, ok := strings.CutSuffix(path, "/settings"); ok {
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			jsonError(w, "invalid camera id", http.StatusBadRequest)
+			return
+		}
+		h.handleCameraSettings(w, r, id)
+		return
+	}
+
+	id, err := strconv.ParseInt(path, 10, 64)
+	if err != nil {
+		jsonError(w, "invalid camera id", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var req cameraRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if req.URL == "" {
+			jsonError(w, "url is required", http.StatusBadRequest)
+			return
+		}
+		existing, _ := h.db.GetCamera(id)
+		if err := h.db.UpdateCamera(id, req.URL, req.Name, req.PrinterID); err != nil {
+			jsonError(w, "failed to update camera", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil && existing.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+		}
+		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
+			go h.poller.Repoll(h.ctx, *req.PrinterID)
+		}
+		h.poller.BroadcastRefresh()
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodDelete:
+		existing, _ := h.db.GetCamera(id)
+		if err := h.db.DeleteCamera(id); err != nil {
+			jsonError(w, "failed to delete camera", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil && existing.PrinterID != nil {
+			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+		}
+		h.poller.BroadcastRefresh()
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// handleCameraSettings proxies image-orientation settings straight through to
+// the printspy-cam device itself - no auth, no digest logic, it has none.
+func (h *Handler) handleCameraSettings(w http.ResponseWriter, r *http.Request, id int64) {
+	cam, err := h.db.GetCamera(id)
+	if err != nil {
+		jsonError(w, "camera not found", http.StatusNotFound)
+		return
+	}
+	base := strings.TrimRight(cam.URL, "/") + "/api/settings"
+
+	switch r.Method {
+	case http.MethodGet:
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, base, nil)
+		if err != nil {
+			jsonError(w, "failed to build request", http.StatusInternalServerError)
+			return
+		}
+		resp, err := h.proxy.Do(req)
+		if err != nil {
+			jsonError(w, "failed to reach camera", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+
+	case http.MethodPut:
+		// Pure passthrough - printspy-cam's own firmware already validates
+		// and ignores anything it doesn't recognize, so there's nothing for
+		// this proxy to decode or re-encode.
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, base, r.Body)
+		if err != nil {
+			jsonError(w, "failed to build request", http.StatusInternalServerError)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := h.proxy.Do(req)
+		if err != nil {
+			jsonError(w, "failed to reach camera", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -859,15 +1059,16 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webcamURL := h.poller.GetWebcamURL(id)
+	webcamURL := ""
+	usingCamera := false
+	if cam, err := h.db.GetCameraForPrinter(id); err == nil {
+		webcamURL = strings.TrimRight(cam.URL, "/") + "/stream"
+		usingCamera = true
+	} else {
+		webcamURL = h.poller.GetWebcamURL(id)
+	}
 	if webcamURL == "" {
 		http.Error(w, "no webcam configured", http.StatusNotFound)
-		return
-	}
-
-	printer, err := h.db.GetPrinter(id)
-	if err != nil {
-		http.Error(w, "printer not found", http.StatusNotFound)
 		return
 	}
 
@@ -876,7 +1077,14 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("X-Api-Key", printer.APIKey)
+	if !usingCamera {
+		printer, err := h.db.GetPrinter(id)
+		if err != nil {
+			http.Error(w, "printer not found", http.StatusNotFound)
+			return
+		}
+		req.Header.Set("X-Api-Key", printer.APIKey)
+	}
 
 	log.Printf("[webcam:%d] proxying stream from %s", id, webcamURL)
 	streamTransport := netguard.Transport()
@@ -923,15 +1131,16 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshotURL := h.poller.GetSnapshotURL(id)
+	snapshotURL := ""
+	usingCamera := false
+	if cam, err := h.db.GetCameraForPrinter(id); err == nil {
+		snapshotURL = strings.TrimRight(cam.URL, "/") + "/snapshot"
+		usingCamera = true
+	} else {
+		snapshotURL = h.poller.GetSnapshotURL(id)
+	}
 	if snapshotURL == "" {
 		http.Error(w, "no webcam configured", http.StatusNotFound)
-		return
-	}
-
-	printer, err := h.db.GetPrinter(id)
-	if err != nil {
-		http.Error(w, "printer not found", http.StatusNotFound)
 		return
 	}
 
@@ -940,10 +1149,19 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if printer.Type == "prusalink" {
-		req.SetBasicAuth(printer.Username, printer.APIKey)
-	} else {
-		req.Header.Set("X-Api-Key", printer.APIKey)
+
+	var printer *models.PrinterConfig
+	if !usingCamera {
+		printer, err = h.db.GetPrinter(id)
+		if err != nil {
+			http.Error(w, "printer not found", http.StatusNotFound)
+			return
+		}
+		if printer.Type == "prusalink" {
+			req.SetBasicAuth(printer.Username, printer.APIKey)
+		} else {
+			req.Header.Set("X-Api-Key", printer.APIKey)
+		}
 	}
 
 	resp, err := h.proxy.Do(req)
@@ -954,7 +1172,7 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
+	if !usingCamera && resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
 		authHeader := resp.Header.Get("WWW-Authenticate")
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
