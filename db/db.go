@@ -441,11 +441,12 @@ type FileHistoryStat struct {
 }
 
 func (db *DB) GetFileHistoryStats(printerID int64) (map[string]FileHistoryStat, error) {
+	// Ordered by id (monotonic insertion order) so the last write per
+	// filename during the loop is naturally the most recent print - no
+	// separate "latest row" query needed.
 	rows, err := db.conn.Query(`
-		SELECT filename,
-			SUM(CASE WHEN result = 'completed' THEN 1 ELSE 0 END),
-			SUM(CASE WHEN result != 'completed' THEN 1 ELSE 0 END)
-		FROM print_history WHERE printer_id = ? GROUP BY filename
+		SELECT filename, completed_at, result FROM print_history
+		WHERE printer_id = ? ORDER BY id
 	`, printerID)
 	if err != nil {
 		return nil, err
@@ -454,45 +455,23 @@ func (db *DB) GetFileHistoryStats(printerID int64) (map[string]FileHistoryStat, 
 
 	stats := make(map[string]FileHistoryStat)
 	for rows.Next() {
-		var filename string
-		var success, failure int
-		if err := rows.Scan(&filename, &success, &failure); err != nil {
-			return nil, err
-		}
-		stats[filename] = FileHistoryStat{SuccessCount: success, FailureCount: failure}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Latest row per filename (MAX(id) - id is monotonic insertion order,
-	// cheaper than parsing completed_at) determines last_printed/last_success.
-	latestRows, err := db.conn.Query(`
-		SELECT filename, completed_at, result FROM print_history
-		WHERE printer_id = ? AND id IN (
-			SELECT MAX(id) FROM print_history WHERE printer_id = ? GROUP BY filename
-		)
-	`, printerID, printerID)
-	if err != nil {
-		return nil, err
-	}
-	defer latestRows.Close()
-
-	for latestRows.Next() {
 		var filename, completedAt, result string
-		if err := latestRows.Scan(&filename, &completedAt, &result); err != nil {
+		if err := rows.Scan(&filename, &completedAt, &result); err != nil {
 			return nil, err
-		}
-		t, err := time.Parse(time.RFC3339, completedAt)
-		if err != nil {
-			continue
 		}
 		stat := stats[filename]
-		stat.LastPrinted = t.Unix()
-		stat.LastSuccess = result == "completed"
+		if result == "completed" {
+			stat.SuccessCount++
+		} else {
+			stat.FailureCount++
+		}
+		if t, err := time.Parse(time.RFC3339, completedAt); err == nil {
+			stat.LastPrinted = t.Unix()
+			stat.LastSuccess = result == "completed"
+		}
 		stats[filename] = stat
 	}
-	return stats, latestRows.Err()
+	return stats, rows.Err()
 }
 
 func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {

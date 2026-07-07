@@ -218,16 +218,12 @@ header .printer-count {
     font-weight: 600;
 }
 
-.printer-model {
+.printer-model, .history-summary {
     font-size: 0.75rem;
     color: var(--text-secondary);
 }
 
-.history-summary {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-    margin-left: auto;
-}
+.history-summary { margin-left: auto; }
 
 .printer-state {
     font-size: 0.75rem;
