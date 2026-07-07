@@ -644,6 +644,7 @@ function openSettings() {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
+        document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -1172,6 +1173,7 @@ async function saveSettings(e) {
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
         recent_files_count: document.getElementById('setting-recent-files').value,
+        prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
     };
     const pollVal = document.getElementById('setting-poll-interval').value;
     if (pollVal) settings.poll_interval = pollVal;

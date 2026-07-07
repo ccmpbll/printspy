@@ -1373,6 +1373,20 @@ func validateSetting(key, value string) (string, error) {
 			n = 60
 		}
 		return strconv.Itoa(n), nil
+	case "prusalink_ping_interval":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("prusalink_ping_interval must be a number")
+		}
+		if n <= 0 {
+			return "0", nil
+		}
+		if n < 1 {
+			n = 1
+		} else if n > 60 {
+			n = 60
+		}
+		return strconv.Itoa(n), nil
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}

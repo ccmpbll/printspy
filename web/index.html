@@ -219,6 +219,11 @@
                         <input type="number" id="setting-recent-files" value="5" min="1" max="20">
                         <div class="form-hint">Number of files shown in the recent files dropdown per printer.</div>
                     </div>
+                    <div class="form-group">
+                        <label for="setting-prusalink-ping-interval">PrusaLink keepalive ping interval (seconds)</label>
+                        <input type="number" id="setting-prusalink-ping-interval" value="" min="0" max="60" placeholder="0 = disabled">
+                        <div class="form-hint">Pings each PrusaLink printer's IP over ICMP on this interval, to stop its wifi interface from dropping off the network when idle. 0 disables.</div>
+                    </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Save</button>
                     </div>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strconv"
 	"sync"
 	"time"
@@ -109,6 +110,65 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 		defer p.wg.Done()
 		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
 	}()
+
+	if config.Type == "prusalink" {
+		if pingInterval := p.pingInterval(); pingInterval > 0 {
+			if host, err := hostFromURL(config.URL); err == nil {
+				p.wg.Add(1)
+				go func() {
+					defer p.wg.Done()
+					p.keepaliveLoop(ctx, config.ID, config.Name, host, pingInterval)
+				}()
+			}
+		}
+	}
+}
+
+// pingInterval returns the configured PrusaLink keepalive ping interval, or
+// 0 if disabled.
+func (p *Poller) pingInterval() time.Duration {
+	v, err := p.db.GetSetting("prusalink_ping_interval")
+	if err != nil || v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+func hostFromURL(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("no host in url %q", rawURL)
+	}
+	return host, nil
+}
+
+// keepaliveLoop periodically ICMP-pings a printer's IP, independent of the
+// status poll loop, to keep its wifi interface from dropping off the
+// network during idle periods.
+func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string, interval time.Duration) {
+	log.Printf("starting keepalive ping for printer %d (%s) -> %s every %s", id, name, host, interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := pingHost(host, 3*time.Second); err != nil {
+				log.Printf("[printer:%d] keepalive ping to %s failed: %v", id, host, err)
+			}
+		}
+	}
 }
 
 func (p *Poller) RemovePrinter(id int64) {
