@@ -19,6 +19,10 @@ import (
 type polledPrinter struct {
 	plugin plugin.PrinterPlugin
 	cancel context.CancelFunc
+	// idleSince tracks when this printer entered the idle state, for the
+	// auto-off-after-idle-timeout feature. Zero value means "not idle" (or
+	// auto-off already fired for this idle streak).
+	idleSince time.Time
 }
 
 type SSEMessage struct {
@@ -356,15 +360,18 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	}
 
 	if setErr == nil {
-		p.patchPowerState(id, plugID, on)
+		p.patchPowerState(id, plugID, "", on)
 	}
 	go p.poll(context.Background(), id, pp.plugin)
 	return setErr
 }
 
 // patchPowerState flips a single plug's on/off value in the cached status
-// and broadcasts it, without waiting on a full printer poll.
-func (p *Poller) patchPowerState(id int64, plugID string, on bool) {
+// and broadcasts it, without waiting on a full printer poll. source, if
+// non-empty, overrides the plug's reported Source (e.g. "auto-idle") so the
+// UI can tell an automatic action apart from a manual toggle - left as-is
+// (whatever the plugin/smart-plug client last reported) when empty.
+func (p *Poller) patchPowerState(id int64, plugID, source string, on bool) {
 	p.mu.Lock()
 	status, ok := p.cache[id]
 	if !ok || status == nil {
@@ -380,6 +387,9 @@ func (p *Poller) patchPowerState(id int64, plugID string, on bool) {
 		// separately assigned as a direct smart plug — patch all of them.
 		if patched.Power[i].ID == plugID {
 			patched.Power[i].On = on
+			if source != "" {
+				patched.Power[i].Source = source
+			}
 			found = true
 		}
 	}
@@ -523,8 +533,176 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	}
 
 	p.trackPrintHistory(id, prevState, status, prev)
+	p.checkAutoOff(ctx, id, status)
+	p.checkThermalRunaway(ctx, id, status)
 
 	p.broadcast(id, status)
+}
+
+// checkAutoOff powers off a printer's assigned smart plug(s) after it's
+// stayed idle for longer than the configured timeout, once temps have
+// dropped below the cooldown threshold. Global auto_off_idle_minutes wins
+// if set (same override precedence as poll_interval); otherwise falls back
+// to the printer's own idle_timeout_minutes. 0 = disabled.
+func (p *Poller) checkAutoOff(ctx context.Context, id int64, status *models.PrinterStatus) {
+	p.mu.Lock()
+	pp, ok := p.printers[id]
+	if !ok {
+		p.mu.Unlock()
+		return
+	}
+	if status.State != models.StateIdle {
+		pp.idleSince = time.Time{}
+		p.mu.Unlock()
+		return
+	}
+	if pp.idleSince.IsZero() {
+		pp.idleSince = time.Now()
+		p.mu.Unlock()
+		return
+	}
+	idleSince := pp.idleSince
+	p.mu.Unlock()
+
+	timeoutMinutes := p.autoOffIdleMinutes(id)
+	if timeoutMinutes <= 0 || time.Since(idleSince) < time.Duration(timeoutMinutes)*time.Minute {
+		return
+	}
+
+	cooldown := p.autoOffCooldownTemp()
+	if status.Temps.HotendActual > cooldown || status.Temps.BedActual > cooldown {
+		return // still cooling down, check again next tick
+	}
+
+	p.autoPowerOff(ctx, id, "auto-idle")
+
+	// One-shot per idle streak - won't refire until the printer leaves and
+	// re-enters idle, even if a plug gets manually turned back on.
+	p.mu.Lock()
+	if pp, ok := p.printers[id]; ok {
+		pp.idleSince = time.Time{}
+	}
+	p.mu.Unlock()
+}
+
+// checkThermalRunaway is a second, independent layer on top of the
+// printer firmware's own thermal runaway protection (Marlin M912 /
+// PrusaLink) - a flat max-temp threshold, same approach as
+// OctoPrint-Tasmota's "Max Bed Temp"/"Max Extruder Temp", not trend
+// analysis. Runs in every state (not just idle) since a runaway heater
+// mid-print is exactly when this matters most.
+func (p *Poller) checkThermalRunaway(ctx context.Context, id int64, status *models.PrinterStatus) {
+	maxBed, maxExtruder := p.thermalMaxTemps(id)
+	if maxBed <= 0 && maxExtruder <= 0 {
+		return
+	}
+	overBed := maxBed > 0 && status.Temps.BedActual > maxBed
+	overExtruder := maxExtruder > 0 && status.Temps.HotendActual > maxExtruder
+	if !overBed && !overExtruder {
+		return
+	}
+	log.Printf("[printer:%d] thermal runaway threshold exceeded (bed=%.0f max=%.0f, hotend=%.0f max=%.0f)",
+		id, status.Temps.BedActual, maxBed, status.Temps.HotendActual, maxExtruder)
+	p.autoPowerOff(ctx, id, "auto-thermal")
+}
+
+// autoPowerOff powers off every smart plug assigned to id, tagging the
+// change with source so the UI can distinguish it from a manual toggle.
+// No-ops per-plug if already off, so a threshold that stays tripped (or a
+// printer that stays idle) doesn't spam the smart plug's API every tick.
+func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
+	plugs, err := p.db.ListSmartPlugs(id)
+	if err != nil || len(plugs) == 0 {
+		return
+	}
+	client := smartplug.New()
+	for _, sp := range plugs {
+		plugID := sp.IP + ":" + sp.Idx
+		if !p.isPlugOn(id, plugID) {
+			continue
+		}
+		if err := client.SetState(ctx, sp.IP, sp.Idx, false); err != nil {
+			log.Printf("[printer:%d] auto power-off (%s) failed for %s: %v", id, source, plugID, err)
+			continue
+		}
+		log.Printf("[printer:%d] auto power-off (%s): %s", id, source, plugID)
+		p.patchPowerState(id, plugID, source, false)
+	}
+}
+
+func (p *Poller) isPlugOn(id int64, plugID string) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	status, ok := p.cache[id]
+	if !ok || status == nil {
+		return false
+	}
+	for _, ps := range status.Power {
+		if ps.ID == plugID {
+			return ps.On
+		}
+	}
+	return false
+}
+
+// autoOffIdleMinutes resolves the effective idle-timeout: the global
+// auto_off_idle_minutes setting wins if set, else the printer's own
+// idle_timeout_minutes.
+func (p *Poller) autoOffIdleMinutes(id int64) int {
+	if v, err := p.db.GetSetting("auto_off_idle_minutes"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	printer, err := p.db.GetPrinter(id)
+	if err != nil {
+		return 0
+	}
+	return printer.IdleTimeoutMinutes
+}
+
+// autoOffCooldownTemp is global-only (not per-printer) - defaults to 40°C.
+func (p *Poller) autoOffCooldownTemp() float64 {
+	v, err := p.db.GetSetting("auto_off_cooldown_temp")
+	if err != nil || v == "" {
+		return 40
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 40
+	}
+	return n
+}
+
+// thermalMaxTemps resolves the effective max bed/extruder temps. Each
+// resolves independently: global setting wins if set, else that printer's
+// own override.
+func (p *Poller) thermalMaxTemps(id int64) (maxBed, maxExtruder float64) {
+	maxBed = p.globalThermalSetting("thermal_max_bed_temp")
+	maxExtruder = p.globalThermalSetting("thermal_max_extruder_temp")
+	if maxBed != 0 && maxExtruder != 0 {
+		return
+	}
+	printer, err := p.db.GetPrinter(id)
+	if err != nil {
+		return
+	}
+	if maxBed == 0 {
+		maxBed = printer.MaxBedTemp
+	}
+	if maxExtruder == 0 {
+		maxExtruder = printer.MaxExtruderTemp
+	}
+	return
+}
+
+func (p *Poller) globalThermalSetting(key string) float64 {
+	v, err := p.db.GetSetting(key)
+	if err != nil || v == "" {
+		return 0
+	}
+	n, _ := strconv.ParseFloat(v, 64)
+	return n
 }
 
 func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.SmartPlug) []models.PowerState {

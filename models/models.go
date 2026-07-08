@@ -29,6 +29,12 @@ type PrinterConfig struct {
 	SortOrder    int    `json:"sort_order"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	// Per-printer overrides for auto-off/thermal-runaway (poller.go's
+	// checkAutoOff/checkThermalRunaway); global settings of the same name
+	// win if set. 0 = disabled (per-printer default).
+	IdleTimeoutMinutes int     `json:"idle_timeout_minutes,omitempty"`
+	MaxBedTemp         float64 `json:"max_bed_temp,omitempty"`
+	MaxExtruderTemp    float64 `json:"max_extruder_temp,omitempty"`
 }
 
 // SmartPlug is a directly-configured Tasmota device, managed independently of

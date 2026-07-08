@@ -84,6 +84,19 @@
                     <label for="printer-poll">Poll interval (seconds)</label>
                     <input type="number" id="printer-poll" value="10" min="5" max="300">
                 </div>
+                <div class="form-group">
+                    <label for="printer-idle-timeout">Auto-off after idle (minutes)</label>
+                    <input type="number" id="printer-idle-timeout" value="0" min="0" max="1440" placeholder="0 = disabled">
+                    <div class="form-hint">Only applies if a smart plug is assigned to this printer. Overridden by the global setting if set.</div>
+                </div>
+                <div class="form-group">
+                    <label for="printer-max-bed-temp">Thermal runaway: max bed temp (°C)</label>
+                    <input type="number" id="printer-max-bed-temp" value="0" min="0" max="150" placeholder="0 = disabled">
+                </div>
+                <div class="form-group">
+                    <label for="printer-max-extruder-temp">Thermal runaway: max extruder temp (°C)</label>
+                    <input type="number" id="printer-max-extruder-temp" value="0" min="0" max="350" placeholder="0 = disabled">
+                </div>
                 <div class="test-result" id="test-result"></div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
@@ -233,6 +246,26 @@
                         <label for="setting-prusalink-ping-interval">PrusaLink keepalive ping interval (seconds)</label>
                         <input type="number" id="setting-prusalink-ping-interval" value="" min="0" max="60" placeholder="0 = disabled">
                         <div class="form-hint">Pings each PrusaLink printer's IP over ICMP on this interval, to stop its wifi interface from dropping off the network when idle. 0 disables.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-auto-off-idle">Auto-off after idle (minutes)</label>
+                        <input type="number" id="setting-auto-off-idle" value="" min="0" max="1440" placeholder="0 = disabled, per-printer default">
+                        <div class="form-hint">Global override for how long a printer with an assigned smart plug can sit idle before its power is cut. Leave empty to use per-printer settings. Only applies to printers with a directly-assigned smart plug.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-auto-off-cooldown">Auto-off cooldown temp (°C)</label>
+                        <input type="number" id="setting-auto-off-cooldown" value="40" min="10" max="100">
+                        <div class="form-hint">Power isn't cut until hotend and bed both drop below this temperature, even after the idle timeout elapses.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-thermal-max-bed">Thermal runaway: max bed temp (°C)</label>
+                        <input type="number" id="setting-thermal-max-bed" value="" min="0" max="150" placeholder="0 = disabled, per-printer default">
+                        <div class="form-hint">Cuts power to a printer's assigned smart plug if actual bed temp exceeds this. Second layer on top of firmware protection, not a replacement for it. Only applies to printers with a directly-assigned smart plug.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-thermal-max-extruder">Thermal runaway: max extruder temp (°C)</label>
+                        <input type="number" id="setting-thermal-max-extruder" value="" min="0" max="350" placeholder="0 = disabled, per-printer default">
+                        <div class="form-hint">Same as above, for the hotend.</div>
                     </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Save</button>
