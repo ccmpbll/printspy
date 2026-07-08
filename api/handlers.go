@@ -1352,32 +1352,28 @@ func validateSetting(key, value string) (string, error) {
 		}
 		return strconv.Itoa(n), nil
 	case "thermal_max_bed_temp":
-		n, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return "", fmt.Errorf("thermal_max_bed_temp must be a number")
-		}
-		if n <= 0 {
-			return "0", nil
-		}
-		if n > 150 {
-			n = 150
-		}
-		return strconv.FormatFloat(n, 'f', -1, 64), nil
+		return validateTempSetting(key, value, 150)
 	case "thermal_max_extruder_temp":
-		n, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return "", fmt.Errorf("thermal_max_extruder_temp must be a number")
-		}
-		if n <= 0 {
-			return "0", nil
-		}
-		if n > 350 {
-			n = 350
-		}
-		return strconv.FormatFloat(n, 'f', -1, 64), nil
+		return validateTempSetting(key, value, 350)
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}
+}
+
+// validateTempSetting validates a °C setting that's disabled at 0 and
+// clamped to max otherwise (thermal_max_bed_temp/thermal_max_extruder_temp).
+func validateTempSetting(key, value string, max float64) (string, error) {
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return "", fmt.Errorf("%s must be a number", key)
+	}
+	if n <= 0 {
+		return "0", nil
+	}
+	if n > max {
+		n = max
+	}
+	return strconv.FormatFloat(n, 'f', -1, 64), nil
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {
