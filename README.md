@@ -15,6 +15,7 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 
 - Real-time SSE updates, no manual refresh
 - Auto-detects camera stack, printer name, and installed plugins
+- Works with [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware) for a webcam feed on printers with no native camera support, like PrusaLink
 - Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
 - Print control (pause/resume/cancel) and one-click reprint from recent files, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
@@ -72,6 +73,10 @@ First run redirects to a setup page to create the first account. Add or remove a
 ### Smart plugs
 
 OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink, Klipper, or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
+
+### Cameras
+
+Any printer type can get a webcam feed by assigning a [printspy-cam](https://github.com/ccmpbll/printspy-cam) device under Settings → Cameras — useful for PrusaLink, which has no webcam support of its own. Assigning a camera overrides whatever webcam a printer's own plugin would otherwise show. Cameras are managed independently of printers, so deleting a printer unassigns its camera instead of deleting it.
 
 ### Environment variables
 
