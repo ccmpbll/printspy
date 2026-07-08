@@ -469,7 +469,7 @@ function renderPrinterCard(printer) {
                         <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb})">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
-                            <span class="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
+                            <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
                         </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
@@ -584,7 +584,16 @@ function updateCard(card, printer) {
     const wasThumbEligible = prevState === 'idle' || wasPrinting;
     const isThumbEligible = state === 'idle' || isPrinting;
 
-    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || (wasDown !== isDown) || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
+    // An assigned printspy-cam's camAttempt is always true regardless of
+    // printer state (see renderPrinterCard), so the offline/online boundary
+    // never actually changes anything about its webcam element - forcing a
+    // full rebuild here would only tear down and reconnect an already-fine
+    // camera feed, showing a blank gap while it reloads for no reason.
+    // Camera-less printers still need it, to toggle the collapsed
+    // placeholder and its "No camera"/"Camera unreachable" text.
+    const downTransitionNeedsRebuild = (wasDown !== isDown) && !printer.has_camera;
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
         if (state === 'idle') loadRecentPrints(cfg.id);
         return;
@@ -601,6 +610,7 @@ function updateCard(card, printer) {
             idleMsg.className = stateIdleMsgClass(state);
             idleMsg.textContent = stateIdleMsgText(state, detailMsg);
         }
+        setText(card, 'webcam-placeholder-text', state === 'offline' ? 'No camera' : 'Camera unreachable');
     }
 
     const stateEl = card.querySelector('[data-field="state"]');
