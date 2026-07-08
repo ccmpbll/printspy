@@ -1014,8 +1014,26 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 // Config export/import
 
 type configExport struct {
-	Settings map[string]string     `yaml:"settings,omitempty"`
-	Printers []configExportPrinter `yaml:"printers"`
+	Settings   map[string]string       `yaml:"settings,omitempty"`
+	Printers   []configExportPrinter   `yaml:"printers"`
+	SmartPlugs []configExportSmartPlug `yaml:"smart_plugs,omitempty"`
+	Cameras    []configExportCamera    `yaml:"cameras,omitempty"`
+}
+
+// PrinterIndex references configExport.Printers by position, since printer
+// IDs are reassigned on import and won't match the source instance.
+type configExportSmartPlug struct {
+	PrinterIndex *int   `yaml:"printer_index,omitempty"`
+	IP           string `yaml:"ip"`
+	Idx          string `yaml:"idx,omitempty"`
+	Label        string `yaml:"label,omitempty"`
+	HideLabel    bool   `yaml:"hide_label,omitempty"`
+}
+
+type configExportCamera struct {
+	PrinterIndex *int   `yaml:"printer_index,omitempty"`
+	URL          string `yaml:"url"`
+	Name         string `yaml:"name,omitempty"`
 }
 
 type configExportPrinter struct {
@@ -1055,7 +1073,9 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 		Printers: make([]configExportPrinter, len(printers)),
 	}
 
+	printerIndex := make(map[int64]int, len(printers))
 	for i, p := range printers {
+		printerIndex[p.ID] = i
 		full, err := h.db.GetPrinter(p.ID)
 		if err != nil {
 			continue
@@ -1076,9 +1096,43 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if plugs, err := h.db.ListAllSmartPlugs(); err == nil {
+		export.SmartPlugs = make([]configExportSmartPlug, len(plugs))
+		for i, sp := range plugs {
+			export.SmartPlugs[i] = configExportSmartPlug{
+				PrinterIndex: printerIndexPtr(sp.PrinterID, printerIndex),
+				IP:           sp.IP,
+				Idx:          sp.Idx,
+				Label:        sp.Label,
+				HideLabel:    sp.HideLabel,
+			}
+		}
+	}
+
+	if cams, err := h.db.ListAllCameras(); err == nil {
+		export.Cameras = make([]configExportCamera, len(cams))
+		for i, c := range cams {
+			export.Cameras[i] = configExportCamera{
+				PrinterIndex: printerIndexPtr(c.PrinterID, printerIndex),
+				URL:          c.URL,
+				Name:         c.Name,
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/x-yaml")
 	w.Header().Set("Content-Disposition", "attachment; filename=printspy-config.yaml")
 	yaml.NewEncoder(w).Encode(export)
+}
+
+func printerIndexPtr(id *int64, index map[int64]int) *int {
+	if id == nil {
+		return nil
+	}
+	if i, ok := index[*id]; ok {
+		return &i
+	}
+	return nil
 }
 
 func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
@@ -1102,7 +1156,8 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	added := 0
-	for _, ep := range export.Printers {
+	newPrinterIDs := make([]*int64, len(export.Printers))
+	for i, ep := range export.Printers {
 		if ep.URL == "" || ep.APIKey == "" {
 			continue
 		}
@@ -1129,14 +1184,47 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.CreatePrinter(&p); err != nil {
 			continue
 		}
+		newPrinterIDs[i] = &p.ID
 		if p.Enabled {
 			h.poller.AddPrinter(h.ctx, p)
 		}
 		added++
 	}
 
+	resolvePrinterID := func(idx *int) *int64 {
+		if idx == nil || *idx < 0 || *idx >= len(newPrinterIDs) {
+			return nil
+		}
+		return newPrinterIDs[*idx]
+	}
+
+	plugsAdded := 0
+	for _, sp := range export.SmartPlugs {
+		if sp.IP == "" {
+			continue
+		}
+		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex)); err == nil {
+			plugsAdded++
+		}
+	}
+
+	camerasAdded := 0
+	for _, c := range export.Cameras {
+		if c.URL == "" {
+			continue
+		}
+		if _, err := h.db.CreateCamera(c.URL, c.Name, resolvePrinterID(c.PrinterIndex)); err == nil {
+			camerasAdded++
+		}
+	}
+
 	h.poller.BroadcastRefresh()
-	jsonResponse(w, map[string]any{"success": true, "printers_added": added})
+	jsonResponse(w, map[string]any{
+		"success":        true,
+		"printers_added": added,
+		"plugs_added":    plugsAdded,
+		"cameras_added":  camerasAdded,
+	})
 }
 
 // Webcam/Thumbnail proxies
