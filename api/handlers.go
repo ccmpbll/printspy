@@ -1825,6 +1825,13 @@ func plugIsOn(status *models.PrinterStatus, plugID string) bool {
 // long-lived context) rather than the request's, since the HTTP request is
 // already closed by the time this goroutine runs.
 func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig) {
+	// Every exit path needs this, not just success - a failure the frontend
+	// never hears about (no SSE 'refresh') means the banner just vanished
+	// (from the immediate loadIngestJobs() after the dispatch click) with no
+	// error surfaced and no retry offered, until something else happened to
+	// reload the page.
+	defer h.poller.BroadcastRefresh()
+
 	plugs, err := h.db.ListSmartPlugs(printer.ID)
 	if err != nil {
 		h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
@@ -1861,7 +1868,6 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 
 	h.db.DeleteIngestJob(job.ID)
 	os.RemoveAll(filepath.Dir(job.FilePath))
-	h.poller.BroadcastRefresh()
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {
