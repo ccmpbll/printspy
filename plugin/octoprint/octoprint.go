@@ -589,6 +589,10 @@ func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []by
 	return fmt.Errorf("file upload not supported for OctoPrint yet")
 }
 
+func (p *Plugin) DeleteFile(ctx context.Context, storage, path string) error {
+	return p.doDelete(ctx, "/api/files/"+storage+"/"+path)
+}
+
 func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
 	_, err := p.doPost(ctx, "/api/files/"+location+"/"+path, map[string]any{
 		"command": "select",
@@ -734,6 +738,27 @@ func (p *Plugin) doPost(ctx context.Context, path string, body any) ([]byte, err
 		return nil, fmt.Errorf("octoprint API returned %d", resp.StatusCode)
 	}
 	return data, nil
+}
+
+func (p *Plugin) doDelete(ctx context.Context, path string) error {
+	url := strings.TrimRight(p.config.URL, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", p.config.APIKey)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("octoprint API returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (p *Plugin) doGet(ctx context.Context, path string) ([]byte, error) {

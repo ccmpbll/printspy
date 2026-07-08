@@ -877,7 +877,12 @@ func (h *Handler) handleCameraSettings(w http.ResponseWriter, r *http.Request, i
 // Print history and control
 
 func (h *Handler) getRecentPrints(w http.ResponseWriter, r *http.Request, id int64) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodDelete:
+		h.deleteRecentFile(w, r, id)
+		return
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -896,6 +901,25 @@ func (h *Handler) getRecentPrints(w http.ResponseWriter, r *http.Request, id int
 		files = []models.RecentFile{}
 	}
 	jsonResponse(w, files)
+}
+
+func (h *Handler) deleteRecentFile(w http.ResponseWriter, r *http.Request, id int64) {
+	origin := r.URL.Query().Get("origin")
+	path := r.URL.Query().Get("path")
+	if origin == "" || path == "" {
+		jsonError(w, "origin and path are required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(path, "..") {
+		jsonError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.poller.DeleteFile(r.Context(), id, origin, path); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
 }
 
 func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {

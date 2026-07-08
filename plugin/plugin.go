@@ -21,6 +21,7 @@ type PrinterPlugin interface {
 	SetPowerState(ctx context.Context, plugID string, on bool) error
 	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
 	UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error
+	DeleteFile(ctx context.Context, storage, path string) error
 	StartPrint(ctx context.Context, location, path string) error
 	PausePrint(ctx context.Context) error
 	ResumePrint(ctx context.Context) error
