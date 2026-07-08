@@ -13,6 +13,7 @@ import (
 
 	"github.com/ccmpbll/printspy/api"
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/ingest"
 	"github.com/ccmpbll/printspy/poller"
 
 	_ "github.com/ccmpbll/printspy/plugin/octoprint"
@@ -56,6 +57,9 @@ func main() {
 	handler := api.New(ctx, database, p)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
+
+	ingestHandler := ingest.New(database, dataDir)
+	ingestHandler.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"version":%q}`, version)

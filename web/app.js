@@ -39,6 +39,7 @@ function connectSSE() {
         printers.forEach(p => { if (p.status) statusCache[p.config.id] = p.status; });
         prevPrinterIDs = [];
         updateDashboard();
+        loadIngestJobs();
         showConnectionBanner(false);
     });
 
@@ -57,6 +58,7 @@ function connectSSE() {
 
     eventSource.addEventListener('refresh', () => {
         fetchPrinters();
+        loadIngestJobs();
     });
 
     eventSource.addEventListener('error', (e) => {
@@ -368,6 +370,7 @@ function updateDashboard() {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
         reloadIdlePrinterRecentPrints();
+        renderIngestBanners();
     }
 }
 
@@ -711,6 +714,7 @@ function openSettings() {
     loadUsers();
     loadSmartPlugs();
     loadCameras();
+    loadIngestKeys();
     document.getElementById('settings-modal').classList.add('active');
 }
 
@@ -804,6 +808,96 @@ async function deleteSmartPlug(id) {
     try {
         await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
         loadSmartPlugs();
+    } catch (e) {}
+}
+
+// Slicer print-host targets (ingest keys) — one per printer model bucket
+
+let ingestKeys = [];
+
+async function loadIngestKeys() {
+    try {
+        const resp = await fetch('/api/ingest-keys');
+        ingestKeys = (await resp.json()) || [];
+        renderSettingsIngestKeyList(ingestKeys);
+    } catch (e) {}
+}
+
+function renderSettingsIngestKeyList(targets) {
+    const list = document.getElementById('settings-ingestkey-list');
+    if (!targets.length) {
+        list.innerHTML = '<div class="settings-empty">No slicer print targets configured yet.</div>';
+        return;
+    }
+    list.innerHTML = targets.map(t => `
+        <div class="settings-printer-row">
+            <div class="settings-printer-info">
+                <span class="settings-printer-name">${esc(t.label || t.model)}</span>
+                <span class="settings-printer-url">Model: ${esc(t.model)} — Host: ${esc(location.origin)}/ingest/${t.id}</span>
+            </div>
+            <div class="settings-printer-actions">
+                <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteIngestKey(${t.id}))">Delete</button>
+            </div>
+        </div>`).join('');
+}
+
+function openAddIngestKeyModal() {
+    document.getElementById('ingestkey-modal-title').textContent = 'Add slicer print target';
+    document.getElementById('ingestkey-id').value = '';
+    document.getElementById('ingestkey-model').value = '';
+    document.getElementById('ingestkey-label').value = '';
+    const result = document.getElementById('ingestkey-result');
+    result.style.display = 'none';
+    result.textContent = '';
+    document.getElementById('ingestkey-modal').classList.add('active');
+}
+
+function openEditIngestKeyModal(id) {
+    const target = ingestKeys.find(t => t.id === id);
+    if (!target) return;
+    document.getElementById('ingestkey-modal-title').textContent = 'Edit slicer print target';
+    document.getElementById('ingestkey-id').value = target.id;
+    document.getElementById('ingestkey-model').value = target.model;
+    document.getElementById('ingestkey-label').value = target.label;
+    const result = document.getElementById('ingestkey-result');
+    result.className = 'test-result success';
+    result.style.display = 'block';
+    result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${target.id}</code><br>API key: <code>${esc(target.api_key)}</code>`;
+    document.getElementById('ingestkey-modal').classList.add('active');
+}
+
+async function saveIngestKey(e) {
+    e.preventDefault();
+    const id = document.getElementById('ingestkey-id').value;
+    const data = {
+        model: document.getElementById('ingestkey-model').value,
+        label: document.getElementById('ingestkey-label').value,
+    };
+    try {
+        const resp = id
+            ? await fetch(`/api/ingest-keys/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
+            : await fetch('/api/ingest-keys', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+        if (!resp.ok) return;
+        await loadIngestKeys();
+        if (!id) {
+            const created = await resp.json();
+            const result = document.getElementById('ingestkey-result');
+            result.className = 'test-result success';
+            result.style.display = 'block';
+            result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${created.id}</code><br>API key: <code>${esc(created.api_key)}</code><br>Paste these into the slicer's Physical Printer dialog (PrusaLink, API key auth).`;
+            document.getElementById('ingestkey-id').value = created.id;
+            return;
+        }
+        closeModal();
+        openSettings();
+    } catch (e) {}
+}
+
+async function deleteIngestKey(id) {
+    try {
+        await fetch(`/api/ingest-keys/${id}`, {method: 'DELETE'});
+        loadIngestKeys();
     } catch (e) {}
 }
 
@@ -1466,6 +1560,62 @@ document.addEventListener('click', function(e) {
         document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
     }
 });
+
+// Slicer ingest jobs — files staged by a slicer, awaiting dispatch to a printer
+
+let ingestJobs = [];
+
+async function loadIngestJobs() {
+    try {
+        const resp = await fetch('/api/ingest-jobs');
+        ingestJobs = (await resp.json()) || [];
+        renderIngestBanners();
+    } catch (e) {}
+}
+
+function renderIngestBanners() {
+    document.querySelectorAll('.ingest-banner').forEach(b => b.remove());
+    if (!ingestJobs.length) return;
+
+    for (const printer of printers) {
+        const cfg = printer.config;
+        if (!cfg.model) continue;
+        const card = document.querySelector(`[data-printer-id="${cfg.id}"]`);
+        if (!card) continue;
+        const jobs = ingestJobs.filter(j => j.model === cfg.model && j.status !== 'dispatching');
+        if (!jobs.length) continue;
+
+        for (const job of jobs) {
+            const banner = document.createElement('div');
+            banner.className = 'ingest-banner';
+            banner.innerHTML = `
+                <span>&#128196; ${esc(job.filename)} staged for ${esc(cfg.name)}${job.error ? ` — <span class="msg-error">${esc(job.error)}</span>` : ''}</span>
+                <div class="ingest-banner-actions">
+                    <button class="btn btn-sm btn-primary" onclick="dispatchIngestJob(${job.id}, ${cfg.id})">Dispatch here</button>
+                    <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => discardIngestJob(${job.id}))">Discard</button>
+                </div>`;
+            card.appendChild(banner);
+        }
+    }
+}
+
+async function dispatchIngestJob(jobID, printerID) {
+    try {
+        await fetch(`/api/ingest-jobs/${jobID}/dispatch`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({printer_id: printerID}),
+        });
+        loadIngestJobs();
+    } catch (e) {}
+}
+
+async function discardIngestJob(jobID) {
+    try {
+        await fetch(`/api/ingest-jobs/${jobID}`, {method: 'DELETE'});
+        loadIngestJobs();
+    } catch (e) {}
+}
 
 // Initialize
 fetch('/api/settings').then(r => r.json()).then(settings => {

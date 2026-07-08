@@ -301,6 +301,25 @@ header .printer-count {
     align-items: stretch;
 }
 
+.ingest-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: var(--radius);
+    background: var(--success-bg);
+    color: var(--success);
+    font-size: 0.85rem;
+}
+
+.ingest-banner-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
 /* Webcam */
 .webcam-wrapper {
     min-width: 200px;

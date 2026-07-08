@@ -56,6 +56,12 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Ingest routes carry their own X-Api-Key check (see ingest.Handler) -
+		// a slicer has no session cookie, so they must never hit this gate.
+		if strings.HasPrefix(r.URL.Path, "/ingest/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		n, err := h.db.CountUsers()
 		if err != nil {

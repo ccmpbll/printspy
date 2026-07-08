@@ -97,6 +97,30 @@ func (db *DB) migrate() error {
 			expires_at DATETIME NOT NULL
 		);
 
+		CREATE TABLE IF NOT EXISTS ingest_targets (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			model TEXT NOT NULL,
+			label TEXT NOT NULL DEFAULT '',
+			api_key TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS ingest_jobs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ingest_target_id INTEGER NOT NULL,
+			filename TEXT NOT NULL,
+			file_path TEXT NOT NULL,
+			print_after INTEGER NOT NULL DEFAULT 0,
+			size_bytes INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL DEFAULT 'pending',
+			error TEXT NOT NULL DEFAULT '',
+			target_printer_id INTEGER,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (ingest_target_id) REFERENCES ingest_targets(id) ON DELETE CASCADE,
+			FOREIGN KEY (target_printer_id) REFERENCES printers(id) ON DELETE SET NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_ingest_jobs_target ON ingest_jobs(ingest_target_id);
+
 		CREATE INDEX IF NOT EXISTS idx_history_printer ON print_history(printer_id);
 	`)
 	if err != nil {
@@ -619,5 +643,146 @@ func (db *DB) DeleteSession(token string) error {
 
 func (db *DB) DeleteSessionsForUser(username string) error {
 	_, err := db.conn.Exec(`DELETE FROM sessions WHERE username = ?`, username)
+	return err
+}
+
+// Ingest targets — slicer print-host buckets, one per printer model.
+
+func (db *DB) ListIngestTargets() ([]models.IngestTarget, error) {
+	rows, err := db.conn.Query(`SELECT id, model, label, api_key, created_at FROM ingest_targets ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []models.IngestTarget
+	for rows.Next() {
+		var t models.IngestTarget
+		if err := rows.Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	return targets, rows.Err()
+}
+
+func (db *DB) GetIngestTarget(id int64) (*models.IngestTarget, error) {
+	var t models.IngestTarget
+	err := db.conn.QueryRow(`SELECT id, model, label, api_key, created_at FROM ingest_targets WHERE id = ?`, id).
+		Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &t.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (db *DB) CreateIngestTarget(model, label, apiKey string) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, label, api_key) VALUES (?, ?, ?)`, model, label, apiKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) UpdateIngestTarget(id int64, model, label string) error {
+	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, label=? WHERE id=?`, model, label, id)
+	return err
+}
+
+func (db *DB) DeleteIngestTarget(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM ingest_targets WHERE id = ?`, id)
+	return err
+}
+
+// Ingest jobs — files staged by a slicer, awaiting dispatch to a printer.
+
+const ingestJobSelect = `
+	SELECT j.id, j.ingest_target_id, t.model, j.filename, j.file_path, j.print_after, j.size_bytes, j.status, j.error, j.target_printer_id, j.created_at
+	FROM ingest_jobs j JOIN ingest_targets t ON t.id = j.ingest_target_id
+`
+
+func scanIngestJobs(rows *sql.Rows) ([]models.IngestJob, error) {
+	var jobs []models.IngestJob
+	for rows.Next() {
+		var j models.IngestJob
+		var printAfter int
+		var targetPrinterID sql.NullInt64
+		if err := rows.Scan(&j.ID, &j.IngestTargetID, &j.Model, &j.Filename, &j.FilePath, &printAfter, &j.SizeBytes, &j.Status, &j.Error, &targetPrinterID, &j.CreatedAt); err != nil {
+			return nil, err
+		}
+		j.PrintAfter = printAfter == 1
+		if targetPrinterID.Valid {
+			j.TargetPrinterID = &targetPrinterID.Int64
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, rows.Err()
+}
+
+func (db *DB) ListIngestJobs() ([]models.IngestJob, error) {
+	rows, err := db.conn.Query(ingestJobSelect + ` ORDER BY j.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIngestJobs(rows)
+}
+
+func (db *DB) GetIngestJob(id int64) (*models.IngestJob, error) {
+	rows, err := db.conn.Query(ingestJobSelect+` WHERE j.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs, err := scanIngestJobs(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &jobs[0], nil
+}
+
+// CreateIngestJob inserts a job row with an empty file_path - the on-disk
+// path is keyed by job ID (see ingest.Handler.upload), which only exists
+// after this insert, so callers must follow up with SetIngestJobFilePath.
+func (db *DB) CreateIngestJob(targetID int64, filename string, printAfter bool, sizeBytes int64) (int64, error) {
+	result, err := db.conn.Exec(`
+		INSERT INTO ingest_jobs (ingest_target_id, filename, file_path, print_after, size_bytes)
+		VALUES (?, ?, '', ?, ?)
+	`, targetID, filename, printAfter, sizeBytes)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
+func (db *DB) SetIngestJobFilePath(id int64, filePath string) error {
+	_, err := db.conn.Exec(`UPDATE ingest_jobs SET file_path=? WHERE id=?`, filePath, id)
+	return err
+}
+
+// ClaimIngestJobForDispatch atomically claims a pending/failed job for
+// dispatch to printerID, guarding against double-dispatch (two matching
+// printer cards, or a double-click). Returns false if already claimed.
+func (db *DB) ClaimIngestJobForDispatch(jobID, printerID int64) (bool, error) {
+	result, err := db.conn.Exec(`
+		UPDATE ingest_jobs SET status='dispatching', target_printer_id=?, error=''
+		WHERE id=? AND status IN ('pending', 'failed')
+	`, printerID, jobID)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+func (db *DB) SetIngestJobFailed(id int64, errMsg string) error {
+	_, err := db.conn.Exec(`UPDATE ingest_jobs SET status='failed', error=? WHERE id=?`, errMsg, id)
+	return err
+}
+
+func (db *DB) DeleteIngestJob(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM ingest_jobs WHERE id = ?`, id)
 	return err
 }

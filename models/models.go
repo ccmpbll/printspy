@@ -141,3 +141,30 @@ type User struct {
 	PasswordHash string `json:"-"`
 	CreatedAt    string `json:"created_at"`
 }
+
+// IngestTarget is a slicer print-host target: a model bucket a slicer can
+// "Send to printer" against. A human later dispatches a staged IngestJob to
+// any one specific printer matching that model.
+type IngestTarget struct {
+	ID        int64  `json:"id"`
+	Model     string `json:"model"`
+	Label     string `json:"label"`
+	APIKey    string `json:"api_key"`
+	CreatedAt string `json:"created_at"`
+}
+
+// IngestJob is a file staged by a slicer against an IngestTarget, awaiting
+// dispatch to a specific printer.
+type IngestJob struct {
+	ID              int64  `json:"id"`
+	IngestTargetID  int64  `json:"ingest_target_id"`
+	Model           string `json:"model"`
+	Filename        string `json:"filename"`
+	FilePath        string `json:"-"`
+	PrintAfter      bool   `json:"print_after"`
+	SizeBytes       int64  `json:"size_bytes"`
+	Status          string `json:"status"`
+	Error           string `json:"error,omitempty"`
+	TargetPrinterID *int64 `json:"target_printer_id,omitempty"`
+	CreatedAt       string `json:"created_at"`
+}
