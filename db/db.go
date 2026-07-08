@@ -660,18 +660,22 @@ func (db *DB) DeleteSessionsForUser(username string) error {
 
 const ingestTargetSelect = `SELECT id, model, printer_id, label, api_key, auto_dispatch_on_print_now, created_at FROM ingest_targets`
 
-func scanIngestTarget(row interface{ Scan(...any) error }) (*models.IngestTarget, error) {
-	var t models.IngestTarget
-	var autoDispatch int
-	var printerID sql.NullInt64
-	if err := row.Scan(&t.ID, &t.Model, &printerID, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
-		return nil, err
+func scanIngestTargets(rows *sql.Rows) ([]models.IngestTarget, error) {
+	var targets []models.IngestTarget
+	for rows.Next() {
+		var t models.IngestTarget
+		var autoDispatch int
+		var printerID sql.NullInt64
+		if err := rows.Scan(&t.ID, &t.Model, &printerID, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		t.AutoDispatchOnPrintNow = autoDispatch == 1
+		if printerID.Valid {
+			t.PrinterID = &printerID.Int64
+		}
+		targets = append(targets, t)
 	}
-	t.AutoDispatchOnPrintNow = autoDispatch == 1
-	if printerID.Valid {
-		t.PrinterID = &printerID.Int64
-	}
-	return &t, nil
+	return targets, rows.Err()
 }
 
 func (db *DB) ListIngestTargets() ([]models.IngestTarget, error) {
@@ -680,19 +684,23 @@ func (db *DB) ListIngestTargets() ([]models.IngestTarget, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var targets []models.IngestTarget
-	for rows.Next() {
-		t, err := scanIngestTarget(rows)
-		if err != nil {
-			return nil, err
-		}
-		targets = append(targets, *t)
-	}
-	return targets, rows.Err()
+	return scanIngestTargets(rows)
 }
 
 func (db *DB) GetIngestTarget(id int64) (*models.IngestTarget, error) {
-	return scanIngestTarget(db.conn.QueryRow(ingestTargetSelect+` WHERE id = ?`, id))
+	rows, err := db.conn.Query(ingestTargetSelect+` WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	targets, err := scanIngestTargets(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &targets[0], nil
 }
 
 func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {

@@ -1684,14 +1684,9 @@ func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobI
 		return
 	}
 
-	job, err := h.db.GetIngestJob(jobID)
+	job, printer, err := h.getJobAndPrinter(jobID, req.PrinterID)
 	if err != nil {
-		jsonError(w, "ingest job not found", http.StatusNotFound)
-		return
-	}
-	printer, err := h.db.GetPrinter(req.PrinterID)
-	if err != nil {
-		jsonError(w, "printer not found", http.StatusNotFound)
+		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	if job.PinnedPrinterID != nil {
@@ -1725,11 +1720,7 @@ func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobI
 // report to - errors just land the job in 'failed', same as any other
 // dispatch failure, and surface as a normal banner for someone to retry.
 func (h *Handler) AutoDispatchIngestJob(jobID, printerID int64) {
-	job, err := h.db.GetIngestJob(jobID)
-	if err != nil {
-		return
-	}
-	printer, err := h.db.GetPrinter(printerID)
+	job, printer, err := h.getJobAndPrinter(jobID, printerID)
 	if err != nil {
 		return
 	}
@@ -1738,6 +1729,18 @@ func (h *Handler) AutoDispatchIngestJob(jobID, printerID int64) {
 		return
 	}
 	h.runDispatch(*job, *printer)
+}
+
+func (h *Handler) getJobAndPrinter(jobID, printerID int64) (*models.IngestJob, *models.PrinterConfig, error) {
+	job, err := h.db.GetIngestJob(jobID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ingest job not found")
+	}
+	printer, err := h.db.GetPrinter(printerID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("printer not found")
+	}
+	return job, printer, nil
 }
 
 func plugIsOn(status *models.PrinterStatus, plugID string) bool {
