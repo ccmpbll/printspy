@@ -20,6 +20,7 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
 - PrusaLink keepalive ping — works around printers whose wifi drops off after sitting idle
 - Optional free-text "model" field to group physically-alike printers on the dashboard
+- Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy; it stages the file and powers on/dispatches to a printer you pick (or automatically, if pinned to one printer)
 - Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Snapshot/live toggle, printer reordering, dark mode, responsive layout
