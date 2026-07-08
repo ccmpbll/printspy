@@ -1225,6 +1225,7 @@ async function submitUpload(e) {
         const data = await resp.json();
         if (resp.ok && data.success) {
             closeModal();
+            loadRecentPrints(id);
         } else {
             result.className = 'test-result error';
             result.textContent = `Upload failed: ${data.error || 'unknown error'}`;

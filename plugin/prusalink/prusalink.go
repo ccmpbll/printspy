@@ -69,7 +69,7 @@ func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.
 	resp.Body.Close()
 
 	req2 := req.Clone(req.Context())
-	req2.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.Path, authHeader))
+	req2.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.RequestURI(), authHeader))
 	return client.Do(req2)
 }
 
@@ -388,7 +388,7 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 		if err != nil {
 			return nil, 0, err
 		}
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodGet, path, authHeader)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodGet, req2.URL.RequestURI(), authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
 		resp2, err := p.client.Do(req2)
@@ -469,7 +469,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		if body != nil {
 			req2.Header.Set("Content-Type", "application/json")
 		}
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, method, path, authHeader)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, method, req2.URL.RequestURI(), authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
 		resp2, err := p.client.Do(req2)
@@ -546,7 +546,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 			return err
 		}
 		setHeaders(req2)
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, path, authHeader)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, req2.URL.RequestURI(), authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
 		resp2, err := p.client.Do(req2)
