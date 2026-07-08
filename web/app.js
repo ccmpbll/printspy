@@ -476,7 +476,7 @@ function renderPrinterCard(printer) {
                         <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
-                            <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera unreachable'}</span>
+                            <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
                         </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
@@ -617,7 +617,7 @@ function updateCard(card, printer) {
             idleMsg.className = stateIdleMsgClass(state);
             idleMsg.textContent = stateIdleMsgText(state, detailMsg);
         }
-        setText(card, 'webcam-placeholder-text', (state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera unreachable');
+        setText(card, 'webcam-placeholder-text', (state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable');
     }
 
     const stateEl = card.querySelector('[data-field="state"]');
