@@ -346,6 +346,19 @@ func (p *Poller) Repoll(ctx context.Context, id int64) {
 	p.poll(ctx, id, pp.plugin)
 }
 
+// ResetAllIdleClocks restarts every printer's idle-timeout clock. Called
+// when the global auto_off_idle_minutes setting changes - without this, a
+// printer already sitting idle longer than a newly-lowered timeout would
+// have its plug cut on the very next poll, instead of the timeout applying
+// from the moment the setting was actually saved.
+func (p *Poller) ResetAllIdleClocks() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, pp := range p.printers {
+		pp.idleSince = time.Time{}
+	}
+}
+
 // WaitOnline blocks until printer id's cached state is no longer
 // offline/disconnected, or ctx's deadline/cancellation fires. Repolls
 // immediately first, since a printer just powered on will still show stale
