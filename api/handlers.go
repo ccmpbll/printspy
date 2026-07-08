@@ -207,6 +207,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.getRecentPrints(w, r, id)
 		case "print":
 			h.startPrint(w, r, id)
+		case "upload":
+			h.uploadFile(w, r, id)
 		case "control":
 			h.controlPrint(w, r, id)
 		case "maintenance":
@@ -925,6 +927,39 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 
 	if err := h.poller.StartPrint(r.Context(), id, req.Origin, req.Path); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
+}
+
+func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	filename := r.URL.Query().Get("filename")
+	if filename == "" {
+		jsonError(w, "filename is required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(filename, "..") {
+		jsonError(w, "invalid filename", http.StatusBadRequest)
+		return
+	}
+	printNow := r.URL.Query().Get("print_now") == "true"
+
+	r.Body = http.MaxBytesReader(w, r.Body, 200<<20)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonError(w, "file too large or unreadable", http.StatusBadRequest)
+		return
+	}
+
+	// PrusaLink's internal flash ("local") is read-only over the network API -
+	// only removable media ("usb", which also covers SD cards) accepts writes.
+	if err := h.poller.UploadFile(r.Context(), id, "usb", filename, data, printNow); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

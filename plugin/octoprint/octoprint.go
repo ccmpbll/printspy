@@ -585,6 +585,10 @@ func collectFiles(files []octoprintFile, out *[]models.RecentFile) {
 	}
 }
 
+func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error {
+	return fmt.Errorf("file upload not supported for OctoPrint yet")
+}
+
 func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
 	_, err := p.doPost(ctx, "/api/files/"+location+"/"+path, map[string]any{
 		"command": "select",

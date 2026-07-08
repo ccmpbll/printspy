@@ -18,6 +18,7 @@
                 <button class="btn btn-sm" onclick="bulkPower('on')" title="Turn all printers on">&#9889; All On</button>
                 <button class="btn btn-sm" onclick="bulkPower('off')" title="Turn all printers off">&#9889; All Off</button>
             </span>
+            <button class="btn btn-sm" onclick="openUploadModal()" title="Upload a file to a printer">&#8593; Upload</button>
             <button class="btn btn-icon" onclick="openSettings()" title="Settings">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="3"></circle>
@@ -102,6 +103,34 @@
                     <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
                     <button type="button" class="btn" id="test-btn" onclick="testConnection()">Test connection</button>
                     <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Upload File Modal -->
+    <div class="modal-overlay" id="upload-modal">
+        <div class="modal">
+            <h2>Upload file</h2>
+            <form id="upload-form" onsubmit="submitUpload(event)">
+                <div class="form-group">
+                    <label for="upload-printer">Printer</label>
+                    <select id="upload-printer" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="upload-file">File</label>
+                    <input type="file" id="upload-file" accept=".gcode,.bgcode" required>
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="upload-print-now" style="width:auto" checked>
+                        Print immediately
+                    </label>
+                </div>
+                <div class="test-result" id="upload-result"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Upload</button>
                 </div>
             </form>
         </div>

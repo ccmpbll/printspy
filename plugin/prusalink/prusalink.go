@@ -1,6 +1,7 @@
 package prusalink
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -309,6 +310,10 @@ func collectFiles(files []prusalinkFile, origin string, out *[]models.RecentFile
 	}
 }
 
+func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error {
+	return p.doUpload(ctx, "/api/v1/files/"+storage+"/"+path, data, printAfter)
+}
+
 func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
 	_, err := p.doPost(ctx, "/api/v1/files/"+location+"/"+path, nil)
 	return err
@@ -487,6 +492,80 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		return nil, fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(data))
 	}
 	return data, nil
+}
+
+// uploadContentType returns the Content-Type PrusaLink's firmware expects
+// for a given filename - it validates the upload against this and rejects
+// unrecognized values with 403 regardless of auth. Confirmed against a real
+// upload captured from PrusaLink's own web UI (.bgcode -> application/gcode+binary).
+func uploadContentType(path string) string {
+	if strings.HasSuffix(strings.ToLower(path), ".bgcode") {
+		return "application/gcode+binary"
+	}
+	return "text/x.gcode"
+}
+
+func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAfter bool) error {
+	base := strings.TrimRight(p.config.URL, "/")
+	url := base + path
+
+	setHeaders := func(req *http.Request) {
+		req.Header.Set("Content-Type", uploadContentType(path))
+		req.Header.Set("Overwrite", "?1")
+		if printAfter {
+			req.Header.Set("Print-After-Upload", "?1")
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("Origin", base)
+		req.Header.Set("Referer", base+"/")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	setHeaders(req)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		authHeader := resp.Header.Get("WWW-Authenticate")
+		io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		req2, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
+		setHeaders(req2)
+		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, path, authHeader)
+		req2.Header.Set("Authorization", digestAuth)
+
+		resp2, err := p.client.Do(req2)
+		if err != nil {
+			return err
+		}
+		defer resp2.Body.Close()
+
+		body, err := io.ReadAll(resp2.Body)
+		if err != nil {
+			return err
+		}
+		if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
+			return fmt.Errorf("prusalink API returned %d: %s", resp2.StatusCode, string(body))
+		}
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // State mapping

@@ -283,6 +283,16 @@ func (p *Poller) backfillFileStats(id int64, files []models.RecentFile) {
 	}
 }
 
+func (p *Poller) UploadFile(ctx context.Context, id int64, storage, path string, data []byte, printAfter bool) error {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.UploadFile(ctx, storage, path, data, printAfter)
+}
+
 func (p *Poller) StartPrint(ctx context.Context, id int64, location, path string) error {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
