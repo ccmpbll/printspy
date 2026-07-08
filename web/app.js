@@ -1439,7 +1439,7 @@ async function importConfig(input) {
         });
         if (resp.ok) {
             const data = await resp.json();
-            alert(`Import complete: ${data.printers_added} printer(s) added.`);
+            alert(`Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s) added.`);
             await fetchPrinters();
             openSettings();
         }
