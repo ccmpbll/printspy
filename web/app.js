@@ -383,13 +383,17 @@ function renderPrinterCard(printer) {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
-    // Only idle/printing ever show a camera (decorative plate render or a
-    // live feed doesn't belong on an error/attention/offline/disconnected
-    // card - see webcamError()). Collapse the reserved camera column up
-    // front for those states instead of waiting on the <img> to fail and
-    // fire onerror async - otherwise the card briefly renders short by the
-    // camera column's width until that failed request resolves.
-    const camEligible = state === 'idle' || isPrinting;
+    // A print-thumbnail fallback only makes sense on idle/printing (a
+    // decorative plate render doesn't belong on an error/attention/offline/
+    // disconnected card - see webcamError()).
+    const tryThumb = state === 'idle' || isPrinting;
+    // An assigned printspy-cam is a separate device, independent of the
+    // printer's own connectivity - still worth attempting even when the
+    // printer itself is offline. Only skip the attempt (and collapse the
+    // reserved camera column up front, instead of waiting on the <img> to
+    // fail and fire onerror async) when there's no assigned camera *and*
+    // the state wouldn't show one anyway.
+    const camAttempt = tryThumb || printer.has_camera;
     // Live streaming needs either a plugin-reported webcam stream URL or an
     // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
     // webcam URL of their own).
@@ -439,9 +443,9 @@ function renderPrinterCard(printer) {
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
-                <div class="webcam-wrapper ${camEligible ? '' : 'webcam-collapsed'}">
+                <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" ${camEligible ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${camEligible})">
+                        <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb})">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
