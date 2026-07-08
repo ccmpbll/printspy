@@ -24,7 +24,7 @@ func TestPatchPowerStateUpdatesAllMatchingIDs(t *testing.T) {
 		subscribers: make(map[*subscriber]struct{}),
 	}
 
-	p.patchPowerState(1, "10.0.0.5:1", false)
+	p.patchPowerState(1, "10.0.0.5:1", "", false)
 
 	got := p.cache[1].Power
 	if got[0].On {
@@ -35,5 +35,28 @@ func TestPatchPowerStateUpdatesAllMatchingIDs(t *testing.T) {
 	}
 	if !got[2].On {
 		t.Errorf("entry 2 (different ID) was patched, want untouched")
+	}
+	if got[0].Source != "tasmota" {
+		t.Errorf("entry 0 Source = %q, want unchanged (empty source arg means leave as-is)", got[0].Source)
+	}
+}
+
+func TestPatchPowerStateOverridesSourceWhenGiven(t *testing.T) {
+	p := &Poller{
+		printers: make(map[int64]*polledPrinter),
+		cache: map[int64]*models.PrinterStatus{
+			1: {Power: []models.PowerState{{ID: "10.0.0.5:1", On: true, Source: "tasmota-direct"}}},
+		},
+		subscribers: make(map[*subscriber]struct{}),
+	}
+
+	p.patchPowerState(1, "10.0.0.5:1", "auto-idle", false)
+
+	got := p.cache[1].Power[0]
+	if got.On {
+		t.Errorf("On = true, want false")
+	}
+	if got.Source != "auto-idle" {
+		t.Errorf("Source = %q, want %q", got.Source, "auto-idle")
 	}
 }

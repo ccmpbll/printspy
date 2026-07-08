@@ -398,9 +398,11 @@ function renderPrinterCard(printer) {
             const onClass = ps.on ? 'power-btn-active power-on' : '';
             const offClass = !ps.on ? 'power-btn-active power-off' : '';
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : '';
+            const autoTitle = autoOffTooltip(ps.source);
+            const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : (autoTitle ? `title="${esc(autoTitle)}"` : '');
+            const onTitle = autoTitle ? ` title="${esc(autoTitle)}"` : '';
             const label = esc(plugLabel(ps));
-            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')">${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
+            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')"${onTitle}>${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
 
@@ -594,16 +596,18 @@ function updateCard(card, printer) {
             const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
             const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
             const label = plugLabel(ps);
+            const autoTitle = autoOffTooltip(ps.source);
             groups.forEach(group => {
                 const btns = group.querySelectorAll('.power-toggle-btn');
                 if (btns[0]) {
                     btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
                     btns[0].textContent = `${label}⚡ On`;
+                    btns[0].title = autoTitle;
                 }
                 if (btns[1]) {
                     btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
                     btns[1].disabled = isBusy && isPrinterPlug;
-                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : '';
+                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : autoTitle;
                 }
             });
         });
@@ -669,6 +673,10 @@ function openSettings() {
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
         document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
+        document.getElementById('setting-auto-off-idle').value = settings.auto_off_idle_minutes || '';
+        document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
+        document.getElementById('setting-thermal-max-bed').value = settings.thermal_max_bed_temp || '';
+        document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -1055,6 +1063,9 @@ function openAddModal() {
     document.getElementById('printer-username').value = 'maker';
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-poll').value = '10';
+    document.getElementById('printer-idle-timeout').value = '0';
+    document.getElementById('printer-max-bed-temp').value = '0';
+    document.getElementById('printer-max-extruder-temp').value = '0';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -1076,6 +1087,9 @@ async function openEditModal(id) {
     document.getElementById('printer-apikey').value = '';
     document.getElementById('printer-username').value = cfg.username || 'maker';
     document.getElementById('printer-poll').value = cfg.poll_interval;
+    document.getElementById('printer-idle-timeout').value = cfg.idle_timeout_minutes || '0';
+    document.getElementById('printer-max-bed-temp').value = cfg.max_bed_temp || '0';
+    document.getElementById('printer-max-extruder-temp').value = cfg.max_extruder_temp || '0';
     document.getElementById('test-btn').style.display = 'inline-flex';
     onPrinterTypeChange();
     hideTestResult();
@@ -1115,6 +1129,9 @@ async function savePrinter(e) {
         api_key: document.getElementById('printer-apikey').value,
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
         poll_interval: parseInt(document.getElementById('printer-poll').value) || 10,
+        idle_timeout_minutes: parseInt(document.getElementById('printer-idle-timeout').value) || 0,
+        max_bed_temp: parseFloat(document.getElementById('printer-max-bed-temp').value) || 0,
+        max_extruder_temp: parseFloat(document.getElementById('printer-max-extruder-temp').value) || 0,
         enabled: true,
     };
 
@@ -1204,6 +1221,10 @@ async function saveSettings(e) {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
         recent_files_count: document.getElementById('setting-recent-files').value,
         prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
+        auto_off_idle_minutes: document.getElementById('setting-auto-off-idle').value || '0',
+        auto_off_cooldown_temp: document.getElementById('setting-auto-off-cooldown').value || '40',
+        thermal_max_bed_temp: document.getElementById('setting-thermal-max-bed').value || '0',
+        thermal_max_extruder_temp: document.getElementById('setting-thermal-max-extruder').value || '0',
     };
     const pollVal = document.getElementById('setting-poll-interval').value;
     if (pollVal) settings.poll_interval = pollVal;
@@ -1249,6 +1270,15 @@ function esc(str) {
 
 function plugLabel(ps) {
     return ps.label && !ps.hide_label ? ps.label + ' ' : '';
+}
+
+// Distinguishes an automatic power-off from a manual toggle or an
+// unexplained outage - only lives for the one broadcast where it fires
+// (the next real poll overwrites Source with the plug's normal value).
+function autoOffTooltip(source) {
+    if (source === 'auto-idle') return 'Turned off automatically after sitting idle';
+    if (source === 'auto-thermal') return 'Turned off automatically: thermal runaway protection';
+    return '';
 }
 
 // Config export/import

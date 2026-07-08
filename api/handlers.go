@@ -127,15 +127,18 @@ func (h *Handler) buildPrinterWithStatus(p models.PrinterConfig, statuses map[in
 }
 
 type printerRequest struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Model        string `json:"model"`
-	HideModel    bool   `json:"hide_model"`
-	URL          string `json:"url"`
-	APIKey       string `json:"api_key"`
-	Username     string `json:"username"`
-	Enabled      bool   `json:"enabled"`
-	PollInterval int    `json:"poll_interval"`
+	Name               string  `json:"name"`
+	Type               string  `json:"type"`
+	Model              string  `json:"model"`
+	HideModel          bool    `json:"hide_model"`
+	URL                string  `json:"url"`
+	APIKey             string  `json:"api_key"`
+	Username           string  `json:"username"`
+	Enabled            bool    `json:"enabled"`
+	PollInterval       int     `json:"poll_interval"`
+	IdleTimeoutMinutes int     `json:"idle_timeout_minutes"`
+	MaxBedTemp         float64 `json:"max_bed_temp"`
+	MaxExtruderTemp    float64 `json:"max_extruder_temp"`
 }
 
 func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
@@ -146,14 +149,17 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := models.PrinterConfig{
-		Name:         req.Name,
-		Type:         req.Type,
-		Model:        req.Model,
-		HideModel:    req.HideModel,
-		URL:          req.URL,
-		APIKey:       req.APIKey,
-		Username:     req.Username,
-		PollInterval: req.PollInterval,
+		Name:               req.Name,
+		Type:               req.Type,
+		Model:              req.Model,
+		HideModel:          req.HideModel,
+		URL:                req.URL,
+		APIKey:             req.APIKey,
+		Username:           req.Username,
+		PollInterval:       req.PollInterval,
+		IdleTimeoutMinutes: req.IdleTimeoutMinutes,
+		MaxBedTemp:         req.MaxBedTemp,
+		MaxExtruderTemp:    req.MaxExtruderTemp,
 	}
 
 	if p.Name == "" || p.URL == "" || p.APIKey == "" {
@@ -243,16 +249,19 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 	p := models.PrinterConfig{
-		ID:           id,
-		Name:         req.Name,
-		Type:         req.Type,
-		Model:        req.Model,
-		HideModel:    req.HideModel,
-		URL:          req.URL,
-		APIKey:       req.APIKey,
-		Username:     req.Username,
-		Enabled:      req.Enabled,
-		PollInterval: req.PollInterval,
+		ID:                 id,
+		Name:               req.Name,
+		Type:               req.Type,
+		Model:              req.Model,
+		HideModel:          req.HideModel,
+		URL:                req.URL,
+		APIKey:             req.APIKey,
+		Username:           req.Username,
+		Enabled:            req.Enabled,
+		PollInterval:       req.PollInterval,
+		IdleTimeoutMinutes: req.IdleTimeoutMinutes,
+		MaxBedTemp:         req.MaxBedTemp,
+		MaxExtruderTemp:    req.MaxExtruderTemp,
 	}
 
 	if err := h.db.UpdatePrinter(&p); err != nil {
@@ -951,15 +960,18 @@ type configExport struct {
 }
 
 type configExportPrinter struct {
-	Name         string `yaml:"name"`
-	Type         string `yaml:"type"`
-	Model        string `yaml:"model,omitempty"`
-	HideModel    bool   `yaml:"hide_model,omitempty"`
-	URL          string `yaml:"url"`
-	APIKey       string `yaml:"api_key"`
-	Username     string `yaml:"username,omitempty"`
-	PollInterval int    `yaml:"poll_interval"`
-	Enabled      bool   `yaml:"enabled"`
+	Name               string  `yaml:"name"`
+	Type               string  `yaml:"type"`
+	Model              string  `yaml:"model,omitempty"`
+	HideModel          bool    `yaml:"hide_model,omitempty"`
+	URL                string  `yaml:"url"`
+	APIKey             string  `yaml:"api_key"`
+	Username           string  `yaml:"username,omitempty"`
+	PollInterval       int     `yaml:"poll_interval"`
+	Enabled            bool    `yaml:"enabled"`
+	IdleTimeoutMinutes int     `yaml:"idle_timeout_minutes,omitempty"`
+	MaxBedTemp         float64 `yaml:"max_bed_temp,omitempty"`
+	MaxExtruderTemp    float64 `yaml:"max_extruder_temp,omitempty"`
 }
 
 func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
@@ -990,15 +1002,18 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		export.Printers[i] = configExportPrinter{
-			Name:         full.Name,
-			Type:         full.Type,
-			Model:        full.Model,
-			HideModel:    full.HideModel,
-			URL:          full.URL,
-			APIKey:       full.APIKey,
-			Username:     full.Username,
-			PollInterval: full.PollInterval,
-			Enabled:      full.Enabled,
+			Name:               full.Name,
+			Type:               full.Type,
+			Model:              full.Model,
+			HideModel:          full.HideModel,
+			URL:                full.URL,
+			APIKey:             full.APIKey,
+			Username:           full.Username,
+			PollInterval:       full.PollInterval,
+			Enabled:            full.Enabled,
+			IdleTimeoutMinutes: full.IdleTimeoutMinutes,
+			MaxBedTemp:         full.MaxBedTemp,
+			MaxExtruderTemp:    full.MaxExtruderTemp,
 		}
 	}
 
@@ -1039,15 +1054,18 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 			ep.PollInterval = 10
 		}
 		p := models.PrinterConfig{
-			Name:         ep.Name,
-			Type:         ep.Type,
-			Model:        ep.Model,
-			HideModel:    ep.HideModel,
-			URL:          ep.URL,
-			APIKey:       ep.APIKey,
-			Username:     ep.Username,
-			PollInterval: ep.PollInterval,
-			Enabled:      ep.Enabled,
+			Name:               ep.Name,
+			Type:               ep.Type,
+			Model:              ep.Model,
+			HideModel:          ep.HideModel,
+			URL:                ep.URL,
+			APIKey:             ep.APIKey,
+			Username:           ep.Username,
+			PollInterval:       ep.PollInterval,
+			Enabled:            ep.Enabled,
+			IdleTimeoutMinutes: ep.IdleTimeoutMinutes,
+			MaxBedTemp:         ep.MaxBedTemp,
+			MaxExtruderTemp:    ep.MaxExtruderTemp,
 		}
 		if err := h.db.CreatePrinter(&p); err != nil {
 			continue
@@ -1310,6 +1328,53 @@ func validateSetting(key, value string) (string, error) {
 			n = 60
 		}
 		return strconv.Itoa(n), nil
+	case "auto_off_idle_minutes":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("auto_off_idle_minutes must be a number")
+		}
+		if n <= 0 {
+			return "0", nil
+		}
+		if n > 1440 {
+			n = 1440
+		}
+		return strconv.Itoa(n), nil
+	case "auto_off_cooldown_temp":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("auto_off_cooldown_temp must be a number")
+		}
+		if n < 10 {
+			n = 10
+		} else if n > 100 {
+			n = 100
+		}
+		return strconv.Itoa(n), nil
+	case "thermal_max_bed_temp":
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return "", fmt.Errorf("thermal_max_bed_temp must be a number")
+		}
+		if n <= 0 {
+			return "0", nil
+		}
+		if n > 150 {
+			n = 150
+		}
+		return strconv.FormatFloat(n, 'f', -1, 64), nil
+	case "thermal_max_extruder_temp":
+		n, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return "", fmt.Errorf("thermal_max_extruder_temp must be a number")
+		}
+		if n <= 0 {
+			return "0", nil
+		}
+		if n > 350 {
+			n = 350
+		}
+		return strconv.FormatFloat(n, 'f', -1, 64), nil
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}
