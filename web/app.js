@@ -1161,7 +1161,7 @@ function openUploadModal() {
     }
 
     document.getElementById('upload-file').value = '';
-    document.getElementById('upload-print-now').checked = true;
+    document.getElementById('upload-print-now').checked = false;
     const result = document.getElementById('upload-result');
     result.style.display = 'none';
     result.className = 'test-result';
