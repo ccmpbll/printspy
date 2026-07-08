@@ -148,6 +148,7 @@ async function loadRecentPrints(printerId) {
                             <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(p.uploaded_at)}</span>
                         </div>
                         <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();startReprint(this)" title="Print">${btnLabel}</button>
+                        <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmDelete(this, () => deleteRecentFile(this))">Delete</button>
                     </div>`;
                 }).join('')}
                 </div>
@@ -172,6 +173,23 @@ async function startReprint(btn) {
             body: JSON.stringify({origin, path}),
         });
         if (!resp.ok) {
+            const data = await resp.json();
+            if (data.error) alert(data.error);
+        }
+    } catch (e) {}
+}
+
+async function deleteRecentFile(btn) {
+    const printerId = btn.dataset.printer;
+    const origin = btn.dataset.origin;
+    const path = btn.dataset.path;
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/recent?origin=${encodeURIComponent(origin)}&path=${encodeURIComponent(path)}`, {
+            method: 'DELETE',
+        });
+        if (resp.ok) {
+            loadRecentPrints(printerId);
+        } else {
             const data = await resp.json();
             if (data.error) alert(data.error);
         }
@@ -722,7 +740,7 @@ function renderSettingsSmartPlugList(plugs) {
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteSmartPlug(${p.id})" title="Delete">&times;</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteSmartPlug(${p.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -783,7 +801,6 @@ async function saveSmartPlug(e) {
 }
 
 async function deleteSmartPlug(id) {
-    if (!confirm('Remove this smart plug?')) return;
     try {
         await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
         loadSmartPlugs();
@@ -816,7 +833,7 @@ function renderSettingsCameraList(cams) {
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditCameraModal(${c.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteCamera(${c.id})" title="Delete">&times;</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteCamera(${c.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -900,7 +917,6 @@ async function saveCameraOrientation() {
 }
 
 async function deleteCamera(id) {
-    if (!confirm('Remove this camera?')) return;
     try {
         await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
         loadCameras();
@@ -948,7 +964,7 @@ function renderSettingsUserList(users) {
                 <span class="settings-printer-name">${esc(u.username)}</span>
             </div>
             <div class="settings-printer-actions">
-                <button class="btn btn-sm btn-danger" onclick="deleteUser(${u.id})" title="Delete">&times;</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteUser(${u.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -975,7 +991,6 @@ async function addUser(e) {
 }
 
 async function deleteUser(id) {
-    if (!confirm('Remove this user?')) return;
     try {
         const resp = await fetch(`/api/users/${id}`, {method: 'DELETE'});
         if (resp.ok) {
@@ -1010,7 +1025,7 @@ function renderSettingsPrinterList() {
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
                     <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
-                    <button class="btn btn-sm btn-danger" onclick="deletePrinter(${cfg.id})" title="Delete">&times;</button>
+                    <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deletePrinter(${cfg.id}))">Delete</button>
                 </div>
             </div>`;
     }).join('');
@@ -1120,6 +1135,107 @@ function closeModal() {
     document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
 }
 
+// Click once to arm, click again within the window to actually run - avoids
+// native confirm() popups for destructive buttons.
+function confirmDelete(btn, action) {
+    if (btn.dataset.armed === '1') {
+        clearTimeout(btn._confirmTimer);
+        action();
+        return;
+    }
+    btn.dataset.armed = '1';
+    const original = btn.textContent;
+    btn.textContent = 'Sure?';
+    btn._confirmTimer = setTimeout(() => {
+        btn.textContent = original;
+        btn.dataset.armed = '0';
+    }, 3000);
+}
+
+function openUploadModal() {
+    const select = document.getElementById('upload-printer');
+    select.innerHTML = '';
+
+    const groups = {};
+    const ungrouped = [];
+    for (const p of printers) {
+        if (p.config.type !== 'prusalink') continue;
+        if (p.config.model) {
+            (groups[p.config.model] = groups[p.config.model] || []).push(p);
+        } else {
+            ungrouped.push(p);
+        }
+    }
+
+    for (const p of ungrouped) {
+        const opt = document.createElement('option');
+        opt.value = p.config.id;
+        opt.textContent = p.config.name;
+        select.appendChild(opt);
+    }
+    for (const model of Object.keys(groups).sort()) {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = model;
+        for (const p of groups[model]) {
+            const opt = document.createElement('option');
+            opt.value = p.config.id;
+            opt.textContent = p.config.name;
+            optgroup.appendChild(opt);
+        }
+        select.appendChild(optgroup);
+    }
+
+    if (!select.options.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No PrusaLink printers configured';
+        select.appendChild(opt);
+    }
+
+    document.getElementById('upload-file').value = '';
+    document.getElementById('upload-print-now').checked = false;
+    const result = document.getElementById('upload-result');
+    result.style.display = 'none';
+    result.className = 'test-result';
+    result.textContent = '';
+
+    document.getElementById('upload-modal').classList.add('active');
+}
+
+async function submitUpload(e) {
+    e.preventDefault();
+    const id = document.getElementById('upload-printer').value;
+    const file = document.getElementById('upload-file').files[0];
+    const printNow = document.getElementById('upload-print-now').checked;
+    const result = document.getElementById('upload-result');
+
+    if (!id || !file) return;
+
+    result.style.display = 'block';
+    result.className = 'test-result';
+    result.textContent = 'Uploading...';
+
+    try {
+        const url = `/api/printers/${id}/upload?filename=${encodeURIComponent(file.name)}&print_now=${printNow}`;
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/octet-stream'},
+            body: file,
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            closeModal();
+            loadRecentPrints(id);
+        } else {
+            result.className = 'test-result error';
+            result.textContent = `Upload failed: ${data.error || 'unknown error'}`;
+        }
+    } catch (e) {
+        result.className = 'test-result error';
+        result.textContent = 'Upload failed';
+    }
+}
+
 function hideTestResult() {
     const el = document.getElementById('test-result');
     el.style.display = 'none';
@@ -1170,7 +1286,6 @@ async function savePrinter(e) {
 }
 
 async function deletePrinter(id) {
-    if (!confirm('Remove this printer?')) return;
     try {
         await fetch(`/api/printers/${id}`, {method: 'DELETE'});
         await fetchPrinters();
