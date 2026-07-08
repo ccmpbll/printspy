@@ -483,6 +483,9 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if _, ok := settings["auto_off_idle_minutes"]; ok {
+			h.poller.ResetAllIdleClocks()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1353,6 +1356,7 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
@@ -1385,6 +1389,7 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
@@ -1429,6 +1434,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "max-age=3600")
+	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
