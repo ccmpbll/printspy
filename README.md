@@ -3,7 +3,7 @@
 
 A self-hosted dashboard for monitoring multiple 3D printers — OctoPrint and PrusaLink — from a single web interface.
 
-This has been created mostly for my own use. If someone else finds it useful, all the better. If you would like to contribute, please be my guest, I need folks with other printers. 
+This has been created mostly for my own use. If someone else finds it useful, all the better. If you would like to contribute, please be my guest. I only have Prusa printers and can only test with those. 
 
 > **Early Development** — expect rough edges, breaking changes, and evolving APIs. Feedback and contributions welcome.
 
