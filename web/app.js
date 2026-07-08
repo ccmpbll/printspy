@@ -45,14 +45,7 @@ function connectSSE() {
 
     eventSource.addEventListener('status', (e) => {
         const msg = JSON.parse(e.data);
-        statusCache[msg.printer_id] = msg.status;
-        const printer = printers.find(p => p.config.id === msg.printer_id);
-        if (printer) {
-            printer.status = msg.status;
-            const card = document.querySelector(`[data-printer-id="${msg.printer_id}"]`);
-            if (card) updateCard(card, printer);
-        }
-        updateHeaderCount();
+        applyStatusUpdate(msg.printer_id, msg.status);
         showConnectionBanner(false);
     });
 
@@ -65,6 +58,22 @@ function connectSSE() {
         console.warn(`[sse] connection error at ${new Date().toISOString()}, readyState=${eventSource.readyState}`, e);
         showConnectionBanner(true);
     });
+}
+
+// Applies a fresh PrinterStatus to printers[]/statusCache and patches the
+// card - shared by the SSE 'status' listener and any action (print/pause/
+// cancel/resume) whose own response already carries the post-repoll status,
+// so those don't need to wait on a separate, unordered SSE round-trip to
+// reflect what just happened.
+function applyStatusUpdate(printerId, status) {
+    statusCache[printerId] = status;
+    const printer = printers.find(p => p.config.id === printerId);
+    if (printer) {
+        printer.status = status;
+        const card = document.querySelector(`[data-printer-id="${printerId}"]`);
+        if (card) updateCard(card, printer);
+    }
+    updateHeaderCount();
 }
 
 function showConnectionBanner(show) {
@@ -119,6 +128,10 @@ async function loadRecentPrints(printerId) {
     if (!card) return;
     const container = card.querySelector('[data-field="recent-prints"]');
     if (!container) return;
+    // Reloading replaces the dropdown wholesale, which would otherwise
+    // silently close it (e.g. after deleting a file from an open menu) -
+    // preserve open/closed state across the refresh.
+    const wasOpen = !!container.querySelector('.recent-dropdown.open');
 
     try {
         const resp = await fetch(`/api/printers/${printerId}/recent`);
@@ -149,12 +162,13 @@ async function loadRecentPrints(printerId) {
                             <span class="recent-name" title="${esc(p.file_name)}">${esc(p.file_name)}</span>
                             <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(p.uploaded_at)}</span>
                         </div>
-                        <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();startReprint(this)" title="Print">${btnLabel}</button>
-                        <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmDelete(this, () => deleteRecentFile(this))">Delete</button>
+                        <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
+                        <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmAction(this, () => deleteRecentFile(this))">Delete</button>
                     </div>`;
                 }).join('')}
                 </div>
             </div>`;
+        if (wasOpen) container.querySelector('.recent-dropdown')?.classList.add('open');
     } catch (e) { container.innerHTML = ''; }
 }
 
@@ -174,9 +188,11 @@ async function startReprint(btn) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({origin, path}),
         });
-        if (!resp.ok) {
-            const data = await resp.json();
-            if (data.error) alert(data.error);
+        const data = await resp.json();
+        if (resp.ok) {
+            if (data.status) applyStatusUpdate(parseInt(printerId), data.status);
+        } else if (data.error) {
+            alert(data.error);
         }
     } catch (e) {}
 }
@@ -217,13 +233,18 @@ function formatDate(unixTs) {
 // Print control
 
 async function controlPrint(printerId, action) {
-    if ((action === 'cancel' || action === 'pause') && !confirm(action === 'cancel' ? 'Cancel this print?' : 'Pause this print?')) return;
     try {
-        await fetch(`/api/printers/${printerId}/control`, {
+        const resp = await fetch(`/api/printers/${printerId}/control`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action}),
         });
+        const data = await resp.json();
+        if (resp.ok) {
+            if (data.status) applyStatusUpdate(printerId, data.status);
+        } else if (data.error) {
+            alert(data.error);
+        }
     } catch (e) {}
 }
 
@@ -255,6 +276,19 @@ function refreshSnapshots() {
         const id = img.closest('[data-printer-id]')?.dataset.printerId;
         if (id && getWebcamMode(parseInt(id)) === 'snapshot' && img.style.display !== 'none') {
             img.src = `/api/snapshot/${id}?t=${pollCounter}`;
+        }
+    });
+    // The print-thumbnail fallback (see webcamError()) is a one-shot attempt
+    // that can lose the race against PrusaLink exposing the thumbnail ref
+    // moments after a print starts - retry it here too, same as the webcam
+    // img above, as long as it's still sitting in its failed (hidden) state.
+    // Reassigning .src re-fires the onload/onerror handlers webcamError()
+    // already attached to this element, no need to re-set them.
+    document.querySelectorAll('.webcam-print-thumb').forEach(thumb => {
+        const placeholder = thumb.closest('.webcam-placeholder');
+        const printerId = thumb.closest('[data-printer-id]')?.dataset.printerId;
+        if (printerId && placeholder && placeholder.style.display !== 'none' && thumb.style.display === 'none') {
+            thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
         }
     });
 }
@@ -410,17 +444,22 @@ function renderPrinterCard(printer) {
     } else {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
-    const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
+    // !! coerces to a real boolean - status.job is an object, and && returns
+    // the last truthy operand rather than true, which broke the onerror
+    // attribute string built below (${isPrinting} interpolated an object as
+    // literal "[object Object]", invalid JS, silently killing the handler).
+    const isPrinting = !!((state === 'printing' || state === 'paused') && status && status.job);
     // A print-thumbnail fallback only makes sense on idle/printing (a
     // decorative plate render doesn't belong on an error/attention/offline/
     // disconnected card - see webcamError()).
     const tryThumb = state === 'idle' || isPrinting;
     // An assigned printspy-cam is a separate device, independent of the
     // printer's own connectivity - still worth attempting even when the
-    // printer itself is offline. Only skip the attempt (and collapse the
-    // reserved camera column up front, instead of waiting on the <img> to
-    // fail and fire onerror async) when there's no assigned camera *and*
-    // the state wouldn't show one anyway.
+    // printer itself is offline. Without one, this column's own
+    // print-thumbnail fallback (see webcamError()) is what fills the camera
+    // spot on idle/printing - only skip the attempt entirely (collapse up
+    // front) when there's no camera assigned *and* the state wouldn't show
+    // a thumbnail anyway.
     const camAttempt = tryThumb || printer.has_camera;
     // Live streaming needs either a plugin-reported webcam stream URL or an
     // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
@@ -447,9 +486,9 @@ function renderPrinterCard(printer) {
 
     let controlHTML = '';
     if (state === 'printing') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();controlPrint(${cfg.id},'pause')">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();controlPrint(${cfg.id},'cancel')">&#9724; Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))">&#9724; Cancel</button></span>`;
     } else if (state === 'paused') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();controlPrint(${cfg.id},'resume')">&#9654; Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();controlPrint(${cfg.id},'cancel')">&#9724; Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))">&#9654; Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))">&#9724; Cancel</button></span>`;
     }
 
     let recentHTML = '';
@@ -483,13 +522,13 @@ function renderPrinterCard(printer) {
                     </div>
                 </div>
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(cfg, status) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status, !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;
 }
 
-function renderPrintingStats(cfg, status) {
+function renderPrintingStats(cfg, status, hasRealCam) {
     const job = status.job;
     const progress = Math.round(job.progress || 0);
     const elapsed = formatTime(job.elapsed_secs);
@@ -527,9 +566,9 @@ function renderPrintingStats(cfg, status) {
                     </div>
                 </div>
             </div>
-            <div class="thumb-beside">
+            ${hasRealCam ? `<div class="thumb-beside">
                 <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
-            </div>
+            </div>` : ''}
         </div>
         <div class="stat-rows">
             <div class="stat-grid stat-grid-auto">
@@ -573,7 +612,11 @@ function updateCard(card, printer) {
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const prevState = card.dataset.state;
-    const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
+    // !! coerces to a real boolean - status.job is an object, and && returns
+    // the last truthy operand rather than true, which broke the onerror
+    // attribute string built below (${isPrinting} interpolated an object as
+    // literal "[object Object]", invalid JS, silently killing the handler).
+    const isPrinting = !!((state === 'printing' || state === 'paused') && status && status.job);
     const wasPrinting = (prevState === 'printing' || prevState === 'paused');
 
     const wasDown = prevState === 'offline' || prevState === 'disconnected';
@@ -600,7 +643,13 @@ function updateCard(card, printer) {
     // placeholder and its "No camera"/"Camera unreachable" text.
     const downTransitionNeedsRebuild = (wasDown !== isDown) && !printer.has_camera;
 
-    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
+    // Pause/Resume swaps controlHTML's button set (Pause/Cancel <->
+    // Resume/Cancel), but isPrinting is true for both printing and paused -
+    // that transition alone wouldn't otherwise cross any of the rebuild
+    // triggers above, leaving stale buttons after a pause or resume.
+    const pausedChanged = (prevState === 'paused') !== (state === 'paused');
+
+    if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || pausedChanged || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
         if (state === 'idle') loadRecentPrints(cfg.id);
         return;
@@ -721,6 +770,7 @@ function openSettings() {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
+        document.getElementById('setting-print-control-timeout').value = settings.print_control_timeout_secs || '15';
         document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
         document.getElementById('setting-auto-off-idle').value = settings.auto_off_idle_minutes || '';
         document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
@@ -761,7 +811,7 @@ function renderSettingsSmartPlugList(plugs) {
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteSmartPlug(${p.id}))">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteSmartPlug(${p.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -858,7 +908,7 @@ function renderSettingsIngestKeyList(targets) {
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteIngestKey(${t.id}))">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteIngestKey(${t.id}))">Delete</button>
             </div>
         </div>`;
     }).join('');
@@ -982,7 +1032,7 @@ function renderSettingsCameraList(cams) {
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditCameraModal(${c.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteCamera(${c.id}))">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteCamera(${c.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -1113,7 +1163,7 @@ function renderSettingsUserList(users) {
                 <span class="settings-printer-name">${esc(u.username)}</span>
             </div>
             <div class="settings-printer-actions">
-                <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteUser(${u.id}))">Delete</button>
+                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteUser(${u.id}))">Delete</button>
             </div>
         </div>`).join('');
 }
@@ -1174,7 +1224,7 @@ function renderSettingsPrinterList() {
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
                     <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
-                    <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deletePrinter(${cfg.id}))">Delete</button>
+                    <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
                 </div>
             </div>`;
     }).join('');
@@ -1285,18 +1335,43 @@ function closeModal() {
 }
 
 // Click once to arm, click again within the window to actually run - avoids
-// native confirm() popups for destructive buttons.
-function confirmDelete(btn, action) {
+// native confirm() popups for any action that benefits from a confirm step
+// (delete, print, pause/cancel/resume, discard).
+function confirmAction(btn, action) {
     if (btn.dataset.armed === '1') {
         clearTimeout(btn._confirmTimer);
-        action();
+        const original = btn.dataset.confirmOriginal;
+        btn.disabled = true;
+        btn.textContent = 'Working…';
+        const restore = () => {
+            // Most callers replace this button entirely once the action's
+            // effect shows up (a reload, a card rebuild), in which case
+            // this is a no-op on an already-detached element. This clears
+            // it for callers that don't (or on failure) - as soon as our
+            // request actually completes, not a guessed delay. For an
+            // action like print-cancel, that's well before the real printer
+            // finishes physically stopping - the button going back to
+            // normal only means "the command was sent", the card's own
+            // fields catching up moments later is what reflects the rest.
+            if (btn.isConnected && btn.textContent === 'Working…') {
+                btn.disabled = false;
+                btn.textContent = original;
+                btn.dataset.armed = '0';
+            }
+        };
+        const result = action();
+        if (result && typeof result.finally === 'function') {
+            result.finally(restore);
+        } else {
+            restore();
+        }
         return;
     }
     btn.dataset.armed = '1';
-    const original = btn.textContent;
+    btn.dataset.confirmOriginal = btn.textContent;
     btn.textContent = 'Sure?';
     btn._confirmTimer = setTimeout(() => {
-        btn.textContent = original;
+        btn.textContent = btn.dataset.confirmOriginal;
         btn.dataset.armed = '0';
     }, 3000);
 }
@@ -1495,6 +1570,7 @@ async function saveSettings(e) {
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
         recent_files_count: document.getElementById('setting-recent-files').value,
+        print_control_timeout_secs: document.getElementById('setting-print-control-timeout').value || '15',
         prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
         auto_off_idle_minutes: document.getElementById('setting-auto-off-idle').value || '0',
         auto_off_cooldown_temp: document.getElementById('setting-auto-off-cooldown').value || '40',
@@ -1647,7 +1723,7 @@ function renderIngestBanners() {
                 <span>&#128196; ${esc(job.filename)} staged for ${esc(cfg.name)}${job.error ? ` — <span class="msg-error">${esc(job.error)}</span>` : ''}</span>
                 <div class="ingest-banner-actions">
                     <button class="btn btn-sm btn-primary" onclick="dispatchIngestJob(${job.id}, ${cfg.id})">Dispatch here</button>
-                    <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => discardIngestJob(${job.id}))">Discard</button>
+                    <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>
                 </div>`;
             card.appendChild(banner);
         }

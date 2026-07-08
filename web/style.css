@@ -246,6 +246,12 @@ header .printer-count {
     display: inline-flex;
     gap: 0.3rem;
 }
+.print-controls .btn {
+    /* Sized to fit "Cancel"/"Resume" - keeps the button from shrinking when
+       confirmAction() swaps the label to the shorter "Sure?" */
+    min-width: 4.75rem;
+    justify-content: center;
+}
 .power-btn-group {
     display: inline-flex;
     border-radius: var(--radius);

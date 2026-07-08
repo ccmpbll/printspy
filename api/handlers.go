@@ -963,7 +963,47 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"success": true})
+	prevState := models.StateIdle
+	if status != nil {
+		prevState = status.State
+	}
+	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, prevState)})
+}
+
+// printControlTimeout is how long waitForStateChange waits for a real state
+// transition before giving up - Settings → General, default 15s. A resume
+// that needs to reheat before motion resumes can take longer than a plain
+// cancel/pause; past this bound, the frontend just shows whatever's current
+// and the next natural poll tick catches up, same as it always has.
+func (h *Handler) printControlTimeout() time.Duration {
+	secs := 15
+	if v, err := h.db.GetSetting("print_control_timeout_secs"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			secs = n
+		}
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// waitForStateChange repolls id every second until its state differs from
+// prevState or timeout elapses, then returns whatever status that leaves.
+// A single immediate repoll right after issuing a print command routinely
+// catches the printer still mid-transition (accepting "cancel" happens
+// instantly; the printer physically stopping and reporting idle does not) -
+// returning that stale-in-effect status let a confirm button clear well
+// before the card had anything new to show. This gives the real printer a
+// bounded window to settle before the response (and so the button/card
+// update) goes out, without risking hanging the request indefinitely.
+func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState models.PrinterState) *models.PrinterStatus {
+	deadline := time.Now().Add(h.printControlTimeout())
+	for {
+		h.poller.Repoll(ctx, id)
+		status := h.poller.GetStatus(id)
+		if status == nil || status.State != prevState || time.Now().After(deadline) {
+			return status
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request, id int64) {
@@ -1013,11 +1053,18 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 
+	prevStatus := h.poller.GetStatus(id)
+	prevState := models.StateIdle
+	if prevStatus != nil {
+		prevState = prevStatus.State
+	}
+
 	if err := h.poller.ControlPrint(r.Context(), id, req.Action); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"success": true})
+	// See waitForStateChange for why this waits rather than repolling once.
+	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, prevState)})
 }
 
 // Config export/import
@@ -1469,6 +1516,17 @@ func validateSetting(key, value string) (string, error) {
 		}
 		if n < 3 {
 			n = 3
+		} else if n > 60 {
+			n = 60
+		}
+		return strconv.Itoa(n), nil
+	case "print_control_timeout_secs":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("print_control_timeout_secs must be a number")
+		}
+		if n < 5 {
+			n = 5
 		} else if n > 60 {
 			n = 60
 		}
