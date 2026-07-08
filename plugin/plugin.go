@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/ccmpbll/printspy/models"
@@ -10,6 +11,7 @@ import (
 
 type PrinterPlugin interface {
 	Type() string
+	DisplayName() string
 	Connect(ctx context.Context) error
 	GetStatus(ctx context.Context) (*models.PrinterStatus, error)
 	GetWebcamURL() string
@@ -22,6 +24,22 @@ type PrinterPlugin interface {
 	PausePrint(ctx context.Context) error
 	ResumePrint(ctx context.Context) error
 	CancelPrint(ctx context.Context) error
+
+	// AuthenticatedDo applies this plugin's auth scheme to req (and retries
+	// with a challenge-based scheme like HTTP Digest if the printer demands
+	// it) before performing it with client. Lets callers proxy arbitrary
+	// printer resources (snapshots, thumbnails) without knowing how any
+	// given plugin authenticates.
+	AuthenticatedDo(client *http.Client, req *http.Request) (*http.Response, error)
+}
+
+// Keepalive is an optional capability a plugin can implement if its printer
+// type benefits from an out-of-band network keepalive (e.g. a wifi
+// interface known to drop after idle periods). Not part of PrinterPlugin
+// itself since most plugin types won't need it.
+type Keepalive interface {
+	// KeepaliveHost returns the host to ping and whether keepalive applies.
+	KeepaliveHost() (string, bool)
 }
 
 type PluginFactory func(config models.PrinterConfig) PrinterPlugin

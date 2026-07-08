@@ -111,9 +111,11 @@ type RecentFile struct {
 }
 
 type PrinterWithStatus struct {
-	Config    PrinterConfig  `json:"config"`
-	Status    *PrinterStatus `json:"status"`
-	HasCamera bool           `json:"has_camera"`
+	Config      PrinterConfig  `json:"config"`
+	Status      *PrinterStatus `json:"status"`
+	HasCamera   bool           `json:"has_camera"`
+	DisplayName string         `json:"display_name"`
+	HasWebcam   bool           `json:"has_webcam"`
 }
 
 type PrintHistory struct {

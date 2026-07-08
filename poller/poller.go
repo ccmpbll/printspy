@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/url"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -111,9 +111,9 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
 	}()
 
-	if config.Type == "prusalink" {
-		if pingInterval := p.pingInterval(); pingInterval > 0 {
-			if host, err := hostFromURL(config.URL); err == nil {
+	if kp, ok := pl.(plugin.Keepalive); ok {
+		if host, enabled := kp.KeepaliveHost(); enabled {
+			if pingInterval := p.pingInterval(); pingInterval > 0 {
 				p.wg.Add(1)
 				go func() {
 					defer p.wg.Done()
@@ -124,8 +124,8 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 	}
 }
 
-// pingInterval returns the configured PrusaLink keepalive ping interval, or
-// 0 if disabled.
+// pingInterval returns the configured keepalive ping interval, or 0 if
+// disabled.
 func (p *Poller) pingInterval() time.Duration {
 	v, err := p.db.GetSetting("prusalink_ping_interval")
 	if err != nil || v == "" {
@@ -136,18 +136,6 @@ func (p *Poller) pingInterval() time.Duration {
 		return 0
 	}
 	return time.Duration(n) * time.Second
-}
-
-func hostFromURL(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	host := u.Hostname()
-	if host == "" {
-		return "", fmt.Errorf("no host in url %q", rawURL)
-	}
-	return host, nil
 }
 
 // keepaliveLoop periodically ICMP-pings a printer's IP, independent of the
@@ -208,6 +196,18 @@ func (p *Poller) GetWebcamURL(id int64) string {
 	return ""
 }
 
+// GetDisplayName returns the plugin's human-readable name for its printer
+// type (e.g. "PrusaLink", "OctoPrint"), so callers don't need to hardcode
+// a mapping from config.Type themselves.
+func (p *Poller) GetDisplayName(id int64) string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if pp, ok := p.printers[id]; ok {
+		return pp.plugin.DisplayName()
+	}
+	return ""
+}
+
 func (p *Poller) GetSnapshotURL(id int64) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -215,6 +215,19 @@ func (p *Poller) GetSnapshotURL(id int64) string {
 		return pp.plugin.GetSnapshotURL()
 	}
 	return ""
+}
+
+// AuthenticatedDo proxies req through the printer's plugin, which applies
+// whatever auth scheme that printer type needs - callers don't need to
+// know or care which one.
+func (p *Poller) AuthenticatedDo(id int64, client *http.Client, req *http.Request) (*http.Response, error) {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.AuthenticatedDo(client, req)
 }
 
 func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]models.RecentFile, error) {

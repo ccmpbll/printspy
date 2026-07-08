@@ -353,13 +353,14 @@ function updateDashboard() {
     }
 }
 
-function renderMaintenanceCard(cfg) {
+function renderMaintenanceCard(printer) {
+    const cfg = printer.config;
     return `
         <div class="printer-card card-maintenance" data-printer-id="${cfg.id}" data-state="maintenance">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state state-maintenance">Maintenance</span>
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="idle-message" data-field="idle-msg">In maintenance — polling paused</div>
@@ -369,7 +370,7 @@ function renderMaintenanceCard(cfg) {
 
 function renderPrinterCard(printer) {
     const cfg = printer.config;
-    if (cfg.maintenance) return renderMaintenanceCard(cfg);
+    if (cfg.maintenance) return renderMaintenanceCard(printer);
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
@@ -382,9 +383,10 @@ function renderPrinterCard(printer) {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
-    // PrusaLink's own webcam integration is snapshot-only, but an assigned
-    // printspy-cam supports live streaming regardless of printer type.
-    const supportsLive = cfg.type !== 'prusalink' || printer.has_camera;
+    // Live streaming needs either a plugin-reported webcam stream URL or an
+    // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
+    // webcam URL of their own).
+    const supportsLive = printer.has_webcam || printer.has_camera;
     const wcMode = supportsLive ? getWebcamMode(cfg.id) : 'snapshot';
     const cardClass = stateCardClass(state);
 
@@ -425,7 +427,7 @@ function renderPrinterCard(printer) {
                 ${controlHTML}
                 ${recentHTML}
                 ${historySummaryHTML}
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper">
@@ -984,7 +986,7 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-info">
                     <span class="settings-printer-name">${esc(cfg.name)}</span>
-                    <span class="settings-printer-url">${esc(cfg.url)} (${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'})</span>
+                    <span class="settings-printer-url">${esc(cfg.url)} (${esc(p.display_name)})</span>
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>

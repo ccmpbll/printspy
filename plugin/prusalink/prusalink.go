@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +44,44 @@ func New(config models.PrinterConfig) *Plugin {
 	}
 }
 
-func (p *Plugin) Type() string { return "prusalink" }
+func (p *Plugin) Type() string        { return "prusalink" }
+func (p *Plugin) DisplayName() string { return "PrusaLink" }
+
+// AuthenticatedDo tries HTTP Basic first (fast path for callers that don't
+// care which scheme wins) and falls back to Digest if the printer demands
+// it via a 401 challenge - the same dance doGetRaw/doMutate do internally,
+// exposed generically so callers outside this package (proxy handlers) can
+// fetch arbitrary printer resources without knowing PrusaLink's auth
+// scheme at all.
+func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.Response, error) {
+	req.SetBasicAuth(p.config.Username, p.config.APIKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+
+	authHeader := resp.Header.Get("WWW-Authenticate")
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	req2 := req.Clone(req.Context())
+	req2.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.Path, authHeader))
+	return client.Do(req2)
+}
+
+// KeepaliveHost implements plugin.Keepalive - some PrusaLink printers' wifi
+// interfaces have been observed dropping off the network after idle
+// periods, so the poller ICMP-pings them independently of status polling.
+func (p *Plugin) KeepaliveHost() (string, bool) {
+	u, err := url.Parse(p.config.URL)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	return u.Hostname(), true
+}
 
 func (p *Plugin) Connect(ctx context.Context) error {
 	data, err := p.doGet(ctx, "/api/version")

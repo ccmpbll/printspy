@@ -7,14 +7,12 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
-	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/plugin"
@@ -113,13 +111,19 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 	statuses := h.poller.GetAllStatuses()
 	result := make([]models.PrinterWithStatus, len(printers))
 	for i, p := range printers {
-		result[i] = models.PrinterWithStatus{
-			Config:    p,
-			Status:    statuses[p.ID],
-			HasCamera: h.hasCameraAssigned(p.ID),
-		}
+		result[i] = h.buildPrinterWithStatus(p, statuses)
 	}
 	jsonResponse(w, result)
+}
+
+func (h *Handler) buildPrinterWithStatus(p models.PrinterConfig, statuses map[int64]*models.PrinterStatus) models.PrinterWithStatus {
+	return models.PrinterWithStatus{
+		Config:      p,
+		Status:      statuses[p.ID],
+		HasCamera:   h.hasCameraAssigned(p.ID),
+		DisplayName: h.poller.GetDisplayName(p.ID),
+		HasWebcam:   h.poller.GetWebcamURL(p.ID) != "",
+	}
 }
 
 type printerRequest struct {
@@ -401,7 +405,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		statuses := h.poller.GetAllStatuses()
 		result := make([]models.PrinterWithStatus, len(printers))
 		for i, p := range printers {
-			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID], HasCamera: h.hasCameraAssigned(p.ID)}
+			result[i] = h.buildPrinterWithStatus(p, statuses)
 		}
 		if data, err := json.Marshal(result); err == nil {
 			fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
@@ -1159,46 +1163,18 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var printer *models.PrinterConfig
-	if !usingCamera {
-		printer, err = h.db.GetPrinter(id)
-		if err != nil {
-			http.Error(w, "printer not found", http.StatusNotFound)
-			return
-		}
-		if printer.Type == "prusalink" {
-			req.SetBasicAuth(printer.Username, printer.APIKey)
-		} else {
-			req.Header.Set("X-Api-Key", printer.APIKey)
-		}
+	var resp *http.Response
+	if usingCamera {
+		resp, err = h.proxy.Do(req)
+	} else {
+		resp, err = h.poller.AuthenticatedDo(id, h.proxy, req)
 	}
-
-	resp, err := h.proxy.Do(req)
 	if err != nil {
 		h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
 		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if !usingCamera && resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		parsed, _ := url.Parse(snapshotURL)
-		resp2, err := h.digestRetry(r, snapshotURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] digest auth failed for %s: %v", id, snapshotURL, err)
-			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "no-cache, no-store")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		h.logOnce(fmt.Sprintf("snapshot-status-%d", id), 30*time.Second, "[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
@@ -1207,16 +1183,6 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	io.Copy(w, resp.Body)
-}
-
-// digestRetry re-issues a GET with a digest Authorization header built from a 401's WWW-Authenticate challenge.
-func (h *Handler) digestRetry(r *http.Request, targetURL, uriPath, username, apiKey, authHeader string) (*http.Response, error) {
-	req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req2.Header.Set("Authorization", digestauth.BuildHeader(username, apiKey, http.MethodGet, uriPath, authHeader))
-	return h.proxy.Do(req2)
 }
 
 func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
@@ -1233,47 +1199,18 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	printer, err := h.db.GetPrinter(id)
-	if err != nil {
-		http.Error(w, "printer not found", http.StatusNotFound)
-		return
-	}
-
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if printer.Type == "prusalink" {
-		req.SetBasicAuth(printer.Username, printer.APIKey)
-	} else {
-		req.Header.Set("X-Api-Key", printer.APIKey)
-	}
 
-	resp, err := h.proxy.Do(req)
+	resp, err := h.poller.AuthenticatedDo(id, h.proxy, req)
 	if err != nil {
 		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		parsed, _ := url.Parse(thumbURL)
-		resp2, err := h.digestRetry(r, thumbURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "no-cache")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1311,36 +1248,13 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if printer.Type == "prusalink" {
-		req.SetBasicAuth(printer.Username, printer.APIKey)
-	} else {
-		req.Header.Set("X-Api-Key", printer.APIKey)
-	}
 
-	resp, err := h.proxy.Do(req)
+	resp, err := h.poller.AuthenticatedDo(id, h.proxy, req)
 	if err != nil {
 		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		uriPath := "/" + strings.TrimLeft(thumbPath, "/")
-		resp2, err := h.digestRetry(r, thumbURL, uriPath, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "max-age=3600")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "max-age=3600")
