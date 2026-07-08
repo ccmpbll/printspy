@@ -963,11 +963,16 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	prevState := models.StateIdle
-	if status != nil {
-		prevState = status.State
+	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, currentState(status))})
+}
+
+// currentState returns status.State, or StateIdle if status is nil (printer
+// never successfully polled yet).
+func currentState(status *models.PrinterStatus) models.PrinterState {
+	if status == nil {
+		return models.StateIdle
 	}
-	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, prevState)})
+	return status.State
 }
 
 // printControlTimeout is how long waitForStateChange waits for a real state
@@ -1053,11 +1058,7 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 
-	prevStatus := h.poller.GetStatus(id)
-	prevState := models.StateIdle
-	if prevStatus != nil {
-		prevState = prevStatus.State
-	}
+	prevState := currentState(h.poller.GetStatus(id))
 
 	if err := h.poller.ControlPrint(r.Context(), id, req.Action); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
