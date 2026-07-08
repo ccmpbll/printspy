@@ -963,7 +963,52 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"success": true})
+	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, currentState(status))})
+}
+
+// currentState returns status.State, or StateIdle if status is nil (printer
+// never successfully polled yet).
+func currentState(status *models.PrinterStatus) models.PrinterState {
+	if status == nil {
+		return models.StateIdle
+	}
+	return status.State
+}
+
+// printControlTimeout is how long waitForStateChange waits for a real state
+// transition before giving up - Settings → General, default 15s. A resume
+// that needs to reheat before motion resumes can take longer than a plain
+// cancel/pause; past this bound, the frontend just shows whatever's current
+// and the next natural poll tick catches up, same as it always has.
+func (h *Handler) printControlTimeout() time.Duration {
+	secs := 15
+	if v, err := h.db.GetSetting("print_control_timeout_secs"); err == nil && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			secs = n
+		}
+	}
+	return time.Duration(secs) * time.Second
+}
+
+// waitForStateChange repolls id every second until its state differs from
+// prevState or timeout elapses, then returns whatever status that leaves.
+// A single immediate repoll right after issuing a print command routinely
+// catches the printer still mid-transition (accepting "cancel" happens
+// instantly; the printer physically stopping and reporting idle does not) -
+// returning that stale-in-effect status let a confirm button clear well
+// before the card had anything new to show. This gives the real printer a
+// bounded window to settle before the response (and so the button/card
+// update) goes out, without risking hanging the request indefinitely.
+func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState models.PrinterState) *models.PrinterStatus {
+	deadline := time.Now().Add(h.printControlTimeout())
+	for {
+		h.poller.Repoll(ctx, id)
+		status := h.poller.GetStatus(id)
+		if status == nil || status.State != prevState || time.Now().After(deadline) {
+			return status
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func (h *Handler) uploadFile(w http.ResponseWriter, r *http.Request, id int64) {
@@ -1013,11 +1058,14 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 
+	prevState := currentState(h.poller.GetStatus(id))
+
 	if err := h.poller.ControlPrint(r.Context(), id, req.Action); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"success": true})
+	// See waitForStateChange for why this waits rather than repolling once.
+	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, prevState)})
 }
 
 // Config export/import
@@ -1473,6 +1521,17 @@ func validateSetting(key, value string) (string, error) {
 			n = 60
 		}
 		return strconv.Itoa(n), nil
+	case "print_control_timeout_secs":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("print_control_timeout_secs must be a number")
+		}
+		if n < 5 {
+			n = 5
+		} else if n > 60 {
+			n = 60
+		}
+		return strconv.Itoa(n), nil
 	case "prusalink_ping_interval":
 		n, err := strconv.Atoi(value)
 		if err != nil {
@@ -1767,6 +1826,13 @@ func plugIsOn(status *models.PrinterStatus, plugID string) bool {
 // long-lived context) rather than the request's, since the HTTP request is
 // already closed by the time this goroutine runs.
 func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig) {
+	// Every exit path needs this, not just success - a failure the frontend
+	// never hears about (no SSE 'refresh') means the banner just vanished
+	// (from the immediate loadIngestJobs() after the dispatch click) with no
+	// error surfaced and no retry offered, until something else happened to
+	// reload the page.
+	defer h.poller.BroadcastRefresh()
+
 	plugs, err := h.db.ListSmartPlugs(printer.ID)
 	if err != nil {
 		h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
@@ -1803,7 +1869,6 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 
 	h.db.DeleteIngestJob(job.ID)
 	os.RemoveAll(filepath.Dir(job.FilePath))
-	h.poller.BroadcastRefresh()
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

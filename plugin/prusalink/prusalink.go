@@ -29,6 +29,11 @@ func init() {
 type Plugin struct {
 	config models.PrinterConfig
 	client *http.Client
+	// uploadClient has a much longer timeout than client - status/job polls
+	// are small JSON and should fail fast to detect an offline printer
+	// quickly, but a real gcode file can be several MB and take well past
+	// 10s to transfer over wifi to an embedded device.
+	uploadClient *http.Client
 
 	mu         sync.RWMutex
 	cachedName string
@@ -40,8 +45,9 @@ func New(config models.PrinterConfig) *Plugin {
 		config.Username = "maker"
 	}
 	return &Plugin{
-		config: config,
-		client: &http.Client{Timeout: 10 * time.Second, Transport: netguard.Transport()},
+		config:       config,
+		client:       &http.Client{Timeout: 10 * time.Second, Transport: netguard.Transport()},
+		uploadClient: &http.Client{Timeout: 5 * time.Minute, Transport: netguard.Transport()},
 	}
 }
 
@@ -530,7 +536,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 	}
 	setHeaders(req)
 
-	resp, err := p.client.Do(req)
+	resp, err := p.uploadClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -549,7 +555,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, req2.URL.RequestURI(), authHeader)
 		req2.Header.Set("Authorization", digestAuth)
 
-		resp2, err := p.client.Do(req2)
+		resp2, err := p.uploadClient.Do(req2)
 		if err != nil {
 			return err
 		}

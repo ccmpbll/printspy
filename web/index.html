@@ -322,6 +322,11 @@
                         <div class="form-hint">Number of files shown in the recent files dropdown per printer.</div>
                     </div>
                     <div class="form-group">
+                        <label for="setting-print-control-timeout">Print control timeout (seconds)</label>
+                        <input type="number" id="setting-print-control-timeout" value="15" min="5" max="60">
+                        <div class="form-hint">After clicking Print/Pause/Resume/Cancel, how long to wait for the printer to actually confirm the new state before giving up and falling back to the next regular poll. Longer covers a slow reheat-before-resume; shorter keeps the button responsive.</div>
+                    </div>
+                    <div class="form-group">
                         <label for="setting-prusalink-ping-interval">PrusaLink keepalive ping interval (seconds)</label>
                         <input type="number" id="setting-prusalink-ping-interval" value="" min="0" max="60" placeholder="0 = disabled">
                         <div class="form-hint">Pings each PrusaLink printer's IP over ICMP on this interval, to stop its wifi interface from dropping off the network when idle. 0 disables.</div>
