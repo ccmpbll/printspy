@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1619,6 +1620,12 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if req.Label != "" {
+			if _, err := h.db.GetIngestTargetByLabel(req.Label); err == nil {
+				jsonError(w, "label already in use by another target", http.StatusConflict)
+				return
+			}
+		}
 		apiKey, err := newSessionToken()
 		if err != nil {
 			jsonError(w, "failed to generate api key", http.StatusInternalServerError)
@@ -1646,12 +1653,19 @@ type ingestTargetRequest struct {
 	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
 }
 
+var ingestLabelSlug = regexp.MustCompile(`^[a-z0-9-]+$`)
+
 func (r ingestTargetRequest) validate() error {
 	if r.Model == "" && r.PrinterID == nil {
 		return fmt.Errorf("model or printer_id is required")
 	}
 	if r.Model != "" && r.PrinterID != nil {
 		return fmt.Errorf("specify model or printer_id, not both")
+	}
+	// Label doubles as the /ingest/{label} URL slug (see ingest.Handler.route),
+	// so it's restricted to what's safe in a URL path segment.
+	if r.Label != "" && !ingestLabelSlug.MatchString(r.Label) {
+		return fmt.Errorf("label must be lowercase letters, numbers, and hyphens only")
 	}
 	return nil
 }
@@ -1673,6 +1687,12 @@ func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
 		if err := req.validate(); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if req.Label != "" {
+			if existing, err := h.db.GetIngestTargetByLabel(req.Label); err == nil && existing.ID != id {
+				jsonError(w, "label already in use by another target", http.StatusConflict)
+				return
+			}
 		}
 		if err := h.db.UpdateIngestTarget(id, req.Model, req.PrinterID, req.Label, req.AutoDispatchOnPrintNow); err != nil {
 			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)

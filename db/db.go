@@ -703,6 +703,25 @@ func (db *DB) GetIngestTarget(id int64) (*models.IngestTarget, error) {
 	return &targets[0], nil
 }
 
+// GetIngestTargetByLabel looks up a target by its URL slug - see
+// ingest.Handler.route, which tries a numeric ID first and falls back to
+// this for a human-readable /ingest/{label} path.
+func (db *DB) GetIngestTargetByLabel(label string) (*models.IngestTarget, error) {
+	rows, err := db.conn.Query(ingestTargetSelect+` WHERE label = ?`, label)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	targets, err := scanIngestTargets(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(targets) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	return &targets[0], nil
+}
+
 func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {
 	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, printer_id, label, api_key, auto_dispatch_on_print_now) VALUES (?, ?, ?, ?, ?)`,
 		model, printerID, label, apiKey, autoDispatchOnPrintNow)

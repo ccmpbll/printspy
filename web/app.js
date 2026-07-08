@@ -904,7 +904,7 @@ function renderSettingsIngestKeyList(targets) {
         <div class="settings-printer-row">
             <div class="settings-printer-info">
                 <span class="settings-printer-name">${esc(t.label || t.model || printerName(t.printer_id) || 'Untitled')}</span>
-                <span class="settings-printer-url">${boundTo} — Host: ${esc(location.origin)}/ingest/${t.id}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
+                <span class="settings-printer-url">${boundTo} — Host: ${esc(location.origin)}/ingest/${esc(t.label || t.id)}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
@@ -976,7 +976,7 @@ async function saveIngestKey(e) {
     const data = {
         model: isPrinter ? '' : document.getElementById('ingestkey-model').value,
         printer_id: isPrinter ? parseInt(document.getElementById('ingestkey-printer').value) : null,
-        label: document.getElementById('ingestkey-label').value,
+        label: document.getElementById('ingestkey-label').value.trim().toLowerCase(),
         auto_dispatch_on_print_now: document.getElementById('ingestkey-auto-dispatch').checked,
     };
     try {

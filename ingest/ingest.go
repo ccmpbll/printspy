@@ -59,15 +59,19 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/ingest/")
 	parts := strings.SplitN(path, "/", 2)
 
-	id, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	target, err := h.db.GetIngestTarget(id)
-	if err != nil {
-		http.NotFound(w, r)
-		return
+	var target *models.IngestTarget
+	if id, err := strconv.ParseInt(parts[0], 10, 64); err == nil {
+		target, err = h.db.GetIngestTarget(id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+	} else {
+		target, err = h.db.GetIngestTargetByLabel(parts[0])
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Api-Key")), []byte(target.APIKey)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

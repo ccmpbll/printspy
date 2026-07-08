@@ -253,7 +253,8 @@
                 </div>
                 <div class="form-group">
                     <label for="ingestkey-label">Label</label>
-                    <input type="text" id="ingestkey-label" placeholder="Optional">
+                    <input type="text" id="ingestkey-label" placeholder="Optional, e.g. coreone" pattern="[a-z0-9-]+">
+                    <div class="form-hint">Lowercase letters, numbers, and hyphens only — also becomes the ingest URL: /ingest/&lt;label&gt; instead of /ingest/&lt;id&gt;.</div>
                 </div>
                 <div class="form-group">
                     <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
