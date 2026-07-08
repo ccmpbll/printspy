@@ -292,7 +292,7 @@ function toggleWebcamMode(printerId) {
     if (placeholder) placeholder.style.display = 'none';
 }
 
-function webcamError(img, isPrinting, tryThumb) {
+function webcamError(img, isPrinting, tryThumb, hasCamera) {
     const container = img.parentElement;
     const wrapper = container.parentElement;
     img.style.display = 'none';
@@ -301,14 +301,21 @@ function webcamError(img, isPrinting, tryThumb) {
     const toggle = container.querySelector('.webcam-toggle');
     if (toggle) toggle.style.display = 'none';
 
-    // No camera - fall back to the print thumbnail (current job, or last
-    // loaded file) rather than collapsing the space immediately, but only
-    // when idle/printing - a decorative plate render doesn't belong next to
-    // an error/attention/offline card, it just competes with the actual
-    // message for space. Only collapse (when idle) once the thumbnail also
-    // fails to load. Collapsing the wrapper (not just the inner container)
-    // is what actually frees up the row for printer-stats to expand into -
-    // the wrapper has a fixed width that survives the container being hidden.
+    // No camera assigned - fall back to the print thumbnail (current job, or
+    // last loaded file) rather than collapsing the space immediately, but
+    // only when idle/printing - a decorative plate render doesn't belong
+    // next to an error/attention/offline card, it just competes with the
+    // actual message for space. Only collapse (when idle) once the
+    // thumbnail also fails to load. Collapsing the wrapper (not just the
+    // inner container) is what actually frees up the row for printer-stats
+    // to expand into - the wrapper has a fixed width that survives the
+    // container being hidden.
+    //
+    // A printer WITH an assigned camera never auto-collapses on failure,
+    // even when idle - the "Camera unreachable" text is a real diagnostic
+    // signal about hardware you deliberately configured, not a decorative
+    // fallback, and collapsing right after showing it made it effectively
+    // unseeable outside of active prints.
     const thumb = container.querySelector('.webcam-print-thumb');
     const text = container.querySelector('.webcam-placeholder-text');
     const printerId = container.closest('[data-printer-id]')?.dataset.printerId;
@@ -321,10 +328,10 @@ function webcamError(img, isPrinting, tryThumb) {
         thumb.onerror = () => {
             thumb.style.display = 'none';
             text.style.display = 'block';
-            if (!isPrinting) wrapper.classList.add('webcam-collapsed');
+            if (!isPrinting && !hasCamera) wrapper.classList.add('webcam-collapsed');
         };
         thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
-    } else if (!isPrinting) {
+    } else if (!isPrinting && !hasCamera) {
         wrapper.classList.add('webcam-collapsed');
     }
 }
@@ -466,7 +473,7 @@ function renderPrinterCard(printer) {
             <div class="printer-body">
                 <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
                     <div class="webcam-container ${isPrinting ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb})">
+                        <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${state === 'offline' ? 'No camera' : 'Camera unreachable'}</span>
