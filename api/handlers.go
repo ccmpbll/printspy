@@ -7,14 +7,12 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
-	"github.com/ccmpbll/printspy/digestauth"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/plugin"
@@ -113,18 +111,26 @@ func (h *Handler) listPrinters(w http.ResponseWriter, r *http.Request) {
 	statuses := h.poller.GetAllStatuses()
 	result := make([]models.PrinterWithStatus, len(printers))
 	for i, p := range printers {
-		result[i] = models.PrinterWithStatus{
-			Config:    p,
-			Status:    statuses[p.ID],
-			HasCamera: h.hasCameraAssigned(p.ID),
-		}
+		result[i] = h.buildPrinterWithStatus(p, statuses)
 	}
 	jsonResponse(w, result)
+}
+
+func (h *Handler) buildPrinterWithStatus(p models.PrinterConfig, statuses map[int64]*models.PrinterStatus) models.PrinterWithStatus {
+	return models.PrinterWithStatus{
+		Config:      p,
+		Status:      statuses[p.ID],
+		HasCamera:   h.hasCameraAssigned(p.ID),
+		DisplayName: h.poller.GetDisplayName(p.ID),
+		HasWebcam:   h.poller.GetWebcamURL(p.ID) != "",
+	}
 }
 
 type printerRequest struct {
 	Name         string `json:"name"`
 	Type         string `json:"type"`
+	Model        string `json:"model"`
+	HideModel    bool   `json:"hide_model"`
 	URL          string `json:"url"`
 	APIKey       string `json:"api_key"`
 	Username     string `json:"username"`
@@ -142,6 +148,8 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	p := models.PrinterConfig{
 		Name:         req.Name,
 		Type:         req.Type,
+		Model:        req.Model,
+		HideModel:    req.HideModel,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
 		Username:     req.Username,
@@ -238,6 +246,8 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		ID:           id,
 		Name:         req.Name,
 		Type:         req.Type,
+		Model:        req.Model,
+		HideModel:    req.HideModel,
 		URL:          req.URL,
 		APIKey:       req.APIKey,
 		Username:     req.Username,
@@ -338,15 +348,12 @@ func (h *Handler) getPrintHistory(w http.ResponseWriter, r *http.Request, id int
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	history, err := h.db.GetPrintHistory(id, 50)
+	summary, err := h.db.GetPrintHistorySummary(id)
 	if err != nil {
 		jsonError(w, "failed to get history", http.StatusInternalServerError)
 		return
 	}
-	if history == nil {
-		history = []models.PrintHistory{}
-	}
-	jsonResponse(w, history)
+	jsonResponse(w, summary)
 }
 
 func (h *Handler) handleReorder(w http.ResponseWriter, r *http.Request) {
@@ -398,7 +405,7 @@ func (h *Handler) handleSSE(w http.ResponseWriter, r *http.Request) {
 		statuses := h.poller.GetAllStatuses()
 		result := make([]models.PrinterWithStatus, len(printers))
 		for i, p := range printers {
-			result[i] = models.PrinterWithStatus{Config: p, Status: statuses[p.ID], HasCamera: h.hasCameraAssigned(p.ID)}
+			result[i] = h.buildPrinterWithStatus(p, statuses)
 		}
 		if data, err := json.Marshal(result); err == nil {
 			fmt.Fprintf(w, "event: init\ndata: %s\n\n", data)
@@ -946,6 +953,8 @@ type configExport struct {
 type configExportPrinter struct {
 	Name         string `yaml:"name"`
 	Type         string `yaml:"type"`
+	Model        string `yaml:"model,omitempty"`
+	HideModel    bool   `yaml:"hide_model,omitempty"`
 	URL          string `yaml:"url"`
 	APIKey       string `yaml:"api_key"`
 	Username     string `yaml:"username,omitempty"`
@@ -983,6 +992,8 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 		export.Printers[i] = configExportPrinter{
 			Name:         full.Name,
 			Type:         full.Type,
+			Model:        full.Model,
+			HideModel:    full.HideModel,
 			URL:          full.URL,
 			APIKey:       full.APIKey,
 			Username:     full.Username,
@@ -1030,6 +1041,8 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		p := models.PrinterConfig{
 			Name:         ep.Name,
 			Type:         ep.Type,
+			Model:        ep.Model,
+			HideModel:    ep.HideModel,
 			URL:          ep.URL,
 			APIKey:       ep.APIKey,
 			Username:     ep.Username,
@@ -1150,46 +1163,18 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var printer *models.PrinterConfig
-	if !usingCamera {
-		printer, err = h.db.GetPrinter(id)
-		if err != nil {
-			http.Error(w, "printer not found", http.StatusNotFound)
-			return
-		}
-		if printer.Type == "prusalink" {
-			req.SetBasicAuth(printer.Username, printer.APIKey)
-		} else {
-			req.Header.Set("X-Api-Key", printer.APIKey)
-		}
+	var resp *http.Response
+	if usingCamera {
+		resp, err = h.proxy.Do(req)
+	} else {
+		resp, err = h.poller.AuthenticatedDo(id, h.proxy, req)
 	}
-
-	resp, err := h.proxy.Do(req)
 	if err != nil {
 		h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] failed to fetch from %s: %v", id, snapshotURL, err)
 		http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if !usingCamera && resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		parsed, _ := url.Parse(snapshotURL)
-		resp2, err := h.digestRetry(r, snapshotURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			h.logOnce(fmt.Sprintf("snapshot-err-%d", id), 30*time.Second, "[snapshot:%d] digest auth failed for %s: %v", id, snapshotURL, err)
-			http.Error(w, "failed to fetch snapshot", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "no-cache, no-store")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	if resp.StatusCode != http.StatusOK {
 		h.logOnce(fmt.Sprintf("snapshot-status-%d", id), 30*time.Second, "[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
@@ -1198,16 +1183,6 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	io.Copy(w, resp.Body)
-}
-
-// digestRetry re-issues a GET with a digest Authorization header built from a 401's WWW-Authenticate challenge.
-func (h *Handler) digestRetry(r *http.Request, targetURL, uriPath, username, apiKey, authHeader string) (*http.Response, error) {
-	req2, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req2.Header.Set("Authorization", digestauth.BuildHeader(username, apiKey, http.MethodGet, uriPath, authHeader))
-	return h.proxy.Do(req2)
 }
 
 func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
@@ -1224,47 +1199,18 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	printer, err := h.db.GetPrinter(id)
-	if err != nil {
-		http.Error(w, "printer not found", http.StatusNotFound)
-		return
-	}
-
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if printer.Type == "prusalink" {
-		req.SetBasicAuth(printer.Username, printer.APIKey)
-	} else {
-		req.Header.Set("X-Api-Key", printer.APIKey)
-	}
 
-	resp, err := h.proxy.Do(req)
+	resp, err := h.poller.AuthenticatedDo(id, h.proxy, req)
 	if err != nil {
 		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		parsed, _ := url.Parse(thumbURL)
-		resp2, err := h.digestRetry(r, thumbURL, parsed.Path, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "no-cache")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1302,36 +1248,13 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
 		return
 	}
-	if printer.Type == "prusalink" {
-		req.SetBasicAuth(printer.Username, printer.APIKey)
-	} else {
-		req.Header.Set("X-Api-Key", printer.APIKey)
-	}
 
-	resp, err := h.proxy.Do(req)
+	resp, err := h.poller.AuthenticatedDo(id, h.proxy, req)
 	if err != nil {
 		http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && printer.Type == "prusalink" {
-		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-
-		uriPath := "/" + strings.TrimLeft(thumbPath, "/")
-		resp2, err := h.digestRetry(r, thumbURL, uriPath, printer.Username, printer.APIKey, authHeader)
-		if err != nil {
-			http.Error(w, "failed to fetch thumbnail", http.StatusBadGateway)
-			return
-		}
-		defer resp2.Body.Close()
-		w.Header().Set("Content-Type", resp2.Header.Get("Content-Type"))
-		w.Header().Set("Cache-Control", "max-age=3600")
-		io.Copy(w, resp2.Body)
-		return
-	}
 
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "max-age=3600")
@@ -1369,6 +1292,20 @@ func validateSetting(key, value string) (string, error) {
 		}
 		if n < 3 {
 			n = 3
+		} else if n > 60 {
+			n = 60
+		}
+		return strconv.Itoa(n), nil
+	case "prusalink_ping_interval":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("prusalink_ping_interval must be a number")
+		}
+		if n <= 0 {
+			return "0", nil
+		}
+		if n < 1 {
+			n = 1
 		} else if n > 60 {
 			n = 60
 		}

@@ -90,7 +90,26 @@ function updateHeaderCount() {
 function reloadIdlePrinterRecentPrints() {
     printers.forEach(p => {
         if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
+        loadHistorySummary(p.config.id);
     });
+}
+
+async function loadHistorySummary(printerId) {
+    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
+    if (!card) return;
+    const container = card.querySelector('[data-field="history-summary"]');
+    if (!container) return;
+
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/history`);
+        if (!resp.ok) { container.textContent = ''; return; }
+        const summary = await resp.json();
+        if (!summary || summary.count === 0) {
+            container.textContent = '';
+            return;
+        }
+        container.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
+    } catch (e) { container.textContent = ''; }
 }
 
 async function loadRecentPrints(printerId) {
@@ -334,13 +353,14 @@ function updateDashboard() {
     }
 }
 
-function renderMaintenanceCard(cfg) {
+function renderMaintenanceCard(printer) {
+    const cfg = printer.config;
     return `
         <div class="printer-card card-maintenance" data-printer-id="${cfg.id}" data-state="maintenance">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state state-maintenance">Maintenance</span>
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="idle-message" data-field="idle-msg">In maintenance — polling paused</div>
@@ -350,7 +370,7 @@ function renderMaintenanceCard(cfg) {
 
 function renderPrinterCard(printer) {
     const cfg = printer.config;
-    if (cfg.maintenance) return renderMaintenanceCard(cfg);
+    if (cfg.maintenance) return renderMaintenanceCard(printer);
     const status = printer.status;
     const state = status ? status.state : 'offline';
     const stateClass = `state-${state}`;
@@ -363,9 +383,10 @@ function renderPrinterCard(printer) {
         stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
     }
     const isPrinting = (state === 'printing' || state === 'paused') && status && status.job;
-    // PrusaLink's own webcam integration is snapshot-only, but an assigned
-    // printspy-cam supports live streaming regardless of printer type.
-    const supportsLive = cfg.type !== 'prusalink' || printer.has_camera;
+    // Live streaming needs either a plugin-reported webcam stream URL or an
+    // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
+    // webcam URL of their own).
+    const supportsLive = printer.has_webcam || printer.has_camera;
     const wcMode = supportsLive ? getWebcamMode(cfg.id) : 'snapshot';
     const cardClass = stateCardClass(state);
 
@@ -394,16 +415,19 @@ function renderPrinterCard(printer) {
     if (state === 'idle') {
         recentHTML = `<span class="recent-prints" data-field="recent-prints"></span>`;
     }
+    const historySummaryHTML = `<span class="history-summary" data-field="history-summary"></span>`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
+                ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 ${powerHTML}
                 ${controlHTML}
                 ${recentHTML}
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'} &#8599;</a>
+                ${historySummaryHTML}
+                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper">
@@ -644,6 +668,7 @@ function openSettings() {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
+        document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -961,7 +986,7 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-info">
                     <span class="settings-printer-name">${esc(cfg.name)}</span>
-                    <span class="settings-printer-url">${esc(cfg.url)} (${cfg.type === 'prusalink' ? 'PrusaLink' : 'OctoPrint'})</span>
+                    <span class="settings-printer-url">${esc(cfg.url)} (${esc(p.display_name)})</span>
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
@@ -1023,6 +1048,8 @@ function openAddModal() {
     document.getElementById('modal-title').textContent = 'Add printer';
     document.getElementById('printer-id').value = '';
     document.getElementById('printer-name').value = '';
+    document.getElementById('printer-model').value = '';
+    document.getElementById('printer-hide-model').checked = false;
     document.getElementById('printer-type').value = 'octoprint';
     document.getElementById('printer-url').value = '';
     document.getElementById('printer-username').value = 'maker';
@@ -1042,6 +1069,8 @@ async function openEditModal(id) {
     document.getElementById('modal-title').textContent = 'Edit printer';
     document.getElementById('printer-id').value = cfg.id;
     document.getElementById('printer-name').value = cfg.name;
+    document.getElementById('printer-model').value = cfg.model || '';
+    document.getElementById('printer-hide-model').checked = !!cfg.hide_model;
     document.getElementById('printer-type').value = cfg.type;
     document.getElementById('printer-url').value = cfg.url;
     document.getElementById('printer-apikey').value = '';
@@ -1080,6 +1109,8 @@ async function savePrinter(e) {
     const data = {
         name: document.getElementById('printer-name').value,
         type: printerType,
+        model: document.getElementById('printer-model').value,
+        hide_model: document.getElementById('printer-hide-model').checked,
         url: document.getElementById('printer-url').value.replace(/\/+$/, ''),
         api_key: document.getElementById('printer-apikey').value,
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
@@ -1172,6 +1203,7 @@ async function saveSettings(e) {
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
         recent_files_count: document.getElementById('setting-recent-files').value,
+        prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
     };
     const pollVal = document.getElementById('setting-poll-interval').value;
     if (pollVal) settings.poll_interval = pollVal;

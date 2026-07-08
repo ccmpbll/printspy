@@ -62,7 +62,13 @@ func New(config models.PrinterConfig) *Plugin {
 	}
 }
 
-func (p *Plugin) Type() string { return "octoprint" }
+func (p *Plugin) Type() string        { return "octoprint" }
+func (p *Plugin) DisplayName() string { return "OctoPrint" }
+
+func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.Response, error) {
+	req.Header.Set("X-Api-Key", p.config.APIKey)
+	return client.Do(req)
+}
 
 func (p *Plugin) Connect(ctx context.Context) error {
 	data, err := p.doGet(ctx, "/api/version")

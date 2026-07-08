@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -43,7 +44,44 @@ func New(config models.PrinterConfig) *Plugin {
 	}
 }
 
-func (p *Plugin) Type() string { return "prusalink" }
+func (p *Plugin) Type() string        { return "prusalink" }
+func (p *Plugin) DisplayName() string { return "PrusaLink" }
+
+// AuthenticatedDo tries HTTP Basic first (fast path for callers that don't
+// care which scheme wins) and falls back to Digest if the printer demands
+// it via a 401 challenge - the same dance doGetRaw/doMutate do internally,
+// exposed generically so callers outside this package (proxy handlers) can
+// fetch arbitrary printer resources without knowing PrusaLink's auth
+// scheme at all.
+func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.Response, error) {
+	req.SetBasicAuth(p.config.Username, p.config.APIKey)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusUnauthorized {
+		return resp, nil
+	}
+
+	authHeader := resp.Header.Get("WWW-Authenticate")
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	req2 := req.Clone(req.Context())
+	req2.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.Path, authHeader))
+	return client.Do(req2)
+}
+
+// KeepaliveHost implements plugin.Keepalive - some PrusaLink printers' wifi
+// interfaces have been observed dropping off the network after idle
+// periods, so the poller ICMP-pings them independently of status polling.
+func (p *Plugin) KeepaliveHost() (string, bool) {
+	u, err := url.Parse(p.config.URL)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	return u.Hostname(), true
+}
 
 func (p *Plugin) Connect(ctx context.Context) error {
 	data, err := p.doGet(ctx, "/api/version")
@@ -193,24 +231,35 @@ func (p *Plugin) SetPowerState(ctx context.Context, plugID string, on bool) erro
 }
 
 func (p *Plugin) GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error) {
-	data, err := p.doGet(ctx, "/api/v1/files/local")
-	if err != nil {
-		return nil, err
-	}
-
-	var resp struct {
-		Children []prusalinkFile `json:"children"`
-	}
-	if err := json.Unmarshal(data, &resp); err != nil {
-		var files []prusalinkFile
-		if err := json.Unmarshal(data, &files); err != nil {
-			return nil, err
-		}
-		resp.Children = files
-	}
-
 	var result []models.RecentFile
-	collectFiles(resp.Children, &result)
+	var lastErr error
+
+	// USB is only present when a drive is actually plugged in - a failed
+	// fetch there isn't fatal, just means nothing to list from that storage.
+	for _, storage := range []string{"local", "usb"} {
+		data, err := p.doGet(ctx, "/api/v1/files/"+storage)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var resp struct {
+			Children []prusalinkFile `json:"children"`
+		}
+		if err := json.Unmarshal(data, &resp); err != nil {
+			var files []prusalinkFile
+			if err := json.Unmarshal(data, &files); err != nil {
+				lastErr = err
+				continue
+			}
+			resp.Children = files
+		}
+		collectFiles(resp.Children, storage, &result)
+	}
+
+	if len(result) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
 
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].UploadedAt > result[j].UploadedAt
@@ -235,10 +284,10 @@ type prusalinkFile struct {
 	Children []prusalinkFile `json:"children"`
 }
 
-func collectFiles(files []prusalinkFile, out *[]models.RecentFile) {
+func collectFiles(files []prusalinkFile, origin string, out *[]models.RecentFile) {
 	for _, f := range files {
 		if f.Type == "FOLDER" && len(f.Children) > 0 {
-			collectFiles(f.Children, out)
+			collectFiles(f.Children, origin, out)
 			continue
 		}
 		if f.Type != "PRINT_FILE" {
@@ -251,7 +300,7 @@ func collectFiles(files []prusalinkFile, out *[]models.RecentFile) {
 		rf := models.RecentFile{
 			FileName:      name,
 			Path:          f.Name,
-			Origin:        "local",
+			Origin:        origin,
 			UploadedAt:    f.MTimestamp,
 			SizeMB:        float64(f.Size) / (1024 * 1024),
 			ThumbnailPath: f.Refs.Thumbnail,

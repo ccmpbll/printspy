@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -109,6 +110,53 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 		defer p.wg.Done()
 		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
 	}()
+
+	if kp, ok := pl.(plugin.Keepalive); ok {
+		if host, enabled := kp.KeepaliveHost(); enabled {
+			if pingInterval := p.pingInterval(); pingInterval > 0 {
+				p.wg.Add(1)
+				go func() {
+					defer p.wg.Done()
+					p.keepaliveLoop(ctx, config.ID, config.Name, host, pingInterval)
+				}()
+			}
+		}
+	}
+}
+
+// pingInterval returns the configured keepalive ping interval, or 0 if
+// disabled.
+func (p *Poller) pingInterval() time.Duration {
+	v, err := p.db.GetSetting("prusalink_ping_interval")
+	if err != nil || v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+// keepaliveLoop periodically ICMP-pings a printer's IP, independent of the
+// status poll loop, to keep its wifi interface from dropping off the
+// network during idle periods.
+func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string, interval time.Duration) {
+	log.Printf("starting keepalive ping for printer %d (%s) -> %s every %s", id, name, host, interval)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := pingHost(host, 3*time.Second); err != nil {
+				log.Printf("[printer:%d] keepalive ping to %s failed: %v", id, host, err)
+			}
+		}
+	}
 }
 
 func (p *Poller) RemovePrinter(id int64) {
@@ -148,6 +196,18 @@ func (p *Poller) GetWebcamURL(id int64) string {
 	return ""
 }
 
+// GetDisplayName returns the plugin's human-readable name for its printer
+// type (e.g. "PrusaLink", "OctoPrint"), so callers don't need to hardcode
+// a mapping from config.Type themselves.
+func (p *Poller) GetDisplayName(id int64) string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if pp, ok := p.printers[id]; ok {
+		return pp.plugin.DisplayName()
+	}
+	return ""
+}
+
 func (p *Poller) GetSnapshotURL(id int64) string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -157,6 +217,19 @@ func (p *Poller) GetSnapshotURL(id int64) string {
 	return ""
 }
 
+// AuthenticatedDo proxies req through the printer's plugin, which applies
+// whatever auth scheme that printer type needs - callers don't need to
+// know or care which one.
+func (p *Poller) AuthenticatedDo(id int64, client *http.Client, req *http.Request) (*http.Response, error) {
+	p.mu.RLock()
+	pp, ok := p.printers[id]
+	p.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("printer %d not found", id)
+	}
+	return pp.plugin.AuthenticatedDo(client, req)
+}
+
 func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]models.RecentFile, error) {
 	p.mu.RLock()
 	pp, ok := p.printers[id]
@@ -164,7 +237,46 @@ func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]mod
 	if !ok {
 		return nil, fmt.Errorf("printer %d not found", id)
 	}
-	return pp.plugin.GetRecentFiles(ctx, limit)
+	files, err := pp.plugin.GetRecentFiles(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	p.backfillFileStats(id, files)
+	return files, nil
+}
+
+// backfillFileStats fills success/failure stats from print_history for
+// plugins whose own API doesn't report per-file stats natively (PrusaLink) -
+// OctoPrint's plugin already populates these directly, so files it touched
+// are left alone.
+func (p *Poller) backfillFileStats(id int64, files []models.RecentFile) {
+	var needsBackfill bool
+	for _, f := range files {
+		if f.SuccessCount == 0 && f.FailureCount == 0 && f.LastPrinted == 0 {
+			needsBackfill = true
+			break
+		}
+	}
+	if !needsBackfill {
+		return
+	}
+
+	stats, err := p.db.GetFileHistoryStats(id)
+	if err != nil || len(stats) == 0 {
+		return
+	}
+	for i, f := range files {
+		if f.SuccessCount != 0 || f.FailureCount != 0 || f.LastPrinted != 0 {
+			continue
+		}
+		if stat, ok := stats[f.FileName]; ok {
+			files[i].SuccessCount = stat.SuccessCount
+			files[i].FailureCount = stat.FailureCount
+			files[i].LastPrinted = stat.LastPrinted
+			lastSuccess := stat.LastSuccess
+			files[i].LastSuccess = &lastSuccess
+		}
+	}
 }
 
 func (p *Poller) StartPrint(ctx context.Context, id int64, location, path string) error {
