@@ -1559,7 +1559,7 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "failed to generate api key", http.StatusInternalServerError)
 			return
 		}
-		id, err := h.db.CreateIngestTarget(req.Model, req.Label, apiKey)
+		id, err := h.db.CreateIngestTarget(req.Model, req.Label, apiKey, req.AutoDispatchOnPrintNow)
 		if err != nil {
 			jsonError(w, "failed to create ingest target", http.StatusInternalServerError)
 			return
@@ -1572,8 +1572,9 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 type ingestTargetRequest struct {
-	Model string `json:"model"`
-	Label string `json:"label"`
+	Model                  string `json:"model"`
+	Label                  string `json:"label"`
+	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
 }
 
 func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
@@ -1594,7 +1595,7 @@ func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "model is required", http.StatusBadRequest)
 			return
 		}
-		if err := h.db.UpdateIngestTarget(id, req.Model, req.Label); err != nil {
+		if err := h.db.UpdateIngestTarget(id, req.Model, req.Label, req.AutoDispatchOnPrintNow); err != nil {
 			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)
 			return
 		}
@@ -1696,6 +1697,28 @@ func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobI
 
 	go h.runDispatch(*job, *printer)
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// AutoDispatchIngestJob is ingest.Handler's callback for a Print-After-Upload
+// slicer upload against a target with auto-dispatch enabled and exactly one
+// matching printer (see ingest.Handler.upload). Runs the same claim + dispatch
+// path as a manual dashboard dispatch, just without an HTTP response to
+// report to - errors just land the job in 'failed', same as any other
+// dispatch failure, and surface as a normal banner for someone to retry.
+func (h *Handler) AutoDispatchIngestJob(jobID, printerID int64) {
+	job, err := h.db.GetIngestJob(jobID)
+	if err != nil {
+		return
+	}
+	printer, err := h.db.GetPrinter(printerID)
+	if err != nil {
+		return
+	}
+	claimed, err := h.db.ClaimIngestJobForDispatch(jobID, printerID)
+	if err != nil || !claimed {
+		return
+	}
+	h.runDispatch(*job, *printer)
 }
 
 func plugIsOn(status *models.PrinterStatus, plugID string) bool {

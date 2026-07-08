@@ -833,7 +833,7 @@ function renderSettingsIngestKeyList(targets) {
         <div class="settings-printer-row">
             <div class="settings-printer-info">
                 <span class="settings-printer-name">${esc(t.label || t.model)}</span>
-                <span class="settings-printer-url">Model: ${esc(t.model)} — Host: ${esc(location.origin)}/ingest/${t.id}</span>
+                <span class="settings-printer-url">Model: ${esc(t.model)} — Host: ${esc(location.origin)}/ingest/${t.id}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
@@ -847,6 +847,7 @@ function openAddIngestKeyModal() {
     document.getElementById('ingestkey-id').value = '';
     document.getElementById('ingestkey-model').value = '';
     document.getElementById('ingestkey-label').value = '';
+    document.getElementById('ingestkey-auto-dispatch').checked = false;
     const result = document.getElementById('ingestkey-result');
     result.style.display = 'none';
     result.textContent = '';
@@ -860,6 +861,7 @@ function openEditIngestKeyModal(id) {
     document.getElementById('ingestkey-id').value = target.id;
     document.getElementById('ingestkey-model').value = target.model;
     document.getElementById('ingestkey-label').value = target.label;
+    document.getElementById('ingestkey-auto-dispatch').checked = !!target.auto_dispatch_on_print_now;
     const result = document.getElementById('ingestkey-result');
     result.className = 'test-result success';
     result.style.display = 'block';
@@ -873,6 +875,7 @@ async function saveIngestKey(e) {
     const data = {
         model: document.getElementById('ingestkey-model').value,
         label: document.getElementById('ingestkey-label').value,
+        auto_dispatch_on_print_now: document.getElementById('ingestkey-auto-dispatch').checked,
     };
     try {
         const resp = id

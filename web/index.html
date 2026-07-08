@@ -243,6 +243,13 @@
                     <label for="ingestkey-label">Label</label>
                     <input type="text" id="ingestkey-label" placeholder="Optional">
                 </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="ingestkey-auto-dispatch" style="width:auto">
+                        Auto power-on and print when slicer requests "Print now"
+                    </label>
+                    <div class="form-hint">Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.</div>
+                </div>
                 <div class="test-result" id="ingestkey-result"></div>
                 <div class="form-actions">
                     <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>

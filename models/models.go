@@ -146,11 +146,17 @@ type User struct {
 // "Send to printer" against. A human later dispatches a staged IngestJob to
 // any one specific printer matching that model.
 type IngestTarget struct {
-	ID        int64  `json:"id"`
-	Model     string `json:"model"`
-	Label     string `json:"label"`
-	APIKey    string `json:"api_key"`
-	CreatedAt string `json:"created_at"`
+	ID     int64  `json:"id"`
+	Model  string `json:"model"`
+	Label  string `json:"label"`
+	APIKey string `json:"api_key"`
+	// AutoDispatchOnPrintNow: when a slicer upload requests Print-After-Upload
+	// and exactly one enabled, non-maintenance printer matches this target's
+	// model, skip the staged banner and dispatch immediately. Ambiguous
+	// matches (2+ printers sharing the model) always fall back to the manual
+	// banner - there's no way to auto-pick which physical printer to wake.
+	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
+	CreatedAt              string `json:"created_at"`
 }
 
 // IngestJob is a file staged by a slicer against an IngestTarget, awaiting

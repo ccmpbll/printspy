@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/models"
 )
 
 const maxUploadBytes = 200 << 20
@@ -25,10 +26,19 @@ const maxUploadBytes = 200 << 20
 type Handler struct {
 	db      *db.DB
 	dataDir string
+	// dispatch triggers the same claim+power-on+relay path a manual
+	// dashboard dispatch uses. Set via SetDispatchFunc once api.Handler
+	// exists - main.go wires the two together, since ingest has no direct
+	// dependency on the poller-backed dispatch logic otherwise.
+	dispatch func(jobID, printerID int64)
 }
 
 func New(database *db.DB, dataDir string) *Handler {
 	return &Handler{db: database, dataDir: dataDir}
+}
+
+func (h *Handler) SetDispatchFunc(f func(jobID, printerID int64)) {
+	h.dispatch = f
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -63,7 +73,7 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) {
 	case rest == "api/version":
 		h.version(w, r)
 	case strings.HasPrefix(rest, "api/v1/files/"):
-		h.upload(w, r, target.ID, strings.TrimPrefix(rest, "api/v1/files/"))
+		h.upload(w, r, target, strings.TrimPrefix(rest, "api/v1/files/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -90,7 +100,7 @@ func (h *Handler) version(w http.ResponseWriter, r *http.Request) {
 // but ignored - the real relay to the target printer always uses "usb"
 // (plugin/prusalink's UploadFile already enforces this; PrusaLink's internal
 // flash storage is read-only over the network API regardless of auth).
-func (h *Handler) upload(w http.ResponseWriter, r *http.Request, targetID int64, storagePath string) {
+func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.IngestTarget, storagePath string) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -111,7 +121,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, targetID int64,
 
 	printAfter := r.Header.Get("Print-After-Upload") == "?1"
 
-	jobID, err := h.db.CreateIngestJob(targetID, filename, printAfter, int64(len(data)))
+	jobID, err := h.db.CreateIngestJob(target.ID, filename, printAfter, int64(len(data)))
 	if err != nil {
 		http.Error(w, "failed to stage job", http.StatusInternalServerError)
 		return
@@ -136,5 +146,37 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, targetID int64,
 		return
 	}
 
+	if target.AutoDispatchOnPrintNow && printAfter {
+		h.maybeAutoDispatch(jobID, target.Model)
+	}
+
 	w.WriteHeader(http.StatusCreated)
+}
+
+// maybeAutoDispatch fires the dispatch callback only when exactly one
+// enabled, non-maintenance printer matches model - with 2+ matches there's
+// no way to auto-pick which physical printer to wake, so the job is left
+// staged for a human to resolve via the normal dashboard banner.
+func (h *Handler) maybeAutoDispatch(jobID int64, model string) {
+	if h.dispatch == nil {
+		return
+	}
+	printers, err := h.db.ListPrinters()
+	if err != nil {
+		return
+	}
+	var match *models.PrinterConfig
+	for i, p := range printers {
+		if p.Model != model || !p.Enabled || p.Maintenance {
+			continue
+		}
+		if match != nil {
+			return // ambiguous - 2+ printers share this model
+		}
+		match = &printers[i]
+	}
+	if match == nil {
+		return
+	}
+	h.dispatch(jobID, match.ID)
 }

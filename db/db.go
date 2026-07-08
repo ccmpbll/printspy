@@ -102,6 +102,7 @@ func (db *DB) migrate() error {
 			model TEXT NOT NULL,
 			label TEXT NOT NULL DEFAULT '',
 			api_key TEXT NOT NULL,
+			auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -149,6 +150,9 @@ func (db *DB) migrate() error {
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN idle_timeout_minutes INTEGER NOT NULL DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_bed_temp REAL NOT NULL DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_extruder_temp REAL NOT NULL DEFAULT 0`)
+
+	// Migration: add auto_dispatch_on_print_now column to ingest_targets if missing
+	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0`)
 
 	return nil
 }
@@ -648,43 +652,50 @@ func (db *DB) DeleteSessionsForUser(username string) error {
 
 // Ingest targets — slicer print-host buckets, one per printer model.
 
+const ingestTargetSelect = `SELECT id, model, label, api_key, auto_dispatch_on_print_now, created_at FROM ingest_targets`
+
+func scanIngestTarget(row interface{ Scan(...any) error }) (*models.IngestTarget, error) {
+	var t models.IngestTarget
+	var autoDispatch int
+	if err := row.Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
+		return nil, err
+	}
+	t.AutoDispatchOnPrintNow = autoDispatch == 1
+	return &t, nil
+}
+
 func (db *DB) ListIngestTargets() ([]models.IngestTarget, error) {
-	rows, err := db.conn.Query(`SELECT id, model, label, api_key, created_at FROM ingest_targets ORDER BY id`)
+	rows, err := db.conn.Query(ingestTargetSelect + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var targets []models.IngestTarget
 	for rows.Next() {
-		var t models.IngestTarget
-		if err := rows.Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &t.CreatedAt); err != nil {
+		t, err := scanIngestTarget(rows)
+		if err != nil {
 			return nil, err
 		}
-		targets = append(targets, t)
+		targets = append(targets, *t)
 	}
 	return targets, rows.Err()
 }
 
 func (db *DB) GetIngestTarget(id int64) (*models.IngestTarget, error) {
-	var t models.IngestTarget
-	err := db.conn.QueryRow(`SELECT id, model, label, api_key, created_at FROM ingest_targets WHERE id = ?`, id).
-		Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &t.CreatedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
+	return scanIngestTarget(db.conn.QueryRow(ingestTargetSelect+` WHERE id = ?`, id))
 }
 
-func (db *DB) CreateIngestTarget(model, label, apiKey string) (int64, error) {
-	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, label, api_key) VALUES (?, ?, ?)`, model, label, apiKey)
+func (db *DB) CreateIngestTarget(model, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, label, api_key, auto_dispatch_on_print_now) VALUES (?, ?, ?, ?)`,
+		model, label, apiKey, autoDispatchOnPrintNow)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateIngestTarget(id int64, model, label string) error {
-	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, label=? WHERE id=?`, model, label, id)
+func (db *DB) UpdateIngestTarget(id int64, model, label string, autoDispatchOnPrintNow bool) error {
+	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, label=?, auto_dispatch_on_print_now=? WHERE id=?`, model, label, autoDispatchOnPrintNow, id)
 	return err
 }
 

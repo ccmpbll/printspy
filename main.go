@@ -59,6 +59,9 @@ func main() {
 	handler.RegisterRoutes(mux)
 
 	ingestHandler := ingest.New(database, dataDir)
+	ingestHandler.SetDispatchFunc(func(jobID, printerID int64) {
+		go handler.AutoDispatchIngestJob(jobID, printerID)
+	})
 	ingestHandler.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
