@@ -31,6 +31,12 @@ type Handler struct {
 	// exists - main.go wires the two together, since ingest has no direct
 	// dependency on the poller-backed dispatch logic otherwise.
 	dispatch func(jobID, printerID int64)
+	// broadcast pings connected dashboards to reload ingest jobs. Without
+	// this, a job staged by a slicer upload sits invisible until something
+	// else happens to trigger a refresh (a poll-driven state change, or a
+	// manual page reload) - the dashboard has no other signal that a new
+	// job exists.
+	broadcast func()
 }
 
 func New(database *db.DB, dataDir string) *Handler {
@@ -39,6 +45,10 @@ func New(database *db.DB, dataDir string) *Handler {
 
 func (h *Handler) SetDispatchFunc(f func(jobID, printerID int64)) {
 	h.dispatch = f
+}
+
+func (h *Handler) SetBroadcastFunc(f func()) {
+	h.broadcast = f
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -144,6 +154,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 	if err := h.db.SetIngestJobFilePath(jobID, filePath); err != nil {
 		http.Error(w, "failed to stage job", http.StatusInternalServerError)
 		return
+	}
+
+	if h.broadcast != nil {
+		h.broadcast()
 	}
 
 	if target.AutoDispatchOnPrintNow && printAfter {

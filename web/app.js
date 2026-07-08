@@ -1720,7 +1720,7 @@ function renderIngestBanners() {
             const banner = document.createElement('div');
             banner.className = 'ingest-banner';
             banner.innerHTML = `
-                <span>&#128196; ${esc(job.filename)} staged for ${esc(cfg.name)}${job.error ? ` — <span class="msg-error">${esc(job.error)}</span>` : ''}</span>
+                <span>&#128196; ${esc(job.filename)} staged for ${esc(cfg.name)} — Dispatch here to print now${job.error ? ` — <span class="msg-error">${esc(job.error)}</span>` : ''}</span>
                 <div class="ingest-banner-actions">
                     <button class="btn btn-sm btn-primary" onclick="dispatchIngestJob(${job.id}, ${cfg.id})">Dispatch here</button>
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>

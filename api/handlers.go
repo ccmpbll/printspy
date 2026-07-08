@@ -1862,7 +1862,12 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 		h.db.SetIngestJobFailed(job.ID, "failed to read staged file: "+err.Error())
 		return
 	}
-	if err := h.poller.UploadFile(h.ctx, printer.ID, "usb", job.Filename, data, job.PrintAfter); err != nil {
+	// Dispatch - auto or manual - always means "print this now". job.PrintAfter
+	// only gates whether ingest.Handler skipped the human staging step
+	// (see maybeAutoDispatch); a plain Upload from the slicer just stages
+	// the file for a human to later hit Dispatch here on, which is itself
+	// the print decision.
+	if err := h.poller.UploadFile(h.ctx, printer.ID, "usb", job.Filename, data, true); err != nil {
 		h.db.SetIngestJobFailed(job.ID, err.Error())
 		return
 	}
