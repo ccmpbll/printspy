@@ -142,19 +142,23 @@ type User struct {
 	CreatedAt    string `json:"created_at"`
 }
 
-// IngestTarget is a slicer print-host target: a model bucket a slicer can
-// "Send to printer" against. A human later dispatches a staged IngestJob to
-// any one specific printer matching that model.
+// IngestTarget is a slicer print-host target. Exactly one of Model or
+// PrinterID applies: a model bucket (Model set, PrinterID nil) that a human
+// later dispatches to any one printer sharing that model, or a target pinned
+// to one specific printer (PrinterID set) with no ambiguity to resolve at
+// dispatch time.
 type IngestTarget struct {
-	ID     int64  `json:"id"`
-	Model  string `json:"model"`
-	Label  string `json:"label"`
-	APIKey string `json:"api_key"`
-	// AutoDispatchOnPrintNow: when a slicer upload requests Print-After-Upload
-	// and exactly one enabled, non-maintenance printer matches this target's
-	// model, skip the staged banner and dispatch immediately. Ambiguous
-	// matches (2+ printers sharing the model) always fall back to the manual
-	// banner - there's no way to auto-pick which physical printer to wake.
+	ID        int64  `json:"id"`
+	Model     string `json:"model,omitempty"`
+	PrinterID *int64 `json:"printer_id,omitempty"`
+	Label     string `json:"label"`
+	APIKey    string `json:"api_key"`
+	// AutoDispatchOnPrintNow: when a slicer upload requests Print-After-Upload,
+	// skip the staged banner and dispatch immediately. For a PrinterID-pinned
+	// target this always applies (no ambiguity). For a Model-bucket target,
+	// only when exactly one enabled, non-maintenance printer currently matches
+	// - 2+ matches always fall back to the manual banner, since there's no way
+	// to auto-pick which physical printer to wake.
 	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
 	CreatedAt              string `json:"created_at"`
 }
@@ -162,9 +166,13 @@ type IngestTarget struct {
 // IngestJob is a file staged by a slicer against an IngestTarget, awaiting
 // dispatch to a specific printer.
 type IngestJob struct {
-	ID              int64  `json:"id"`
-	IngestTargetID  int64  `json:"ingest_target_id"`
-	Model           string `json:"model"`
+	ID             int64  `json:"id"`
+	IngestTargetID int64  `json:"ingest_target_id"`
+	Model          string `json:"model"`
+	// PinnedPrinterID mirrors the target's PrinterID at staging time (nil for
+	// a model-bucket target) - the printer to dispatch to, with no matching
+	// needed.
+	PinnedPrinterID *int64 `json:"pinned_printer_id,omitempty"`
 	Filename        string `json:"filename"`
 	FilePath        string `json:"-"`
 	PrintAfter      bool   `json:"print_after"`

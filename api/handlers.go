@@ -1550,8 +1550,8 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.Model == "" {
-			jsonError(w, "model is required", http.StatusBadRequest)
+		if err := req.validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		apiKey, err := newSessionToken()
@@ -1559,7 +1559,7 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "failed to generate api key", http.StatusInternalServerError)
 			return
 		}
-		id, err := h.db.CreateIngestTarget(req.Model, req.Label, apiKey, req.AutoDispatchOnPrintNow)
+		id, err := h.db.CreateIngestTarget(req.Model, req.PrinterID, req.Label, apiKey, req.AutoDispatchOnPrintNow)
 		if err != nil {
 			jsonError(w, "failed to create ingest target", http.StatusInternalServerError)
 			return
@@ -1571,10 +1571,24 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ingestTargetRequest requires exactly one of Model (a model bucket, matched
+// against any printer sharing it) or PrinterID (pinned to one specific
+// printer, no ambiguity to resolve at dispatch time).
 type ingestTargetRequest struct {
 	Model                  string `json:"model"`
+	PrinterID              *int64 `json:"printer_id"`
 	Label                  string `json:"label"`
 	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
+}
+
+func (r ingestTargetRequest) validate() error {
+	if r.Model == "" && r.PrinterID == nil {
+		return fmt.Errorf("model or printer_id is required")
+	}
+	if r.Model != "" && r.PrinterID != nil {
+		return fmt.Errorf("specify model or printer_id, not both")
+	}
+	return nil
 }
 
 func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
@@ -1591,11 +1605,11 @@ func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.Model == "" {
-			jsonError(w, "model is required", http.StatusBadRequest)
+		if err := req.validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := h.db.UpdateIngestTarget(id, req.Model, req.Label, req.AutoDispatchOnPrintNow); err != nil {
+		if err := h.db.UpdateIngestTarget(id, req.Model, req.PrinterID, req.Label, req.AutoDispatchOnPrintNow); err != nil {
 			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)
 			return
 		}
@@ -1680,7 +1694,12 @@ func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobI
 		jsonError(w, "printer not found", http.StatusNotFound)
 		return
 	}
-	if printer.Model != job.Model {
+	if job.PinnedPrinterID != nil {
+		if *job.PinnedPrinterID != req.PrinterID {
+			jsonError(w, "this job is pinned to a different printer", http.StatusBadRequest)
+			return
+		}
+	} else if printer.Model != job.Model {
 		jsonError(w, "printer model does not match this job's target model", http.StatusBadRequest)
 		return
 	}

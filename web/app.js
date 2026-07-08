@@ -829,25 +829,55 @@ function renderSettingsIngestKeyList(targets) {
         list.innerHTML = '<div class="settings-empty">No slicer print targets configured yet.</div>';
         return;
     }
-    list.innerHTML = targets.map(t => `
+    list.innerHTML = targets.map(t => {
+        const boundTo = t.printer_id
+            ? `Printer: ${esc(printerName(t.printer_id) || `#${t.printer_id}`)}`
+            : `Model: ${esc(t.model)}`;
+        return `
         <div class="settings-printer-row">
             <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(t.label || t.model)}</span>
-                <span class="settings-printer-url">Model: ${esc(t.model)} — Host: ${esc(location.origin)}/ingest/${t.id}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
+                <span class="settings-printer-name">${esc(t.label || t.model || printerName(t.printer_id) || 'Untitled')}</span>
+                <span class="settings-printer-url">${boundTo} — Host: ${esc(location.origin)}/ingest/${t.id}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmDelete(this, () => deleteIngestKey(${t.id}))">Delete</button>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
+}
+
+function printerName(printerID) {
+    const p = printers.find(p => p.config.id === printerID);
+    return p ? p.config.name : '';
+}
+
+function populateIngestKeyPrinterOptions(selectedId) {
+    const select = document.getElementById('ingestkey-printer');
+    select.innerHTML = printers
+        .filter(p => p.config.type === 'prusalink')
+        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
+        .join('');
+}
+
+function onIngestKeyBindModeChange() {
+    const isPrinter = document.getElementById('ingestkey-bind-mode').value === 'printer';
+    document.getElementById('ingestkey-model-group').style.display = isPrinter ? 'none' : '';
+    document.getElementById('ingestkey-printer-group').style.display = isPrinter ? '' : 'none';
+    document.getElementById('ingestkey-auto-dispatch-hint').textContent = isPrinter
+        ? 'Fires every time — a pinned target has no ambiguity to resolve.'
+        : 'Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.';
 }
 
 function openAddIngestKeyModal() {
     document.getElementById('ingestkey-modal-title').textContent = 'Add slicer print target';
     document.getElementById('ingestkey-id').value = '';
+    document.getElementById('ingestkey-bind-mode').value = 'model';
     document.getElementById('ingestkey-model').value = '';
+    populateIngestKeyPrinterOptions(null);
     document.getElementById('ingestkey-label').value = '';
     document.getElementById('ingestkey-auto-dispatch').checked = false;
+    onIngestKeyBindModeChange();
     const result = document.getElementById('ingestkey-result');
     result.style.display = 'none';
     result.textContent = '';
@@ -859,9 +889,12 @@ function openEditIngestKeyModal(id) {
     if (!target) return;
     document.getElementById('ingestkey-modal-title').textContent = 'Edit slicer print target';
     document.getElementById('ingestkey-id').value = target.id;
-    document.getElementById('ingestkey-model').value = target.model;
+    document.getElementById('ingestkey-bind-mode').value = target.printer_id ? 'printer' : 'model';
+    document.getElementById('ingestkey-model').value = target.model || '';
+    populateIngestKeyPrinterOptions(target.printer_id || null);
     document.getElementById('ingestkey-label').value = target.label;
     document.getElementById('ingestkey-auto-dispatch').checked = !!target.auto_dispatch_on_print_now;
+    onIngestKeyBindModeChange();
     const result = document.getElementById('ingestkey-result');
     result.className = 'test-result success';
     result.style.display = 'block';
@@ -872,8 +905,10 @@ function openEditIngestKeyModal(id) {
 async function saveIngestKey(e) {
     e.preventDefault();
     const id = document.getElementById('ingestkey-id').value;
+    const isPrinter = document.getElementById('ingestkey-bind-mode').value === 'printer';
     const data = {
-        model: document.getElementById('ingestkey-model').value,
+        model: isPrinter ? '' : document.getElementById('ingestkey-model').value,
+        printer_id: isPrinter ? parseInt(document.getElementById('ingestkey-printer').value) : null,
         label: document.getElementById('ingestkey-label').value,
         auto_dispatch_on_print_now: document.getElementById('ingestkey-auto-dispatch').checked,
     };
@@ -1582,10 +1617,10 @@ function renderIngestBanners() {
 
     for (const printer of printers) {
         const cfg = printer.config;
-        if (!cfg.model) continue;
         const card = document.querySelector(`[data-printer-id="${cfg.id}"]`);
         if (!card) continue;
-        const jobs = ingestJobs.filter(j => j.model === cfg.model && j.status !== 'dispatching');
+        const jobs = ingestJobs.filter(j => j.status !== 'dispatching' &&
+            (j.pinned_printer_id ? j.pinned_printer_id === cfg.id : cfg.model && j.model === cfg.model));
         if (!jobs.length) continue;
 
         for (const job of jobs) {

@@ -147,27 +147,34 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 	}
 
 	if target.AutoDispatchOnPrintNow && printAfter {
-		h.maybeAutoDispatch(jobID, target.Model)
+		h.maybeAutoDispatch(jobID, target)
 	}
 
 	w.WriteHeader(http.StatusCreated)
 }
 
-// maybeAutoDispatch fires the dispatch callback only when exactly one
-// enabled, non-maintenance printer matches model - with 2+ matches there's
-// no way to auto-pick which physical printer to wake, so the job is left
-// staged for a human to resolve via the normal dashboard banner.
-func (h *Handler) maybeAutoDispatch(jobID int64, model string) {
+// maybeAutoDispatch fires the dispatch callback for a PrinterID-pinned
+// target unconditionally (no ambiguity to resolve), or for a Model-bucket
+// target only when exactly one enabled, non-maintenance printer currently
+// matches - with 2+ matches there's no way to auto-pick which physical
+// printer to wake, so the job is left staged for a human to resolve via the
+// normal dashboard banner.
+func (h *Handler) maybeAutoDispatch(jobID int64, target *models.IngestTarget) {
 	if h.dispatch == nil {
 		return
 	}
+	if target.PrinterID != nil {
+		h.dispatch(jobID, *target.PrinterID)
+		return
+	}
+
 	printers, err := h.db.ListPrinters()
 	if err != nil {
 		return
 	}
 	var match *models.PrinterConfig
 	for i, p := range printers {
-		if p.Model != model || !p.Enabled || p.Maintenance {
+		if p.Model != target.Model || !p.Enabled || p.Maintenance {
 			continue
 		}
 		if match != nil {

@@ -99,11 +99,13 @@ func (db *DB) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS ingest_targets (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			model TEXT NOT NULL,
+			model TEXT NOT NULL DEFAULT '',
+			printer_id INTEGER,
 			label TEXT NOT NULL DEFAULT '',
 			api_key TEXT NOT NULL,
 			auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
 
 		CREATE TABLE IF NOT EXISTS ingest_jobs (
@@ -153,6 +155,10 @@ func (db *DB) migrate() error {
 
 	// Migration: add auto_dispatch_on_print_now column to ingest_targets if missing
 	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0`)
+
+	// Migration: add printer_id column to ingest_targets if missing - lets a
+	// target bind to one specific printer instead of a model bucket
+	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN printer_id INTEGER`)
 
 	return nil
 }
@@ -652,15 +658,19 @@ func (db *DB) DeleteSessionsForUser(username string) error {
 
 // Ingest targets — slicer print-host buckets, one per printer model.
 
-const ingestTargetSelect = `SELECT id, model, label, api_key, auto_dispatch_on_print_now, created_at FROM ingest_targets`
+const ingestTargetSelect = `SELECT id, model, printer_id, label, api_key, auto_dispatch_on_print_now, created_at FROM ingest_targets`
 
 func scanIngestTarget(row interface{ Scan(...any) error }) (*models.IngestTarget, error) {
 	var t models.IngestTarget
 	var autoDispatch int
-	if err := row.Scan(&t.ID, &t.Model, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
+	var printerID sql.NullInt64
+	if err := row.Scan(&t.ID, &t.Model, &printerID, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
 		return nil, err
 	}
 	t.AutoDispatchOnPrintNow = autoDispatch == 1
+	if printerID.Valid {
+		t.PrinterID = &printerID.Int64
+	}
 	return &t, nil
 }
 
@@ -685,17 +695,18 @@ func (db *DB) GetIngestTarget(id int64) (*models.IngestTarget, error) {
 	return scanIngestTarget(db.conn.QueryRow(ingestTargetSelect+` WHERE id = ?`, id))
 }
 
-func (db *DB) CreateIngestTarget(model, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {
-	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, label, api_key, auto_dispatch_on_print_now) VALUES (?, ?, ?, ?)`,
-		model, label, apiKey, autoDispatchOnPrintNow)
+func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, printer_id, label, api_key, auto_dispatch_on_print_now) VALUES (?, ?, ?, ?, ?)`,
+		model, printerID, label, apiKey, autoDispatchOnPrintNow)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateIngestTarget(id int64, model, label string, autoDispatchOnPrintNow bool) error {
-	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, label=?, auto_dispatch_on_print_now=? WHERE id=?`, model, label, autoDispatchOnPrintNow, id)
+func (db *DB) UpdateIngestTarget(id int64, model string, printerID *int64, label string, autoDispatchOnPrintNow bool) error {
+	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, printer_id=?, label=?, auto_dispatch_on_print_now=? WHERE id=?`,
+		model, printerID, label, autoDispatchOnPrintNow, id)
 	return err
 }
 
@@ -707,7 +718,7 @@ func (db *DB) DeleteIngestTarget(id int64) error {
 // Ingest jobs — files staged by a slicer, awaiting dispatch to a printer.
 
 const ingestJobSelect = `
-	SELECT j.id, j.ingest_target_id, t.model, j.filename, j.file_path, j.print_after, j.size_bytes, j.status, j.error, j.target_printer_id, j.created_at
+	SELECT j.id, j.ingest_target_id, t.model, t.printer_id, j.filename, j.file_path, j.print_after, j.size_bytes, j.status, j.error, j.target_printer_id, j.created_at
 	FROM ingest_jobs j JOIN ingest_targets t ON t.id = j.ingest_target_id
 `
 
@@ -716,11 +727,14 @@ func scanIngestJobs(rows *sql.Rows) ([]models.IngestJob, error) {
 	for rows.Next() {
 		var j models.IngestJob
 		var printAfter int
-		var targetPrinterID sql.NullInt64
-		if err := rows.Scan(&j.ID, &j.IngestTargetID, &j.Model, &j.Filename, &j.FilePath, &printAfter, &j.SizeBytes, &j.Status, &j.Error, &targetPrinterID, &j.CreatedAt); err != nil {
+		var pinnedPrinterID, targetPrinterID sql.NullInt64
+		if err := rows.Scan(&j.ID, &j.IngestTargetID, &j.Model, &pinnedPrinterID, &j.Filename, &j.FilePath, &printAfter, &j.SizeBytes, &j.Status, &j.Error, &targetPrinterID, &j.CreatedAt); err != nil {
 			return nil, err
 		}
 		j.PrintAfter = printAfter == 1
+		if pinnedPrinterID.Valid {
+			j.PinnedPrinterID = &pinnedPrinterID.Int64
+		}
 		if targetPrinterID.Valid {
 			j.TargetPrinterID = &targetPrinterID.Int64
 		}

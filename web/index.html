@@ -235,9 +235,21 @@
             <form id="ingestkey-form" onsubmit="saveIngestKey(event)">
                 <input type="hidden" id="ingestkey-id" value="">
                 <div class="form-group">
+                    <label for="ingestkey-bind-mode">Bind to</label>
+                    <select id="ingestkey-bind-mode" onchange="onIngestKeyBindModeChange()">
+                        <option value="model">Model bucket</option>
+                        <option value="printer">Specific printer</option>
+                    </select>
+                </div>
+                <div class="form-group" id="ingestkey-model-group">
                     <label for="ingestkey-model">Model</label>
-                    <input type="text" id="ingestkey-model" placeholder="e.g. Core One, MK4S" required>
+                    <input type="text" id="ingestkey-model" placeholder="e.g. Core One, MK4S">
                     <div class="form-hint">Matches the Model field on printers — a job staged here can be dispatched to any printer sharing this model.</div>
+                </div>
+                <div class="form-group" id="ingestkey-printer-group" style="display:none">
+                    <label for="ingestkey-printer">Printer</label>
+                    <select id="ingestkey-printer"></select>
+                    <div class="form-hint">A job staged here always dispatches to this one printer — no ambiguity to resolve.</div>
                 </div>
                 <div class="form-group">
                     <label for="ingestkey-label">Label</label>
@@ -248,7 +260,7 @@
                         <input type="checkbox" id="ingestkey-auto-dispatch" style="width:auto">
                         Auto power-on and print when slicer requests "Print now"
                     </label>
-                    <div class="form-hint">Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.</div>
+                    <div class="form-hint" id="ingestkey-auto-dispatch-hint">Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.</div>
                 </div>
                 <div class="test-result" id="ingestkey-result"></div>
                 <div class="form-actions">
