@@ -228,6 +228,49 @@
         </div>
     </div>
 
+    <!-- Add/Edit Ingest Key Modal -->
+    <div class="modal-overlay" id="ingestkey-modal">
+        <div class="modal">
+            <h2 id="ingestkey-modal-title">Add slicer print target</h2>
+            <form id="ingestkey-form" onsubmit="saveIngestKey(event)">
+                <input type="hidden" id="ingestkey-id" value="">
+                <div class="form-group">
+                    <label for="ingestkey-bind-mode">Bind to</label>
+                    <select id="ingestkey-bind-mode" onchange="onIngestKeyBindModeChange()">
+                        <option value="model">Model bucket</option>
+                        <option value="printer">Specific printer</option>
+                    </select>
+                </div>
+                <div class="form-group" id="ingestkey-model-group">
+                    <label for="ingestkey-model">Model</label>
+                    <input type="text" id="ingestkey-model" placeholder="e.g. Core One, MK4S">
+                    <div class="form-hint">Matches the Model field on printers — a job staged here can be dispatched to any printer sharing this model.</div>
+                </div>
+                <div class="form-group" id="ingestkey-printer-group" style="display:none">
+                    <label for="ingestkey-printer">Printer</label>
+                    <select id="ingestkey-printer"></select>
+                    <div class="form-hint">A job staged here always dispatches to this one printer — no ambiguity to resolve.</div>
+                </div>
+                <div class="form-group">
+                    <label for="ingestkey-label">Label</label>
+                    <input type="text" id="ingestkey-label" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                        <input type="checkbox" id="ingestkey-auto-dispatch" style="width:auto">
+                        Auto power-on and print when slicer requests "Print now"
+                    </label>
+                    <div class="form-hint" id="ingestkey-auto-dispatch-hint">Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.</div>
+                </div>
+                <div class="test-result" id="ingestkey-result"></div>
+                <div class="form-actions">
+                    <button type="button" class="btn" onclick="closeModal();openSettings()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settings-modal">
         <div class="modal modal-wide">
@@ -251,6 +294,13 @@
                 <div class="form-hint">Standalone printspy-cam device, independent of printer type. Add one, then assign it to any printer.</div>
                 <div id="settings-camera-list" style="margin-top:0.5rem"></div>
                 <button class="btn btn-primary" onclick="closeModal();openAddCameraModal()" style="margin-top:0.75rem">+ Add camera</button>
+            </div>
+
+            <div class="settings-section">
+                <h3>Slicer print targets</h3>
+                <div class="form-hint">Lets PrusaSlicer/OrcaSlicer's "Send to printer" (Physical Printer, PrusaLink mode) stage a file here for a model bucket. Dispatch a staged job to a specific printer from its dashboard card.</div>
+                <div id="settings-ingestkey-list" style="margin-top:0.5rem"></div>
+                <button class="btn btn-primary" onclick="closeModal();openAddIngestKeyModal()" style="margin-top:0.75rem">+ Add print target</button>
             </div>
 
             <div class="settings-section">

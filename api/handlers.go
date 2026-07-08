@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,6 +90,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smartplugs/", h.handleSmartPlugByID)
 	mux.HandleFunc("/api/cameras", h.handleCameras)
 	mux.HandleFunc("/api/cameras/", h.handleCameraByID)
+	mux.HandleFunc("/api/ingest-keys", h.handleIngestKeys)
+	mux.HandleFunc("/api/ingest-keys/", h.handleIngestKeyByID)
+	mux.HandleFunc("/api/ingest-jobs", h.handleIngestJobs)
+	mux.HandleFunc("/api/ingest-jobs/", h.handleIngestJobByID)
 }
 
 func (h *Handler) handlePrinters(w http.ResponseWriter, r *http.Request) {
@@ -1521,6 +1527,277 @@ func validateTempSetting(key, value string, max float64) (string, error) {
 		n = max
 	}
 	return strconv.FormatFloat(n, 'f', -1, 64), nil
+}
+
+// Ingest targets/jobs — slicer print-host target admin API.
+// See ingest.Handler for the slicer-facing (X-Api-Key authenticated) side.
+
+const dispatchOnlineTimeout = 90 * time.Second
+
+func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		targets, err := h.db.ListIngestTargets()
+		if err != nil {
+			jsonError(w, "failed to list ingest targets", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, targets)
+
+	case http.MethodPost:
+		var req ingestTargetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := req.validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		apiKey, err := newSessionToken()
+		if err != nil {
+			jsonError(w, "failed to generate api key", http.StatusInternalServerError)
+			return
+		}
+		id, err := h.db.CreateIngestTarget(req.Model, req.PrinterID, req.Label, apiKey, req.AutoDispatchOnPrintNow)
+		if err != nil {
+			jsonError(w, "failed to create ingest target", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, map[string]any{"id": id, "api_key": apiKey})
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// ingestTargetRequest requires exactly one of Model (a model bucket, matched
+// against any printer sharing it) or PrinterID (pinned to one specific
+// printer, no ambiguity to resolve at dispatch time).
+type ingestTargetRequest struct {
+	Model                  string `json:"model"`
+	PrinterID              *int64 `json:"printer_id"`
+	Label                  string `json:"label"`
+	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
+}
+
+func (r ingestTargetRequest) validate() error {
+	if r.Model == "" && r.PrinterID == nil {
+		return fmt.Errorf("model or printer_id is required")
+	}
+	if r.Model != "" && r.PrinterID != nil {
+		return fmt.Errorf("specify model or printer_id, not both")
+	}
+	return nil
+}
+
+func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/ingest-keys/"), 10, 64)
+	if err != nil {
+		jsonError(w, "invalid ingest target id", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		var req ingestTargetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := req.validate(); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := h.db.UpdateIngestTarget(id, req.Model, req.PrinterID, req.Label, req.AutoDispatchOnPrintNow); err != nil {
+			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	case http.MethodDelete:
+		if err := h.db.DeleteIngestTarget(id); err != nil {
+			jsonError(w, "failed to delete ingest target", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *Handler) handleIngestJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	jobs, err := h.db.ListIngestJobs()
+	if err != nil {
+		jsonError(w, "failed to list ingest jobs", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, jobs)
+}
+
+func (h *Handler) handleIngestJobByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/ingest-jobs/")
+	parts := strings.SplitN(path, "/", 2)
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonError(w, "invalid ingest job id", http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) == 2 && parts[1] == "dispatch" {
+		h.dispatchIngestJob(w, r, id)
+		return
+	}
+
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	job, err := h.db.GetIngestJob(id)
+	if err != nil {
+		jsonError(w, "ingest job not found", http.StatusNotFound)
+		return
+	}
+	if err := h.db.DeleteIngestJob(id); err != nil {
+		jsonError(w, "failed to delete ingest job", http.StatusInternalServerError)
+		return
+	}
+	os.RemoveAll(filepath.Dir(job.FilePath))
+	jsonResponse(w, map[string]bool{"success": true})
+}
+
+func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobID int64) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		PrinterID int64 `json:"printer_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	job, printer, err := h.getJobAndPrinter(jobID, req.PrinterID)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if job.PinnedPrinterID != nil {
+		if *job.PinnedPrinterID != req.PrinterID {
+			jsonError(w, "this job is pinned to a different printer", http.StatusBadRequest)
+			return
+		}
+	} else if printer.Model != job.Model {
+		jsonError(w, "printer model does not match this job's target model", http.StatusBadRequest)
+		return
+	}
+
+	claimed, err := h.db.ClaimIngestJobForDispatch(jobID, req.PrinterID)
+	if err != nil {
+		jsonError(w, "failed to claim ingest job", http.StatusInternalServerError)
+		return
+	}
+	if !claimed {
+		jsonError(w, "job already dispatching or resolved", http.StatusConflict)
+		return
+	}
+
+	go h.runDispatch(*job, *printer)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// AutoDispatchIngestJob is ingest.Handler's callback for a Print-After-Upload
+// slicer upload against a target with auto-dispatch enabled and exactly one
+// matching printer (see ingest.Handler.upload). Runs the same claim + dispatch
+// path as a manual dashboard dispatch, just without an HTTP response to
+// report to - errors just land the job in 'failed', same as any other
+// dispatch failure, and surface as a normal banner for someone to retry.
+func (h *Handler) AutoDispatchIngestJob(jobID, printerID int64) {
+	job, printer, err := h.getJobAndPrinter(jobID, printerID)
+	if err != nil {
+		return
+	}
+	claimed, err := h.db.ClaimIngestJobForDispatch(jobID, printerID)
+	if err != nil || !claimed {
+		return
+	}
+	h.runDispatch(*job, *printer)
+}
+
+func (h *Handler) getJobAndPrinter(jobID, printerID int64) (*models.IngestJob, *models.PrinterConfig, error) {
+	job, err := h.db.GetIngestJob(jobID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ingest job not found")
+	}
+	printer, err := h.db.GetPrinter(printerID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("printer not found")
+	}
+	return job, printer, nil
+}
+
+func plugIsOn(status *models.PrinterStatus, plugID string) bool {
+	if status == nil {
+		return false
+	}
+	for _, p := range status.Power {
+		if p.ID == plugID {
+			return p.On
+		}
+	}
+	return false
+}
+
+// runDispatch powers on printer's assigned smart plug(s) if off, waits for
+// it to come online, then relays the staged file via the same UploadFile
+// path the dashboard's own upload feature uses. Uses h.ctx (the app's
+// long-lived context) rather than the request's, since the HTTP request is
+// already closed by the time this goroutine runs.
+func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig) {
+	plugs, err := h.db.ListSmartPlugs(printer.ID)
+	if err != nil {
+		h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
+		return
+	}
+	status := h.poller.GetStatus(printer.ID)
+	for _, plug := range plugs {
+		plugID := plug.IP + ":" + plug.Idx
+		if plugIsOn(status, plugID) {
+			continue
+		}
+		if err := h.poller.SetPowerState(h.ctx, printer.ID, plugID, true); err != nil {
+			h.db.SetIngestJobFailed(job.ID, "failed to power on printer: "+err.Error())
+			return
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(h.ctx, dispatchOnlineTimeout)
+	defer cancel()
+	if err := h.poller.WaitOnline(ctx, printer.ID); err != nil {
+		h.db.SetIngestJobFailed(job.ID, err.Error())
+		return
+	}
+
+	data, err := os.ReadFile(job.FilePath)
+	if err != nil {
+		h.db.SetIngestJobFailed(job.ID, "failed to read staged file: "+err.Error())
+		return
+	}
+	if err := h.poller.UploadFile(h.ctx, printer.ID, "usb", job.Filename, data, job.PrintAfter); err != nil {
+		h.db.SetIngestJobFailed(job.ID, err.Error())
+		return
+	}
+
+	h.db.DeleteIngestJob(job.ID)
+	os.RemoveAll(filepath.Dir(job.FilePath))
+	h.poller.BroadcastRefresh()
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {

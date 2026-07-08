@@ -346,6 +346,39 @@ func (p *Poller) Repoll(ctx context.Context, id int64) {
 	p.poll(ctx, id, pp.plugin)
 }
 
+// WaitOnline blocks until printer id's cached state is no longer
+// offline/disconnected, or ctx's deadline/cancellation fires. Repolls
+// immediately first, since a printer just powered on will still show stale
+// cached "offline" from the last tick.
+func (p *Poller) WaitOnline(ctx context.Context, id int64) error {
+	p.Repoll(ctx, id)
+	if p.isOnline(id) {
+		return nil
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("printer %d did not come online: %w", id, ctx.Err())
+		case <-ticker.C:
+			p.Repoll(ctx, id)
+			if p.isOnline(id) {
+				return nil
+			}
+		}
+	}
+}
+
+func (p *Poller) isOnline(id int64) bool {
+	status := p.GetStatus(id)
+	if status == nil {
+		return false
+	}
+	return status.State != models.StateOffline && status.State != models.StateDisconnected
+}
+
 // SetPowerState toggles a plug. On success it immediately patches the
 // cached status with the new on/off value and broadcasts that — the device
 // already ACKed the command, so this isn't optimistic, it's just not
