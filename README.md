@@ -14,7 +14,10 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 - Real-time SSE updates, no manual refresh
 - Auto-detects camera stack, printer name, and installed plugins
 - Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
-- Print control (pause/resume/cancel) and one-click reprint from recent files
+- Print control (pause/resume/cancel) and one-click reprint from recent files, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
+- Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
+- PrusaLink keepalive ping — works around printers whose wifi drops off after sitting idle
+- Optional free-text "model" field to group physically-alike printers on the dashboard
 - Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Snapshot/live toggle, printer reordering, dark mode, responsive layout
