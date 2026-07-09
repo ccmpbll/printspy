@@ -145,6 +145,14 @@ header .printer-count {
     font-size: 0.75rem;
 }
 
+/* Matches the printer-header row's power-toggle/link button height (~26px)
+   and muted text color - plain .btn-sm alone renders shorter and brighter
+   than those, standing out sitting next to it in the same row. */
+.btn-files {
+    padding: 0.32rem 0.6rem;
+    color: var(--text-secondary);
+}
+
 /* Connection banner */
 .connection-banner {
     display: flex;
@@ -796,6 +804,14 @@ header .printer-count {
     padding: 0.5rem 0;
 }
 
+.filemanager-list {
+    max-height: 60vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .container {
@@ -926,32 +942,7 @@ header .printer-count {
     }
 }
 
-/* Recent prints dropdown */
-.recent-dropdown {
-    position: relative;
-    display: inline-block;
-}
-.recent-menu {
-    display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 0.35rem;
-    min-width: 400px;
-    max-width: 500px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
-    z-index: 10;
-    padding: 0.4rem;
-    display: none;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-.recent-dropdown.open .recent-menu {
-    display: flex;
-}
+/* File manager rows (also used inline, no dropdown wrapper anymore) */
 .recent-item {
     display: flex;
     align-items: center;

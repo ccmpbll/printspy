@@ -531,7 +531,7 @@ func (p *Plugin) GetRecentFiles(ctx context.Context, limit int) ([]models.Recent
 		return files[i].UploadedAt > files[j].UploadedAt
 	})
 
-	if len(files) > limit {
+	if limit > 0 && len(files) > limit {
 		files = files[:limit]
 	}
 	return files, nil

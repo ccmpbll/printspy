@@ -19,6 +19,8 @@ type PrinterPlugin interface {
 	GetThumbnailURL(ctx context.Context) string
 	GetPrinterName(ctx context.Context) string
 	SetPowerState(ctx context.Context, plugID string, on bool) error
+	// GetRecentFiles returns files newest-first, capped at limit - limit <= 0
+	// means unlimited (the file manager's "all files" view).
 	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
 	UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error
 	DeleteFile(ctx context.Context, storage, path string) error

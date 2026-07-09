@@ -96,13 +96,10 @@ function updateHeaderCount() {
 
 // Power control
 
-// Recent prints and reprint
+// Print history summary
 
 function reloadIdlePrinterRecentPrints() {
-    printers.forEach(p => {
-        if (p.status && p.status.state === 'idle') loadRecentPrints(p.config.id);
-        loadHistorySummary(p.config.id);
-    });
+    printers.forEach(p => loadHistorySummary(p.config.id));
 }
 
 async function loadHistorySummary(printerId) {
@@ -121,61 +118,6 @@ async function loadHistorySummary(printerId) {
         }
         container.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
     } catch (e) { container.textContent = ''; }
-}
-
-async function loadRecentPrints(printerId) {
-    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
-    if (!card) return;
-    const container = card.querySelector('[data-field="recent-prints"]');
-    if (!container) return;
-    // Reloading replaces the dropdown wholesale, which would otherwise
-    // silently close it (e.g. after deleting a file from an open menu) -
-    // preserve open/closed state across the refresh.
-    const wasOpen = !!container.querySelector('.recent-dropdown.open');
-
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/recent`);
-        if (!resp.ok) { container.innerHTML = ''; return; }
-        const prints = await resp.json();
-        if (!prints || prints.length === 0) {
-            container.innerHTML = '';
-            return;
-        }
-        container.innerHTML = `
-            <div class="recent-dropdown">
-                <button class="btn btn-sm btn-recent-toggle" onclick="event.stopPropagation();toggleRecentDropdown(this.parentElement)">&#128196; Recent files (${prints.length})</button>
-                <div class="recent-menu">${prints.map(p => {
-                    const thumb = p.thumbnail_path ? `<img class="recent-thumb" src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(p.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
-                    let status = 'New';
-                    let statusClass = 'recent-status-new';
-                    if (p.success_count > 0 && p.last_success !== false) {
-                        status = `${p.success_count}x printed`;
-                        statusClass = 'recent-status-success';
-                    } else if (p.last_success === false) {
-                        status = 'Failed';
-                        statusClass = 'recent-status-failed';
-                    }
-                    const btnLabel = p.success_count > 0 ? '&#8634; Reprint' : '&#9654; Print';
-                    return `<div class="recent-item">
-                        ${thumb}
-                        <div class="recent-item-info">
-                            <span class="recent-name" title="${esc(p.file_name)}">${esc(p.file_name)}</span>
-                            <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(p.uploaded_at)}</span>
-                        </div>
-                        <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
-                        <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(p.origin)}" data-path="${esc(p.path)}" onclick="event.stopPropagation();confirmAction(this, () => deleteRecentFile(this))">Delete</button>
-                    </div>`;
-                }).join('')}
-                </div>
-            </div>`;
-        if (wasOpen) container.querySelector('.recent-dropdown')?.classList.add('open');
-    } catch (e) { container.innerHTML = ''; }
-}
-
-function toggleRecentDropdown(el) {
-    const wasOpen = el.classList.contains('open');
-    document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
-    if (!wasOpen) el.classList.add('open');
 }
 
 async function startReprint(btn) {
@@ -197,7 +139,63 @@ async function startReprint(btn) {
     } catch (e) {}
 }
 
-async function deleteRecentFile(btn) {
+// File manager - replaces the old per-card "Recent files" dropdown (was
+// capped at recent_files_count, idle-only). Same row look (thumbnail,
+// print-history status badge), but every file, and reachable regardless of
+// printer state.
+let fileManagerPrinterId = null;
+
+async function openFileManager(printerId) {
+    fileManagerPrinterId = printerId;
+    document.getElementById('filemanager-modal-title').textContent = `Files — ${esc(printerName(printerId))}`;
+    document.getElementById('filemanager-modal').classList.add('active');
+    await loadFileManagerFiles(printerId);
+}
+
+function refreshFileManagerIfShowing(printerId) {
+    if (fileManagerPrinterId === printerId && document.getElementById('filemanager-modal').classList.contains('active')) {
+        loadFileManagerFiles(printerId);
+    }
+}
+
+async function loadFileManagerFiles(printerId) {
+    const list = document.getElementById('filemanager-list');
+    list.innerHTML = '<div class="settings-empty">Loading…</div>';
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/recent?all=1`);
+        const files = await resp.json();
+        if (!files || !files.length) {
+            list.innerHTML = '<div class="settings-empty">No files found.</div>';
+            return;
+        }
+        list.innerHTML = files.map(f => {
+            const thumb = f.thumbnail_path ? `<img class="recent-thumb" src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
+            let status = 'New';
+            let statusClass = 'recent-status-new';
+            if (f.success_count > 0 && f.last_success !== false) {
+                status = `${f.success_count}x printed`;
+                statusClass = 'recent-status-success';
+            } else if (f.last_success === false) {
+                status = 'Failed';
+                statusClass = 'recent-status-failed';
+            }
+            const btnLabel = f.success_count > 0 ? '&#8634; Reprint' : '&#9654; Print';
+            return `<div class="recent-item">
+                ${thumb}
+                <div class="recent-item-info">
+                    <span class="recent-name" title="${esc(f.file_name)}">${esc(f.file_name)}</span>
+                    <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}</span>
+                </div>
+                <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
+                <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        list.innerHTML = '<div class="settings-empty">Failed to load files.</div>';
+    }
+}
+
+async function deleteManagedFile(btn) {
     const printerId = btn.dataset.printer;
     const origin = btn.dataset.origin;
     const path = btn.dataset.path;
@@ -206,7 +204,7 @@ async function deleteRecentFile(btn) {
             method: 'DELETE',
         });
         if (resp.ok) {
-            loadRecentPrints(printerId);
+            loadFileManagerFiles(printerId);
         } else {
             const data = await resp.json();
             if (data.error) alert(data.error);
@@ -491,10 +489,7 @@ function renderPrinterCard(printer) {
         controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))">&#9654; Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))">&#9724; Cancel</button></span>`;
     }
 
-    let recentHTML = '';
-    if (state === 'idle') {
-        recentHTML = `<span class="recent-prints" data-field="recent-prints"></span>`;
-    }
+    const filesHTML = `<button class="btn btn-sm btn-files" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
     const historySummaryHTML = `<span class="history-summary" data-field="history-summary"></span>`;
 
     return `
@@ -505,7 +500,7 @@ function renderPrinterCard(printer) {
                 <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
                 ${powerHTML}
                 ${controlHTML}
-                ${recentHTML}
+                ${filesHTML}
                 ${historySummaryHTML}
                 <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
@@ -651,7 +646,6 @@ function updateCard(card, printer) {
 
     if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || pausedChanged || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
-        if (state === 'idle') loadRecentPrints(cfg.id);
         return;
     }
 
@@ -1431,7 +1425,7 @@ async function submitUpload(e) {
         const data = await resp.json();
         if (resp.ok && data.success) {
             closeModal();
-            loadRecentPrints(id);
+            refreshFileManagerIfShowing(id);
         } else {
             result.className = 'test-result error';
             result.textContent = `Upload failed: ${data.error || 'unknown error'}`;
@@ -1662,16 +1656,7 @@ document.querySelectorAll('.modal-overlay').forEach(modal => {
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        closeModal();
-        document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
-    }
-});
-
-document.addEventListener('click', function(e) {
-    if (!e.target.closest('.recent-dropdown')) {
-        document.querySelectorAll('.recent-dropdown.open').forEach(d => d.classList.remove('open'));
-    }
+    if (e.key === 'Escape') closeModal();
 });
 
 // Slicer ingest jobs — files staged by a slicer, awaiting dispatch to a printer

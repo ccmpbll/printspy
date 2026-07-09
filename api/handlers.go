@@ -897,7 +897,9 @@ func (h *Handler) getRecentPrints(w http.ResponseWriter, r *http.Request, id int
 		return
 	}
 	limit := 5
-	if v, err := h.db.GetSetting("recent_files_count"); err == nil && v != "" {
+	if r.URL.Query().Get("all") == "1" {
+		limit = 0
+	} else if v, err := h.db.GetSetting("recent_files_count"); err == nil && v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
