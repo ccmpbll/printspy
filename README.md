@@ -17,15 +17,14 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 - Auto-detects camera stack, printer name, and installed plugins
 - Works with [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware) for a webcam feed on printers with no native camera support, like PrusaLink
 - Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
-- Print control (pause/resume/cancel) and one-click reprint from recent files, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
+- Print control (pause/resume/cancel) and a File Manager per printer — browse every file on its storage, one-click reprint or delete, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
 - PrusaLink keepalive ping — works around printers whose wifi drops off after sitting idle
 - Optional free-text "model" field to group physically-alike printers on the dashboard
-- Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy; it stages the file and powers on/dispatches to a printer you pick (or automatically, if pinned to one printer)
+- Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy, pinned to one specific printer; "Upload" relays automatically once the printer's online, "Upload and Print" also powers it on first if it's off — no manual step either way
 - Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Snapshot/live toggle, printer reordering, dark mode, responsive layout
-- Multi-arch (x86 + ARM)
 
 ## Supported platforms
 
@@ -96,7 +95,7 @@ Any printer type can get a webcam feed by assigning a [printspy-cam](https://git
 - **Go** backend — single binary, low resource usage
 - **SQLite** — no external database needed
 - **Vanilla HTML/CSS/JS** frontend — no build step, no framework
-- **Docker** — multi-arch container (amd64 + arm64)
+- **Docker** — amd64 container
 
 ## Building from source
 
