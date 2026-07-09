@@ -272,7 +272,11 @@ function refreshSnapshots() {
     pollCounter++;
     document.querySelectorAll('.webcam-img').forEach(img => {
         const id = img.closest('[data-printer-id]')?.dataset.printerId;
-        if (id && getWebcamMode(parseInt(id)) === 'snapshot' && img.style.display !== 'none') {
+        if (!id || getWebcamMode(parseInt(id)) !== 'snapshot') return;
+        // A hidden (errored) img only gets retried when a real camera is
+        // assigned - a camera-less printer's img has nothing to reconnect
+        // to, it's just sitting there permanently failed by design.
+        if (img.style.display !== 'none' || img.dataset.hasCamera === 'true') {
             img.src = `/api/snapshot/${id}?t=${pollCounter}`;
         }
     });
@@ -350,12 +354,19 @@ function webcamError(img, isPrinting, tryThumb, hasCamera) {
     // unseeable outside of active prints.
     const thumb = container.querySelector('.webcam-print-thumb');
     const text = container.querySelector('.webcam-placeholder-text');
-    const printerId = container.closest('[data-printer-id]')?.dataset.printerId;
+    const card = container.closest('[data-printer-id]');
+    const printerId = card?.dataset.printerId;
     if (tryThumb && printerId) {
         thumb.onload = () => {
             thumb.style.display = 'block';
             text.style.display = 'none';
             wrapper.classList.remove('webcam-collapsed');
+            // The corner thumb-beside box (printer-stats) shows the same
+            // plate render this fallback just filled the main webcam slot
+            // with - would otherwise duplicate it whenever an assigned
+            // camera goes unreachable mid-print.
+            const beside = card?.querySelector('.thumb-beside');
+            if (beside) beside.style.display = 'none';
         };
         thumb.onerror = () => {
             thumb.style.display = 'none';
@@ -366,6 +377,22 @@ function webcamError(img, isPrinting, tryThumb, hasCamera) {
     } else if (!isPrinting && !hasCamera) {
         wrapper.classList.add('webcam-collapsed');
     }
+}
+
+// Reverses webcamError()'s fallback state when a retried camera load
+// actually succeeds - fires on every successful load, including the normal
+// non-error case, where it's a harmless no-op (everything's already in the
+// state it's setting).
+function webcamRecovered(img) {
+    const container = img.parentElement;
+    const wrapper = container.parentElement;
+    container.querySelector('.webcam-placeholder').style.display = 'none';
+    container.querySelector('.webcam-badge').style.display = '';
+    const toggle = container.querySelector('.webcam-toggle');
+    if (toggle) toggle.style.display = '';
+    wrapper.classList.remove('webcam-collapsed');
+    const beside = container.closest('[data-printer-id]')?.querySelector('.thumb-beside');
+    if (beside) beside.style.display = '';
 }
 
 function webcamSrc(printerId) {
@@ -507,7 +534,7 @@ function renderPrinterCard(printer) {
             <div class="printer-body">
                 <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
                     <div class="webcam-container ${(isPrinting || printer.has_camera) ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})">
+                        <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})" onload="webcamRecovered(this)">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
