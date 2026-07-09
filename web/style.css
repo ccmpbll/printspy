@@ -643,6 +643,10 @@ header .printer-count {
     max-width: 600px;
 }
 
+.modal-files {
+    max-width: 900px;
+}
+
 .modal h2 {
     font-size: 1rem;
     margin-bottom: 1rem;
@@ -937,7 +941,7 @@ header .printer-count {
         margin-top: 0.25rem;
     }
 
-    .modal-wide {
+    .modal-wide, .modal-files {
         max-width: 100%;
     }
 }
@@ -969,9 +973,7 @@ header .printer-count {
     gap: 0.1rem;
 }
 .recent-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    word-break: break-word;
     color: var(--text-primary);
     font-size: 0.8rem;
 }
