@@ -976,14 +976,21 @@ async function saveIngestKey(e) {
     const data = {
         model: isPrinter ? '' : document.getElementById('ingestkey-model').value,
         printer_id: isPrinter ? parseInt(document.getElementById('ingestkey-printer').value) : null,
-        label: document.getElementById('ingestkey-label').value.trim().toLowerCase(),
+        label: document.getElementById('ingestkey-label').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
         auto_dispatch_on_print_now: document.getElementById('ingestkey-auto-dispatch').checked,
     };
     try {
         const resp = id
             ? await fetch(`/api/ingest-keys/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
             : await fetch('/api/ingest-keys', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (!resp.ok) return;
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            const result = document.getElementById('ingestkey-result');
+            result.className = 'test-result error';
+            result.style.display = 'block';
+            result.textContent = err.error || 'Failed to save.';
+            return;
+        }
         await loadIngestKeys();
         if (!id) {
             const created = await resp.json();
