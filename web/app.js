@@ -965,7 +965,7 @@ function openEditIngestKeyModal(id) {
     const result = document.getElementById('ingestkey-result');
     result.className = 'test-result success';
     result.style.display = 'block';
-    result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${target.id}</code><br>API key: <code>${esc(target.api_key)}</code>`;
+    result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${esc(target.label || target.id)}</code><br>API key: <code>${esc(target.api_key)}</code>`;
     document.getElementById('ingestkey-modal').classList.add('active');
 }
 
