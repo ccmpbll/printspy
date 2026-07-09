@@ -997,7 +997,7 @@ async function saveIngestKey(e) {
             const result = document.getElementById('ingestkey-result');
             result.className = 'test-result success';
             result.style.display = 'block';
-            result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${created.id}</code><br>API key: <code>${esc(created.api_key)}</code><br>Paste these into the slicer's Physical Printer dialog (PrusaLink, API key auth).`;
+            result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${esc(data.label || created.id)}</code><br>API key: <code>${esc(created.api_key)}</code><br>Paste these into the slicer's Physical Printer dialog (PrusaLink, API key auth).`;
             document.getElementById('ingestkey-id').value = created.id;
             return;
         }
