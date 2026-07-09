@@ -1,10 +1,9 @@
 // Package ingest implements a minimal PrusaLink-compatible HTTP surface so
 // PrusaSlicer/OrcaSlicer's "Send to printer" (Physical Printer, PrusaLink
-// mode) can target PrintSpy directly. A slicer's connection test hits
-// GET /ingest/{targetID}/api/version, and "Send to printer" hits
-// PUT /ingest/{targetID}/api/v1/files/{storage}/{path}. Uploaded files are
-// staged as an IngestJob for a human to dispatch to a specific printer from
-// the dashboard — see api.dispatchIngestJob.
+// mode) can target PrintSpy directly, relaying onto a target's pinned
+// printer automatically - no manual step, matching how OctoPrint's own
+// upload works. A slicer's connection test hits GET /ingest/{targetID}/api/version,
+// and "Send to printer" hits PUT /ingest/{targetID}/api/v1/files/{storage}/{path}.
 package ingest
 
 import (
@@ -26,11 +25,15 @@ const maxUploadBytes = 200 << 20
 type Handler struct {
 	db      *db.DB
 	dataDir string
-	// dispatch triggers the same claim+power-on+relay path a manual
-	// dashboard dispatch uses. Set via SetDispatchFunc once api.Handler
-	// exists - main.go wires the two together, since ingest has no direct
-	// dependency on the poller-backed dispatch logic otherwise.
+	// dispatch is Print-After-Upload's path: power on the pinned printer if
+	// needed, wait for it online, relay, and print. Set via SetDispatchFunc
+	// once api.Handler exists - main.go wires the two together.
 	dispatch func(jobID, printerID int64)
+	// relay is plain Upload's path: if the pinned printer is already online,
+	// send the file over with no print command and no proactive power-on.
+	// If it's not online, this is a no-op - poller.checkIngestOnline picks
+	// the job up automatically once the printer's next seen online.
+	relay func(jobID, printerID int64)
 	// broadcast pings connected dashboards to reload ingest jobs. Without
 	// this, a job staged by a slicer upload sits invisible until something
 	// else happens to trigger a refresh (a poll-driven state change, or a
@@ -45,6 +48,10 @@ func New(database *db.DB, dataDir string) *Handler {
 
 func (h *Handler) SetDispatchFunc(f func(jobID, printerID int64)) {
 	h.dispatch = f
+}
+
+func (h *Handler) SetRelayFunc(f func(jobID, printerID int64)) {
+	h.relay = f
 }
 
 func (h *Handler) SetBroadcastFunc(f func()) {
@@ -164,44 +171,13 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 		h.broadcast()
 	}
 
-	if target.AutoDispatchOnPrintNow && printAfter {
-		h.maybeAutoDispatch(jobID, target)
+	if target.PrinterID != nil {
+		if printAfter && h.dispatch != nil {
+			h.dispatch(jobID, *target.PrinterID)
+		} else if !printAfter && h.relay != nil {
+			h.relay(jobID, *target.PrinterID)
+		}
 	}
 
 	w.WriteHeader(http.StatusCreated)
-}
-
-// maybeAutoDispatch fires the dispatch callback for a PrinterID-pinned
-// target unconditionally (no ambiguity to resolve), or for a Model-bucket
-// target only when exactly one enabled, non-maintenance printer currently
-// matches - with 2+ matches there's no way to auto-pick which physical
-// printer to wake, so the job is left staged for a human to resolve via the
-// normal dashboard banner.
-func (h *Handler) maybeAutoDispatch(jobID int64, target *models.IngestTarget) {
-	if h.dispatch == nil {
-		return
-	}
-	if target.PrinterID != nil {
-		h.dispatch(jobID, *target.PrinterID)
-		return
-	}
-
-	printers, err := h.db.ListPrinters()
-	if err != nil {
-		return
-	}
-	var match *models.PrinterConfig
-	for i, p := range printers {
-		if p.Model != target.Model || !p.Enabled || p.Maintenance {
-			continue
-		}
-		if match != nil {
-			return // ambiguous - 2+ printers share this model
-		}
-		match = &printers[i]
-	}
-	if match == nil {
-		return
-	}
-	h.dispatch(jobID, match.ID)
 }

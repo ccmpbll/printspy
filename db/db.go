@@ -656,20 +656,18 @@ func (db *DB) DeleteSessionsForUser(username string) error {
 	return err
 }
 
-// Ingest targets — slicer print-host buckets, one per printer model.
+// Ingest targets — slicer print-host targets, each pinned to one printer.
 
-const ingestTargetSelect = `SELECT id, model, printer_id, label, api_key, auto_dispatch_on_print_now, created_at FROM ingest_targets`
+const ingestTargetSelect = `SELECT id, model, printer_id, label, api_key, created_at FROM ingest_targets`
 
 func scanIngestTargets(rows *sql.Rows) ([]models.IngestTarget, error) {
 	var targets []models.IngestTarget
 	for rows.Next() {
 		var t models.IngestTarget
-		var autoDispatch int
 		var printerID sql.NullInt64
-		if err := rows.Scan(&t.ID, &t.Model, &printerID, &t.Label, &t.APIKey, &autoDispatch, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.Model, &printerID, &t.Label, &t.APIKey, &t.CreatedAt); err != nil {
 			return nil, err
 		}
-		t.AutoDispatchOnPrintNow = autoDispatch == 1
 		if printerID.Valid {
 			t.PrinterID = &printerID.Int64
 		}
@@ -722,18 +720,18 @@ func (db *DB) GetIngestTargetByLabel(label string) (*models.IngestTarget, error)
 	return &targets[0], nil
 }
 
-func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey string, autoDispatchOnPrintNow bool) (int64, error) {
-	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, printer_id, label, api_key, auto_dispatch_on_print_now) VALUES (?, ?, ?, ?, ?)`,
-		model, printerID, label, apiKey, autoDispatchOnPrintNow)
+func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey string) (int64, error) {
+	result, err := db.conn.Exec(`INSERT INTO ingest_targets (model, printer_id, label, api_key) VALUES (?, ?, ?, ?)`,
+		model, printerID, label, apiKey)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateIngestTarget(id int64, model string, printerID *int64, label string, autoDispatchOnPrintNow bool) error {
-	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, printer_id=?, label=?, auto_dispatch_on_print_now=? WHERE id=?`,
-		model, printerID, label, autoDispatchOnPrintNow, id)
+func (db *DB) UpdateIngestTarget(id int64, model string, printerID *int64, label string) error {
+	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, printer_id=?, label=? WHERE id=?`,
+		model, printerID, label, id)
 	return err
 }
 
@@ -768,6 +766,19 @@ func scanIngestJobs(rows *sql.Rows) ([]models.IngestJob, error) {
 		jobs = append(jobs, j)
 	}
 	return jobs, rows.Err()
+}
+
+// ListPendingIngestJobsForPrinter finds jobs staged against a target pinned
+// to printerID that haven't been relayed yet - see poller.checkIngestOnline,
+// which calls this the moment a printer transitions offline->online to
+// auto-relay anything waiting on it.
+func (db *DB) ListPendingIngestJobsForPrinter(printerID int64) ([]models.IngestJob, error) {
+	rows, err := db.conn.Query(ingestJobSelect+` WHERE j.status = 'pending' AND t.printer_id = ?`, printerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanIngestJobs(rows)
 }
 
 func (db *DB) ListIngestJobs() ([]models.IngestJob, error) {
@@ -815,8 +826,10 @@ func (db *DB) SetIngestJobFilePath(id int64, filePath string) error {
 }
 
 // ClaimIngestJobForDispatch atomically claims a pending/failed job for
-// dispatch to printerID, guarding against double-dispatch (two matching
-// printer cards, or a double-click). Returns false if already claimed.
+// relay to printerID, guarding against double-processing - shared by the
+// proactive print-now dispatch path and the passive online-transition relay
+// path, both of which could otherwise race against each other. Returns
+// false if already claimed.
 func (db *DB) ClaimIngestJobForDispatch(jobID, printerID int64) (bool, error) {
 	result, err := db.conn.Exec(`
 		UPDATE ingest_jobs SET status='dispatching', target_printer_id=?, error=''

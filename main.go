@@ -62,6 +62,9 @@ func main() {
 	ingestHandler.SetDispatchFunc(func(jobID, printerID int64) {
 		go handler.AutoDispatchIngestJob(jobID, printerID)
 	})
+	ingestHandler.SetRelayFunc(func(jobID, printerID int64) {
+		go p.RelayIngestJob(ctx, jobID, printerID)
+	})
 	ingestHandler.SetBroadcastFunc(p.BroadcastRefresh)
 	ingestHandler.RegisterRoutes(mux)
 	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {

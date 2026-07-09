@@ -896,22 +896,17 @@ function renderSettingsIngestKeyList(targets) {
         list.innerHTML = '<div class="settings-empty">No slicer print targets configured yet.</div>';
         return;
     }
-    list.innerHTML = targets.map(t => {
-        const boundTo = t.printer_id
-            ? `Printer: ${esc(printerName(t.printer_id) || `#${t.printer_id}`)}`
-            : `Model: ${esc(t.model)}`;
-        return `
+    list.innerHTML = targets.map(t => `
         <div class="settings-printer-row">
             <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(t.label || t.model || printerName(t.printer_id) || 'Untitled')}</span>
-                <span class="settings-printer-url">${boundTo} — Host: ${esc(location.origin)}/ingest/${esc(t.label || t.id)}${t.auto_dispatch_on_print_now ? ' — auto-dispatch on Print now' : ''}</span>
+                <span class="settings-printer-name">${esc(t.label || printerName(t.printer_id) || 'Untitled')}</span>
+                <span class="settings-printer-url">Printer: ${esc(printerName(t.printer_id) || `#${t.printer_id}`)} — Host: ${esc(location.origin)}/ingest/${esc(t.label || t.id)}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteIngestKey(${t.id}))">Delete</button>
             </div>
-        </div>`;
-    }).join('');
+        </div>`).join('');
 }
 
 function printerName(printerID) {
@@ -927,24 +922,11 @@ function populateIngestKeyPrinterOptions(selectedId) {
         .join('');
 }
 
-function onIngestKeyBindModeChange() {
-    const isPrinter = document.getElementById('ingestkey-bind-mode').value === 'printer';
-    document.getElementById('ingestkey-model-group').style.display = isPrinter ? 'none' : '';
-    document.getElementById('ingestkey-printer-group').style.display = isPrinter ? '' : 'none';
-    document.getElementById('ingestkey-auto-dispatch-hint').textContent = isPrinter
-        ? 'Fires every time — a pinned target has no ambiguity to resolve.'
-        : 'Only fires if exactly one enabled printer matches this model — with 2+ matches, the file still stages for manual dispatch.';
-}
-
 function openAddIngestKeyModal() {
     document.getElementById('ingestkey-modal-title').textContent = 'Add slicer print target';
     document.getElementById('ingestkey-id').value = '';
-    document.getElementById('ingestkey-bind-mode').value = 'model';
-    document.getElementById('ingestkey-model').value = '';
     populateIngestKeyPrinterOptions(null);
     document.getElementById('ingestkey-label').value = '';
-    document.getElementById('ingestkey-auto-dispatch').checked = false;
-    onIngestKeyBindModeChange();
     const result = document.getElementById('ingestkey-result');
     result.style.display = 'none';
     result.textContent = '';
@@ -956,12 +938,8 @@ function openEditIngestKeyModal(id) {
     if (!target) return;
     document.getElementById('ingestkey-modal-title').textContent = 'Edit slicer print target';
     document.getElementById('ingestkey-id').value = target.id;
-    document.getElementById('ingestkey-bind-mode').value = target.printer_id ? 'printer' : 'model';
-    document.getElementById('ingestkey-model').value = target.model || '';
     populateIngestKeyPrinterOptions(target.printer_id || null);
     document.getElementById('ingestkey-label').value = target.label;
-    document.getElementById('ingestkey-auto-dispatch').checked = !!target.auto_dispatch_on_print_now;
-    onIngestKeyBindModeChange();
     const result = document.getElementById('ingestkey-result');
     result.className = 'test-result success';
     result.style.display = 'block';
@@ -972,12 +950,9 @@ function openEditIngestKeyModal(id) {
 async function saveIngestKey(e) {
     e.preventDefault();
     const id = document.getElementById('ingestkey-id').value;
-    const isPrinter = document.getElementById('ingestkey-bind-mode').value === 'printer';
     const data = {
-        model: isPrinter ? '' : document.getElementById('ingestkey-model').value,
-        printer_id: isPrinter ? parseInt(document.getElementById('ingestkey-printer').value) : null,
+        printer_id: parseInt(document.getElementById('ingestkey-printer').value),
         label: document.getElementById('ingestkey-label').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
-        auto_dispatch_on_print_now: document.getElementById('ingestkey-auto-dispatch').checked,
     };
     try {
         const resp = id
@@ -1623,7 +1598,7 @@ function computeETA(remainingSecs) {
 
 function esc(str) {
     if (!str) return '';
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function plugLabel(ps) {
@@ -1711,6 +1686,11 @@ async function loadIngestJobs() {
     } catch (e) {}
 }
 
+// Ingest jobs relay automatically (see poller.checkIngestOnline /
+// ingest.Handler.upload) - this banner is just visibility into a job that's
+// still waiting (printer off, no print_after so no proactive power-on) or
+// that failed. Retry only shows on a failed job - a still-waiting job needs
+// no action, it'll relay itself once the printer's seen online.
 function renderIngestBanners() {
     document.querySelectorAll('.ingest-banner').forEach(b => b.remove());
     if (!ingestJobs.length) return;
@@ -1719,17 +1699,16 @@ function renderIngestBanners() {
         const cfg = printer.config;
         const card = document.querySelector(`[data-printer-id="${cfg.id}"]`);
         if (!card) continue;
-        const jobs = ingestJobs.filter(j => j.status !== 'dispatching' &&
-            (j.pinned_printer_id ? j.pinned_printer_id === cfg.id : cfg.model && j.model === cfg.model));
+        const jobs = ingestJobs.filter(j => j.status !== 'dispatching' && j.pinned_printer_id === cfg.id);
         if (!jobs.length) continue;
 
         for (const job of jobs) {
             const banner = document.createElement('div');
             banner.className = 'ingest-banner';
             banner.innerHTML = `
-                <span>&#128196; ${esc(job.filename)} staged for ${esc(cfg.name)} — Dispatch here to print now${job.error ? ` — <span class="msg-error">${esc(job.error)}</span>` : ''}</span>
+                <span>&#128196; ${esc(job.filename)} ${job.error ? `failed to relay — <span class="msg-error">${esc(job.error)}</span>` : `waiting for ${esc(cfg.name)} to come online`}</span>
                 <div class="ingest-banner-actions">
-                    <button class="btn btn-sm btn-primary" onclick="dispatchIngestJob(${job.id}, ${cfg.id})">Dispatch here</button>
+                    ${job.error ? `<button class="btn btn-sm btn-primary" onclick="retryIngestJob(${job.id})">Retry</button>` : ''}
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>
                 </div>`;
             card.appendChild(banner);
@@ -1737,13 +1716,9 @@ function renderIngestBanners() {
     }
 }
 
-async function dispatchIngestJob(jobID, printerID) {
+async function retryIngestJob(jobID) {
     try {
-        await fetch(`/api/ingest-jobs/${jobID}/dispatch`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({printer_id: printerID}),
-        });
+        await fetch(`/api/ingest-jobs/${jobID}/retry`, {method: 'POST'});
         loadIngestJobs();
     } catch (e) {}
 }

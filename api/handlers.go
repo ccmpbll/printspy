@@ -1631,7 +1631,7 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "failed to generate api key", http.StatusInternalServerError)
 			return
 		}
-		id, err := h.db.CreateIngestTarget(req.Model, req.PrinterID, req.Label, apiKey, req.AutoDispatchOnPrintNow)
+		id, err := h.db.CreateIngestTarget("", req.PrinterID, req.Label, apiKey)
 		if err != nil {
 			jsonError(w, "failed to create ingest target", http.StatusInternalServerError)
 			return
@@ -1643,24 +1643,18 @@ func (h *Handler) handleIngestKeys(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ingestTargetRequest requires exactly one of Model (a model bucket, matched
-// against any printer sharing it) or PrinterID (pinned to one specific
-// printer, no ambiguity to resolve at dispatch time).
+// ingestTargetRequest is always pinned to one specific printer - no ambiguity
+// to resolve at relay time.
 type ingestTargetRequest struct {
-	Model                  string `json:"model"`
-	PrinterID              *int64 `json:"printer_id"`
-	Label                  string `json:"label"`
-	AutoDispatchOnPrintNow bool   `json:"auto_dispatch_on_print_now"`
+	PrinterID *int64 `json:"printer_id"`
+	Label     string `json:"label"`
 }
 
 var ingestLabelSlug = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 func (r ingestTargetRequest) validate() error {
-	if r.Model == "" && r.PrinterID == nil {
-		return fmt.Errorf("model or printer_id is required")
-	}
-	if r.Model != "" && r.PrinterID != nil {
-		return fmt.Errorf("specify model or printer_id, not both")
+	if r.PrinterID == nil {
+		return fmt.Errorf("printer_id is required")
 	}
 	// Label doubles as the /ingest/{label} URL slug (see ingest.Handler.route),
 	// so it's restricted to what's safe in a URL path segment.
@@ -1694,7 +1688,7 @@ func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err := h.db.UpdateIngestTarget(id, req.Model, req.PrinterID, req.Label, req.AutoDispatchOnPrintNow); err != nil {
+		if err := h.db.UpdateIngestTarget(id, "", req.PrinterID, req.Label); err != nil {
 			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)
 			return
 		}
@@ -1734,8 +1728,8 @@ func (h *Handler) handleIngestJobByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(parts) == 2 && parts[1] == "dispatch" {
-		h.dispatchIngestJob(w, r, id)
+	if len(parts) == 2 && parts[1] == "retry" {
+		h.retryIngestJob(w, r, id)
 		return
 	}
 
@@ -1756,35 +1750,30 @@ func (h *Handler) handleIngestJobByID(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]bool{"success": true})
 }
 
-func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobID int64) {
+// retryIngestJob manually re-triggers a failed job - same power-on-if-needed
+// + wait + relay path as the automatic flows, just human-initiated instead
+// of fired by an upload or a poller state transition. Printer's already
+// known (jobs are always pinned), so this needs no request body.
+func (h *Handler) retryIngestJob(w http.ResponseWriter, r *http.Request, jobID int64) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct {
-		PrinterID int64 `json:"printer_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	job, printer, err := h.getJobAndPrinter(jobID, req.PrinterID)
+	job, err := h.db.GetIngestJob(jobID)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
+		jsonError(w, "ingest job not found", http.StatusNotFound)
 		return
 	}
-	if job.PinnedPrinterID != nil {
-		if *job.PinnedPrinterID != req.PrinterID {
-			jsonError(w, "this job is pinned to a different printer", http.StatusBadRequest)
-			return
-		}
-	} else if printer.Model != job.Model {
-		jsonError(w, "printer model does not match this job's target model", http.StatusBadRequest)
+	if job.PinnedPrinterID == nil {
+		jsonError(w, "job has no pinned printer", http.StatusBadRequest)
 		return
 	}
-
-	claimed, err := h.db.ClaimIngestJobForDispatch(jobID, req.PrinterID)
+	printer, err := h.db.GetPrinter(*job.PinnedPrinterID)
+	if err != nil {
+		jsonError(w, "printer not found", http.StatusNotFound)
+		return
+	}
+	claimed, err := h.db.ClaimIngestJobForDispatch(jobID, *job.PinnedPrinterID)
 	if err != nil {
 		jsonError(w, "failed to claim ingest job", http.StatusInternalServerError)
 		return
@@ -1793,17 +1782,13 @@ func (h *Handler) dispatchIngestJob(w http.ResponseWriter, r *http.Request, jobI
 		jsonError(w, "job already dispatching or resolved", http.StatusConflict)
 		return
 	}
-
 	go h.runDispatch(*job, *printer)
 	w.WriteHeader(http.StatusAccepted)
 }
 
 // AutoDispatchIngestJob is ingest.Handler's callback for a Print-After-Upload
-// slicer upload against a target with auto-dispatch enabled and exactly one
-// matching printer (see ingest.Handler.upload). Runs the same claim + dispatch
-// path as a manual dashboard dispatch, just without an HTTP response to
-// report to - errors just land the job in 'failed', same as any other
-// dispatch failure, and surface as a normal banner for someone to retry.
+// slicer upload - power on the pinned printer if needed, wait for it
+// online, relay, and print. Errors just land the job in 'failed'.
 func (h *Handler) AutoDispatchIngestJob(jobID, printerID int64) {
 	job, printer, err := h.getJobAndPrinter(jobID, printerID)
 	if err != nil {
@@ -1844,13 +1829,9 @@ func plugIsOn(status *models.PrinterStatus, plugID string) bool {
 // it to come online, then relays the staged file via the same UploadFile
 // path the dashboard's own upload feature uses. Uses h.ctx (the app's
 // long-lived context) rather than the request's, since the HTTP request is
-// already closed by the time this goroutine runs.
+// already closed by any HTTP path that reaches here (main.go wires this to
+// ingest.Handler as an async callback, not a request handler).
 func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig) {
-	// Every exit path needs this, not just success - a failure the frontend
-	// never hears about (no SSE 'refresh') means the banner just vanished
-	// (from the immediate loadIngestJobs() after the dispatch click) with no
-	// error surfaced and no retry offered, until something else happened to
-	// reload the page.
 	defer h.poller.BroadcastRefresh()
 
 	plugs, err := h.db.ListSmartPlugs(printer.ID)
@@ -1882,12 +1863,11 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 		h.db.SetIngestJobFailed(job.ID, "failed to read staged file: "+err.Error())
 		return
 	}
-	// Dispatch - auto or manual - always means "print this now". job.PrintAfter
-	// only gates whether ingest.Handler skipped the human staging step
-	// (see maybeAutoDispatch); a plain Upload from the slicer just stages
-	// the file for a human to later hit Dispatch here on, which is itself
-	// the print decision.
-	if err := h.poller.UploadFile(h.ctx, printer.ID, "usb", job.Filename, data, true); err != nil {
+	// job.PrintAfter, not a hardcoded true - runDispatch also serves manual
+	// retry (retryIngestJob) for a job that originally staged without
+	// Print-After-Upload, which shouldn't start printing just because a
+	// human retried the transfer.
+	if err := h.poller.UploadFile(h.ctx, printer.ID, "usb", job.Filename, data, job.PrintAfter); err != nil {
 		h.db.SetIngestJobFailed(job.ID, err.Error())
 		return
 	}

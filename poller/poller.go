@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -45,6 +47,18 @@ type Poller struct {
 
 	subMu       sync.Mutex
 	subscribers map[*subscriber]struct{}
+
+	// uploadLocks serializes UploadFile per printer - two ingest jobs staged
+	// against the same offline printer both fire a relay attempt the moment
+	// it comes back online (see checkIngestOnline), and two concurrent PUTs
+	// to the same printer's USB storage is exactly the kind of thing that
+	// corrupts a transfer. Lazily created, keyed by printer ID.
+	uploadLocks sync.Map
+}
+
+func (p *Poller) uploadLock(id int64) *sync.Mutex {
+	l, _ := p.uploadLocks.LoadOrStore(id, &sync.Mutex{})
+	return l.(*sync.Mutex)
 }
 
 func New(database *db.DB) *Poller {
@@ -290,6 +304,9 @@ func (p *Poller) UploadFile(ctx context.Context, id int64, storage, path string,
 	if !ok {
 		return fmt.Errorf("printer %d not found", id)
 	}
+	lock := p.uploadLock(id)
+	lock.Lock()
+	defer lock.Unlock()
 	return pp.plugin.UploadFile(ctx, storage, path, data, printAfter)
 }
 
@@ -601,8 +618,71 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.trackPrintHistory(id, prevState, status, prev)
 	p.checkAutoOff(ctx, id, status)
 	p.checkThermalRunaway(ctx, id, status)
+	p.checkIngestOnline(ctx, id, prevState, status)
 
 	p.broadcast(id, status)
+}
+
+// checkIngestOnline relays any ingest jobs staged against this printer the
+// moment it's next seen online - covers the "slicer sent Upload while the
+// printer was off" case, where nothing else would ever trigger the relay
+// (no proactive power-on for a plain Upload, no manual dispatch button).
+// Firing on every poll where prevState was offline/disconnected (including
+// the very first poll after startup, where prevState defaults to Offline)
+// means a job staged while the app itself was down still gets picked up.
+func (p *Poller) checkIngestOnline(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus) {
+	wasOffline := prevState == models.StateOffline || prevState == models.StateDisconnected
+	isOnline := status.State != models.StateOffline && status.State != models.StateDisconnected
+	if !wasOffline || !isOnline {
+		return
+	}
+	jobs, err := p.db.ListPendingIngestJobsForPrinter(id)
+	if err != nil || len(jobs) == 0 {
+		return
+	}
+	// One goroutine processing jobs in order, not one goroutine per job -
+	// UploadFile's per-printer lock would serialize the actual transfers
+	// either way, but running the claim+WaitOnline steps for job 2 while
+	// job 1 is still uploading is pointless contention for no benefit here.
+	go func() {
+		for _, job := range jobs {
+			p.RelayIngestJob(ctx, job.ID, id)
+		}
+	}()
+}
+
+// RelayIngestJob claims a staged job and, if the printer is currently
+// online, uploads it without issuing a print command - the passive "Upload"
+// path. No-ops (leaves the job pending) if the printer isn't online yet;
+// callers only invoke this when they already believe it's online
+// (checkIngestOnline, or ingest.Handler.upload for the already-online-at-
+// upload-time case), but re-checking here avoids a race against a printer
+// that dropped offline again in between.
+func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
+	if !p.isOnline(printerID) {
+		return
+	}
+	claimed, err := p.db.ClaimIngestJobForDispatch(jobID, printerID)
+	if err != nil || !claimed {
+		return
+	}
+	defer p.BroadcastRefresh()
+
+	job, err := p.db.GetIngestJob(jobID)
+	if err != nil {
+		return
+	}
+	data, err := os.ReadFile(job.FilePath)
+	if err != nil {
+		p.db.SetIngestJobFailed(jobID, "failed to read staged file: "+err.Error())
+		return
+	}
+	if err := p.UploadFile(ctx, printerID, "usb", job.Filename, data, false); err != nil {
+		p.db.SetIngestJobFailed(jobID, err.Error())
+		return
+	}
+	p.db.DeleteIngestJob(jobID)
+	os.RemoveAll(filepath.Dir(job.FilePath))
 }
 
 // checkAutoOff powers off a printer's assigned smart plug(s) after it's
