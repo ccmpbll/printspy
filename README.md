@@ -18,6 +18,8 @@ Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, 
 - Works with [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware) for a webcam feed on printers with no native camera support, like PrusaLink
 - Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
 - Print control (pause/resume/cancel) and a File Manager per printer — browse every file on its storage, one-click reprint or delete, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
+- Print history per printer — material, filament used/cost, duration vs. estimate, and per-tool breakdown for multi-material prints, parsed directly from the file's own slicer metadata (PrusaLink)
+- Pushover notifications for print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
 - PrusaLink keepalive ping — works around printers whose wifi drops off after sitting idle
 - Optional free-text "model" field to group physically-alike printers on the dashboard
