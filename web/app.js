@@ -144,7 +144,7 @@ async function loadFileManagerFiles(printerId) {
             return;
         }
         list.innerHTML = files.map(f => {
-            const thumb = f.thumbnail_path ? `<img class="recent-thumb" src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
+            const thumb = f.thumbnail_path ? `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
             let status = 'New';
             let statusClass = 'recent-status-new';
             if (f.success_count > 0 && f.last_success !== false) {
@@ -165,9 +165,28 @@ async function loadFileManagerFiles(printerId) {
                 <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
             </div>`;
         }).join('');
+        observeLazyThumbs(list);
     } catch (e) {
         list.innerHTML = '<div class="settings-empty">Failed to load files.</div>';
     }
+}
+
+// Loads File Manager thumbnails only as they scroll into view, instead of
+// firing every file's thumbnail request the instant the modal opens -
+// matters once a printer's storage has more than a handful of files.
+// root is the list's own scroll container (not the viewport/null) since
+// .filemanager-list scrolls internally within a fixed-height modal.
+const lazyThumbObserver = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const img = entry.target;
+        img.src = img.dataset.src;
+        lazyThumbObserver.unobserve(img);
+    }
+}, {root: document.getElementById('filemanager-list'), rootMargin: '200px'});
+
+function observeLazyThumbs(container) {
+    container.querySelectorAll('.lazy-thumb').forEach(img => lazyThumbObserver.observe(img));
 }
 
 // Print history - separate from the file manager (that's what's on the
