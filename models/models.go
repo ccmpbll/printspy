@@ -148,7 +148,7 @@ type PrintHistory struct {
 	FillDensity   string  `json:"fill_density,omitempty"`
 	PrinterModel  string  `json:"printer_model,omitempty"`
 	Material      string  `json:"material,omitempty"`
-	ToolIndex     int     `json:"tool_index,omitempty"`
+	ToolIndex     int     `json:"tool_index"`
 	FilamentUsedG float64 `json:"filament_used_g,omitempty"`
 	FilamentCost  float64 `json:"filament_cost,omitempty"`
 	EstimatedSecs int     `json:"estimated_secs,omitempty"`
