@@ -691,6 +691,7 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.checkIngestOnline(ctx, id, prevState, status)
 	p.checkCheckpoints(ctx, id, status)
 	p.checkErrorNotify(ctx, id, prevState, status)
+	p.checkPrintStartNotify(ctx, id, prevState, status)
 
 	p.broadcast(id, status)
 }
@@ -961,6 +962,28 @@ func (p *Poller) checkErrorNotify(ctx context.Context, id int64, prevState model
 	}
 	placeholders := map[string]string{"printer": printerName, "message": message}
 	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders)
+}
+
+// checkPrintStartNotify fires the Print Started notification on the
+// transition edge only, mirroring checkErrorNotify. Known limitation shared
+// with checkErrorNotify/checkIngestOnline: on the very first poll after an
+// app restart, prevState defaults to Offline, so a printer already mid-print
+// at startup looks like a fresh start and fires once spuriously - accepted,
+// same tradeoff this codebase already makes elsewhere for restart edges.
+func (p *Poller) checkPrintStartNotify(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus) {
+	wasPrinting := prevState == models.StatePrinting || prevState == models.StatePaused
+	nowPrinting := status.State == models.StatePrinting
+	if wasPrinting || !nowPrinting || status.Job == nil {
+		return
+	}
+	if !p.notifySettingBool("notify_on_start") {
+		return
+	}
+	printerName := p.notifyPrinterName(id)
+	fileName := status.Job.FileName
+	message := fmt.Sprintf("%s: %s", printerName, fileName)
+	placeholders := map[string]string{"printer": printerName, "file": fileName}
+	p.sendNotification(ctx, id, "start", "Print started", message, placeholders)
 }
 
 // checkAutoOff powers off a printer's assigned smart plug(s) after it's

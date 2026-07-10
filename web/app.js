@@ -878,7 +878,7 @@ function setStatValue(card, field, main, unit) {
 
 // Settings modal with printer management
 
-const NOTIFY_TYPES = ['complete', 'failed', 'error', 'checkpoint1', 'checkpoint2'];
+const NOTIFY_TYPES = ['start', 'complete', 'failed', 'error', 'checkpoint1', 'checkpoint2'];
 const PUSHOVER_SOUNDS = ['pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic', 'falling', 'gamelan',
     'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien',
     'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none'];
@@ -905,6 +905,7 @@ function openSettings() {
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
         document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
         document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
+        document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
         document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
         document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
         document.getElementById('setting-notify-error').checked = settings.notify_on_error === '1';
@@ -1719,6 +1720,7 @@ async function saveNotificationSettings(e) {
     const settings = {
         pushover_user_key: document.getElementById('setting-pushover-user-key').value,
         pushover_app_token: document.getElementById('setting-pushover-app-token').value,
+        notify_on_start: document.getElementById('setting-notify-start').checked ? '1' : '0',
         notify_on_complete: document.getElementById('setting-notify-complete').checked ? '1' : '0',
         notify_on_failed: document.getElementById('setting-notify-failed').checked ? '1' : '0',
         notify_on_error: document.getElementById('setting-notify-error').checked ? '1' : '0',

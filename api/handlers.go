@@ -1631,9 +1631,9 @@ func validateSetting(key, value string) (string, error) {
 		return validateTempSetting(key, value, 150)
 	case "thermal_max_extruder_temp":
 		return validateTempSetting(key, value, 350)
-	case "notify_on_complete", "notify_on_failed", "notify_on_error",
+	case "notify_on_start", "notify_on_complete", "notify_on_failed", "notify_on_error",
 		"notify_checkpoint1_enabled", "notify_checkpoint2_enabled",
-		"notify_complete_high_priority", "notify_failed_high_priority", "notify_error_high_priority",
+		"notify_start_high_priority", "notify_complete_high_priority", "notify_failed_high_priority", "notify_error_high_priority",
 		"notify_checkpoint1_high_priority", "notify_checkpoint2_high_priority":
 		if value != "0" && value != "1" {
 			return "", fmt.Errorf("%s must be 0 or 1", key)
@@ -1650,15 +1650,15 @@ func validateSetting(key, value string) (string, error) {
 			n = 99
 		}
 		return strconv.Itoa(n), nil
-	case "notify_complete_sound", "notify_failed_sound", "notify_error_sound",
+	case "notify_start_sound", "notify_complete_sound", "notify_failed_sound", "notify_error_sound",
 		"notify_checkpoint1_sound", "notify_checkpoint2_sound":
 		if value != "" && !slices.Contains(notify.Sounds, value) {
 			return "", fmt.Errorf("%s must be a valid Pushover sound", key)
 		}
 		return value, nil
-	case "notify_complete_title", "notify_failed_title", "notify_error_title",
+	case "notify_start_title", "notify_complete_title", "notify_failed_title", "notify_error_title",
 		"notify_checkpoint1_title", "notify_checkpoint2_title",
-		"notify_complete_message", "notify_failed_message", "notify_error_message",
+		"notify_start_message", "notify_complete_message", "notify_failed_message", "notify_error_message",
 		"notify_checkpoint1_message", "notify_checkpoint2_message":
 		return value, nil
 	case "pushover_user_key", "pushover_app_token":

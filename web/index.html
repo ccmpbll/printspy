@@ -396,6 +396,34 @@
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-start" style="width:auto">
+                            Print started
+                        </label>
+                        <details style="margin-left:1.75rem;margin-top:0.25rem">
+                            <summary>Customize</summary>
+                            <div class="form-group">
+                                <label for="setting-notify-start-title">Title</label>
+                                <input type="text" id="setting-notify-start-title" placeholder="Print started">
+                            </div>
+                            <div class="form-group">
+                                <label for="setting-notify-start-message">Message</label>
+                                <input type="text" id="setting-notify-start-message" placeholder="{printer}: {file}">
+                            </div>
+                            <div class="form-hint">Placeholders: {printer} {file}</div>
+                            <div class="form-group">
+                                <label for="setting-notify-start-sound">Sound</label>
+                                <select id="setting-notify-start-sound" class="notify-sound-select"><option value="">App default</option></select>
+                            </div>
+                            <div class="form-group">
+                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                                    <input type="checkbox" id="setting-notify-start-high-priority" style="width:auto">
+                                    High priority
+                                </label>
+                            </div>
+                        </details>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
                             <input type="checkbox" id="setting-notify-complete" style="width:auto">
                             Print complete
                         </label>
