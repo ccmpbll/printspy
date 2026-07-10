@@ -9,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/plugin"
+	"github.com/ccmpbll/printspy/printmeta"
 	"github.com/ccmpbll/printspy/smartplug"
 )
 
@@ -615,7 +617,7 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		}
 	}
 
-	p.trackPrintHistory(id, prevState, status, prev)
+	p.trackPrintHistory(ctx, id, prevState, status, prev, pl)
 	p.checkAutoOff(ctx, id, status)
 	p.checkThermalRunaway(ctx, id, status)
 	p.checkIngestOnline(ctx, id, prevState, status)
@@ -865,7 +867,7 @@ func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.
 	return states
 }
 
-func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus) {
+func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus, pl plugin.PrinterPlugin) {
 	wasPrinting := prevState == models.StatePrinting || prevState == models.StatePaused
 	nowDone := status.State == models.StateIdle || status.State == models.StateError || status.State == models.StateOffline
 
@@ -874,10 +876,12 @@ func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, stat
 	}
 
 	fileName := ""
+	filePath := ""
 	elapsed := 0
 	filament := 0.0
 	if prev != nil && prev.Job != nil {
 		fileName = prev.Job.FileName
+		filePath = prev.Job.FilePath
 		elapsed = prev.Job.ElapsedSecs
 		filament = prev.Job.FilamentUsedMM
 	}
@@ -902,9 +906,46 @@ func (p *Poller) trackPrintHistory(id int64, prevState models.PrinterState, stat
 		Result:         result,
 		FilamentUsedMM: filament,
 	}
+
+	// The file is guaranteed to still be on the printer's own storage at
+	// this exact instant, since it just finished printing from it - no
+	// need to have intercepted the upload earlier. Best-effort: a
+	// completed print is recorded either way, with or without this extra
+	// detail. Runs in its own goroutine (a real network fetch of a
+	// multi-MB file) so a slow/offline printer here never stalls the poll
+	// tick for every other printer.
+	downloader, ok := pl.(plugin.MetadataDownloader)
+	if !ok || filePath == "" {
+		p.insertPrintHistory(id, h)
+		return
+	}
+	go func() {
+		data, err := downloader.DownloadFileForMetadata(ctx, filePath, fileName)
+		if err != nil {
+			log.Printf("[printer:%d] failed to download %s for print metadata: %v", id, fileName, err)
+		} else if info, err := printmeta.Parse(fileName, data); err != nil {
+			log.Printf("[printer:%d] failed to parse print metadata for %s: %v", id, fileName, err)
+		} else {
+			h.LayerHeightMM = info.LayerHeightMM
+			h.FillDensity = info.FillDensity
+			h.PrinterModel = info.PrinterModel
+			h.Material = info.Material
+			h.ToolIndex = info.ToolIndex
+			h.FilamentUsedMM = info.FilamentUsedMM
+			h.FilamentUsedG = info.FilamentUsedG
+			h.FilamentCost = info.FilamentCost
+			h.EstimatedSecs = info.EstimatedSecs
+			h.MaxLayerZ = info.MaxLayerZ
+			h.ObjectNames = strings.Join(info.ObjectNames, ", ")
+		}
+		p.insertPrintHistory(id, h)
+	}()
+}
+
+func (p *Poller) insertPrintHistory(id int64, h *models.PrintHistory) {
 	if err := p.db.InsertPrintHistory(h); err != nil {
 		log.Printf("[printer:%d] failed to record print history: %v", id, err)
 	} else {
-		log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, fileName, result, elapsed)
+		log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, h.FileName, h.Result, h.DurationSecs)
 	}
 }

@@ -79,6 +79,12 @@ type JobInfo struct {
 	CurrentLayer   int     `json:"current_layer"`
 	TotalLayers    int     `json:"total_layers"`
 	FilamentUsedMM float64 `json:"filament_used_mm"`
+	// FilePath is the plugin-native ref for re-fetching this exact file
+	// (e.g. PrusaLink's "/usb/SPOOLD~1.BGC") - distinct from FileName, which
+	// is the human-readable display name and NOT a valid path segment (the
+	// printer's own filesystem uses an 8.3-mangled short name instead).
+	// Empty for plugins with no such capability (OctoPrint).
+	FilePath string `json:"-"`
 }
 
 type PowerState struct {
@@ -133,6 +139,18 @@ type PrintHistory struct {
 	DurationSecs   int     `json:"duration_secs"`
 	Result         string  `json:"result"`
 	FilamentUsedMM float64 `json:"filament_used_mm"`
+	// The following are only populated for plugins that support
+	// printmeta.Parse (PrusaLink) - zero/empty otherwise.
+	LayerHeightMM float64 `json:"layer_height_mm,omitempty"`
+	FillDensity   string  `json:"fill_density,omitempty"`
+	PrinterModel  string  `json:"printer_model,omitempty"`
+	Material      string  `json:"material,omitempty"`
+	ToolIndex     int     `json:"tool_index,omitempty"`
+	FilamentUsedG float64 `json:"filament_used_g,omitempty"`
+	FilamentCost  float64 `json:"filament_cost,omitempty"`
+	EstimatedSecs int     `json:"estimated_secs,omitempty"`
+	MaxLayerZ     float64 `json:"max_layer_z,omitempty"`
+	ObjectNames   string  `json:"object_names,omitempty"`
 }
 
 type User struct {

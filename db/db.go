@@ -160,6 +160,20 @@ func (db *DB) migrate() error {
 	// target bind to one specific printer instead of a model bucket
 	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN printer_id INTEGER`)
 
+	// Migration: print history real metadata (extracted from the file
+	// itself at completion - see printmeta package). PrusaLink-only; stays
+	// at defaults for OctoPrint rows.
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN filament_used_g REAL NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN layer_height REAL NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN fill_density TEXT NOT NULL DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN printer_model TEXT NOT NULL DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN material TEXT NOT NULL DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tool_index INTEGER NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN filament_cost REAL NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN estimated_duration_secs INTEGER NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN max_layer_z REAL NOT NULL DEFAULT 0`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN object_names TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 
@@ -515,10 +529,53 @@ func (db *DB) GetFileHistoryStats(printerID int64) (map[string]FileHistoryStat, 
 
 func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {
 	_, err := db.conn.Exec(`
-		INSERT INTO print_history (printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM)
+		INSERT INTO print_history (
+			printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
+			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
+			estimated_duration_secs, max_layer_z, object_names
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM,
+		h.FilamentUsedG, h.LayerHeightMM, h.FillDensity, h.PrinterModel, h.Material, h.ToolIndex, h.FilamentCost,
+		h.EstimatedSecs, h.MaxLayerZ, h.ObjectNames)
 	return err
+}
+
+// ListPrintHistory returns a page of print_history rows, newest first, plus
+// whether more rows exist beyond this page - unlike the File Manager's
+// simpler "capped-N or all" convention, print history can genuinely grow
+// into the hundreds/thousands over months and needs real pagination.
+func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.PrintHistory, bool, error) {
+	rows, err := db.conn.Query(`
+		SELECT id, printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
+			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
+			estimated_duration_secs, max_layer_z, object_names
+		FROM print_history WHERE printer_id = ? ORDER BY id DESC LIMIT ? OFFSET ?
+	`, printerID, limit+1, offset)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	var entries []models.PrintHistory
+	for rows.Next() {
+		var h models.PrintHistory
+		if err := rows.Scan(&h.ID, &h.PrinterID, &h.FileName, &h.StartedAt, &h.CompletedAt, &h.DurationSecs, &h.Result, &h.FilamentUsedMM,
+			&h.FilamentUsedG, &h.LayerHeightMM, &h.FillDensity, &h.PrinterModel, &h.Material, &h.ToolIndex, &h.FilamentCost,
+			&h.EstimatedSecs, &h.MaxLayerZ, &h.ObjectNames); err != nil {
+			return nil, false, err
+		}
+		entries = append(entries, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+
+	hasMore := len(entries) > limit
+	if hasMore {
+		entries = entries[:limit]
+	}
+	return entries, hasMore, nil
 }
 
 // Settings

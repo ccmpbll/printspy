@@ -162,6 +162,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		if json.Unmarshal(jobData, &jr) == nil && jr.File.DisplayName != "" {
 			status.Job = &models.JobInfo{
 				FileName:       jr.File.DisplayName,
+				FilePath:       jr.File.Refs.Download,
 				Progress:       jr.Progress,
 				ElapsedSecs:    jr.TimePrinting,
 				RemainingSecs:  jr.TimeRemaining,
@@ -314,6 +315,49 @@ func collectFiles(files []prusalinkFile, origin string, out *[]models.RecentFile
 		}
 		*out = append(*out, rf)
 	}
+}
+
+// metadataRangeBytes caps a Range request for a .bgcode file's metadata -
+// generously past any real Printer/Print Metadata + thumbnail block sizes
+// seen so far (tens of KB), comfortably before the multi-MB gcode body that
+// always follows them per the format's fixed block ordering.
+const metadataRangeBytes = 2 * 1024 * 1024
+
+// DownloadFileForMetadata fetches path (a "refs.download"-style ref, e.g.
+// "/usb/SPOOLD~1.BGC") for print-metadata extraction. A plain .gcode file's
+// metadata lives in trailing comments, so it needs the whole file; a
+// .bgcode file's metadata blocks always precede the gcode body, so only the
+// leading bytes are requested via HTTP Range - if the printer doesn't honor
+// Range it just serves the full file with a 200 instead of 206, and this
+// still works, only slower.
+func (p *Plugin) DownloadFileForMetadata(ctx context.Context, path, displayName string) ([]byte, error) {
+	if strings.HasSuffix(strings.ToLower(displayName), ".bgcode") {
+		return p.downloadFile(ctx, path, metadataRangeBytes)
+	}
+	return p.downloadFile(ctx, path, 0)
+}
+
+func (p *Plugin) downloadFile(ctx context.Context, path string, rangeBytes int) ([]byte, error) {
+	url := strings.TrimRight(p.config.URL, "/") + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if rangeBytes > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=0-%d", rangeBytes-1))
+	}
+
+	resp, err := p.AuthenticatedDo(p.uploadClient, req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		io.Copy(io.Discard, resp.Body)
+		return nil, fmt.Errorf("prusalink returned %d for %s", resp.StatusCode, path)
+	}
+	return io.ReadAll(resp.Body)
 }
 
 func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error {
