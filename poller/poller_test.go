@@ -3,6 +3,7 @@ package poller
 import (
 	"testing"
 
+	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 )
 
@@ -58,5 +59,47 @@ func TestPatchPowerStateOverridesSourceWhenGiven(t *testing.T) {
 	}
 	if got.Source != "auto-idle" {
 		t.Errorf("Source = %q, want %q", got.Source, "auto-idle")
+	}
+}
+
+// seedPrintingState is what stops a restart mid-print from firing a
+// spurious "Print Started" (handled separately in poll()) and from
+// re-firing a checkpoint whose threshold already passed before printspy
+// came back up - it should mark checkpoints already crossed as notified,
+// but leave ones still ahead alone so they fire normally when reached.
+func TestSeedPrintingStateMarksOnlyPassedCheckpoints(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	database.SetSetting("notify_checkpoint1_percent", "5")
+	database.SetSetting("notify_checkpoint2_percent", "50")
+
+	p := &Poller{db: database, printers: map[int64]*polledPrinter{1: {}}}
+	p.seedPrintingState(1, &models.PrinterStatus{Job: &models.JobInfo{Progress: 20}})
+
+	pp := p.printers[1]
+	if !pp.notifiedCheckpoint1 {
+		t.Errorf("checkpoint1 (5%%) should be marked notified at 20%% progress")
+	}
+	if pp.notifiedCheckpoint2 {
+		t.Errorf("checkpoint2 (50%%) should NOT be marked notified at 20%% progress - hasn't happened yet")
+	}
+}
+
+func TestSeedPrintingStateNoJobIsNoop(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	p := &Poller{db: database, printers: map[int64]*polledPrinter{1: {}}}
+	p.seedPrintingState(1, &models.PrinterStatus{Job: nil})
+
+	pp := p.printers[1]
+	if pp.notifiedCheckpoint1 || pp.notifiedCheckpoint2 {
+		t.Errorf("no Job on status should leave both checkpoints unmarked")
 	}
 }

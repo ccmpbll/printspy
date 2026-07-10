@@ -694,9 +694,22 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.checkAutoOff(ctx, id, status)
 	p.checkThermalRunaway(ctx, id, status)
 	p.checkIngestOnline(ctx, id, prevState, status)
-	p.checkCheckpoints(ctx, id, status)
+
+	// prev == nil is the very first poll for this printer since the poller
+	// started (not just "was offline" - a printer legitimately offline
+	// between polls still has a cached prev). If it's already printing at
+	// that moment, printspy just started watching an in-progress print, not
+	// witnessing one begin - seed checkpoint state from current progress
+	// instead of running the normal checks, so a restart mid-print doesn't
+	// fire a spurious "Print Started" or re-fire a checkpoint that already
+	// passed before printspy came back up.
+	if prev == nil && status.State == models.StatePrinting {
+		p.seedPrintingState(id, status)
+	} else {
+		p.checkCheckpoints(ctx, id, status)
+		p.checkPrintStartNotify(ctx, id, prevState, status)
+	}
 	p.checkErrorNotify(ctx, id, prevState, status)
-	p.checkPrintStartNotify(ctx, id, prevState, status)
 
 	p.broadcast(id, status)
 }
@@ -862,6 +875,34 @@ func (p *Poller) notifySettingPercent(key string, def float64) float64 {
 		return def
 	}
 	return n
+}
+
+// seedPrintingState runs once, on the very first poll after a restart,
+// when a printer's discovered already mid-print. Marks any checkpoint
+// whose threshold the print has already passed as fired, so it won't
+// notify for progress that happened before printspy came back up - a
+// checkpoint whose threshold hasn't been reached yet is left alone and
+// fires normally once actually crossed.
+func (p *Poller) seedPrintingState(id int64, status *models.PrinterStatus) {
+	if status.Job == nil {
+		return
+	}
+	progress := status.Job.Progress
+	c1 := progress >= p.notifySettingPercent("notify_checkpoint1_percent", 5)
+	c2 := progress >= p.notifySettingPercent("notify_checkpoint2_percent", 50)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pp, ok := p.printers[id]
+	if !ok {
+		return
+	}
+	if c1 {
+		pp.notifiedCheckpoint1 = true
+	}
+	if c2 {
+		pp.notifiedCheckpoint2 = true
+	}
 }
 
 // checkCheckpoints fires the checkpoint1/checkpoint2 percent-of-completion
