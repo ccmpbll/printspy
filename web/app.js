@@ -275,7 +275,22 @@ function historyRowHTML(h) {
             <span class="recent-meta"><span class="${statusClass}">${status}</span> - ${formatHistoryDate(h.completed_at)} - Duration: ${durationStr}${estStr}</span>
             ${details ? `<span class="recent-meta">${details}</span>` : ''}
         </div>
+        <button class="btn btn-sm btn-danger" data-id="${h.id}" onclick="confirmAction(this, () => deleteHistoryEntry(this))">Delete</button>
     </div>`;
+}
+
+async function deleteHistoryEntry(btn) {
+    const id = btn.dataset.id;
+    try {
+        const resp = await fetch(`/api/history/${id}`, {method: 'DELETE'});
+        if (resp.ok) {
+            loadHistoryPage();
+            loadHistorySummaryLine(historyPrinterId);
+        } else {
+            const data = await resp.json();
+            if (data.error) alert(data.error);
+        }
+    } catch (e) {}
 }
 
 function formatHistoryDate(isoStr) {

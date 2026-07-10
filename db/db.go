@@ -589,6 +589,11 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 	return entries, hasMore, nil
 }
 
+func (db *DB) DeletePrintHistory(id int64) error {
+	_, err := db.conn.Exec(`DELETE FROM print_history WHERE id = ?`, id)
+	return err
+}
+
 // Settings
 
 func (db *DB) GetSetting(key string) (string, error) {

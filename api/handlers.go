@@ -94,6 +94,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/smartplugs/", h.handleSmartPlugByID)
 	mux.HandleFunc("/api/cameras", h.handleCameras)
 	mux.HandleFunc("/api/cameras/", h.handleCameraByID)
+	mux.HandleFunc("/api/history/", h.handleHistoryByID)
 	mux.HandleFunc("/api/ingest-keys", h.handleIngestKeys)
 	mux.HandleFunc("/api/ingest-keys/", h.handleIngestKeyByID)
 	mux.HandleFunc("/api/ingest-jobs", h.handleIngestJobs)
@@ -887,6 +888,27 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// handleHistoryByID deletes a single print_history row by its own id - not
+// scoped under a printer path since the row id is already unique and the
+// row carries its own printer_id, matching the flat resource style already
+// used by /api/smartplugs/:id and /api/cameras/:id.
+func (h *Handler) handleHistoryByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/history/"), 10, 64)
+	if err != nil {
+		jsonError(w, "invalid history id", http.StatusBadRequest)
+		return
+	}
+	if err := h.db.DeletePrintHistory(id); err != nil {
+		jsonError(w, "failed to delete history entry", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleCameraSettings proxies image-orientation settings straight through to
