@@ -262,17 +262,17 @@ function historyRowHTML(h) {
     const materialStr = tools.length ? tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ') : '';
 
     const details = [
-        materialStr,
-        h.layer_height_mm ? `${h.layer_height_mm}mm` : '',
-        esc(h.fill_density || ''),
-        filament,
+        materialStr ? `Material: ${materialStr}` : '',
+        h.layer_height_mm ? `Layer: ${h.layer_height_mm}mm` : '',
+        h.fill_density ? `Fill: ${esc(h.fill_density)}` : '',
+        filament ? `Filament: ${filament}` : '',
         h.tool_changes ? `${h.tool_changes} tool changes` : '',
-    ].filter(Boolean).join(' &middot; ');
+    ].filter(Boolean).join(' - ');
 
     return `<div class="recent-item history-item">
         <div class="recent-item-info">
             <span class="recent-name" title="${esc(h.filename)}">${esc(h.filename)}</span>
-            <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatHistoryDate(h.completed_at)} &middot; ${durationStr}${estStr}</span>
+            <span class="recent-meta"><span class="${statusClass}">${status}</span> - ${formatHistoryDate(h.completed_at)} - Duration: ${durationStr}${estStr}</span>
             ${details ? `<span class="recent-meta">${details}</span>` : ''}
         </div>
     </div>`;
