@@ -878,6 +878,68 @@ function setStatValue(card, field, main, unit) {
 
 // Settings modal with printer management
 
+const NOTIFY_TYPES = ['start', 'complete', 'failed', 'error', 'checkpoint1', 'checkpoint2'];
+const PUSHOVER_SOUNDS = ['pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic', 'falling', 'gamelan',
+    'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien',
+    'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none'];
+
+// Per-type placeholder/hint text for the Customize panel. 'start' is the
+// only type that defaults to a thumbnail-only image (see poller.go's
+// sendNotification) - everything else defaults to camera-with-fallback.
+const NOTIFY_CUSTOMIZE = {
+    start:       {titlePh: 'Print started', messagePh: '{printer}: {file}', hint: 'Placeholders: {printer} {file}', imageDefault: 'Default (thumbnail)'},
+    complete:    {titlePh: 'Print complete', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    failed:      {titlePh: 'Print failed', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    error:       {titlePh: '{printer}: error', messagePh: '{message}', hint: 'Placeholders: {printer} {message}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    checkpoint1: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    checkpoint2: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+};
+
+function notifySoundOptionsHTML() {
+    return '<option value="">App default</option>' +
+        PUSHOVER_SOUNDS.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
+function notifyCustomizeHTML(t) {
+    const c = NOTIFY_CUSTOMIZE[t];
+    return `
+        <details style="margin-left:1.75rem;margin-top:0.25rem">
+            <summary>Customize</summary>
+            <div class="form-group">
+                <label for="setting-notify-${t}-title">Title</label>
+                <input type="text" id="setting-notify-${t}-title" placeholder="${esc(c.titlePh)}">
+            </div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-message">Message</label>
+                <input type="text" id="setting-notify-${t}-message" placeholder="${esc(c.messagePh)}">
+            </div>
+            <div class="form-hint">${esc(c.hint)}</div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-sound">Sound</label>
+                <select id="setting-notify-${t}-sound">${notifySoundOptionsHTML()}</select>
+            </div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-image">Image</label>
+                <select id="setting-notify-${t}-image">
+                    <option value="">${esc(c.imageDefault)}</option>
+                    <option value="camera">Camera (fallback to thumbnail)</option>
+                    <option value="thumbnail">Thumbnail only</option>
+                    <option value="none">None</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                    <input type="checkbox" id="setting-notify-${t}-high-priority" style="width:auto">
+                    High priority
+                </label>
+            </div>
+        </details>`;
+}
+
+document.querySelectorAll('.notify-customize').forEach(el => {
+    el.innerHTML = notifyCustomizeHTML(el.dataset.type);
+});
+
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
@@ -889,6 +951,23 @@ function openSettings() {
         document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
         document.getElementById('setting-thermal-max-bed').value = settings.thermal_max_bed_temp || '';
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
+        document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
+        document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
+        document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
+        document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
+        document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
+        document.getElementById('setting-notify-error').checked = settings.notify_on_error === '1';
+        document.getElementById('setting-notify-checkpoint1-enabled').checked = settings.notify_checkpoint1_enabled === '1';
+        document.getElementById('setting-notify-checkpoint1-percent').value = settings.notify_checkpoint1_percent || '5';
+        document.getElementById('setting-notify-checkpoint2-enabled').checked = settings.notify_checkpoint2_enabled === '1';
+        document.getElementById('setting-notify-checkpoint2-percent').value = settings.notify_checkpoint2_percent || '50';
+        NOTIFY_TYPES.forEach(t => {
+            document.getElementById(`setting-notify-${t}-title`).value = settings[`notify_${t}_title`] || '';
+            document.getElementById(`setting-notify-${t}-message`).value = settings[`notify_${t}_message`] || '';
+            document.getElementById(`setting-notify-${t}-sound`).value = settings[`notify_${t}_sound`] || '';
+            document.getElementById(`setting-notify-${t}-image`).value = settings[`notify_${t}_image`] || '';
+            document.getElementById(`setting-notify-${t}-high-priority`).checked = settings[`notify_${t}_high_priority`] === '1';
+        });
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -1683,6 +1762,47 @@ async function saveSettings(e) {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     closeModal();
+}
+
+async function saveNotificationSettings(e) {
+    e.preventDefault();
+    const settings = {
+        pushover_user_key: document.getElementById('setting-pushover-user-key').value,
+        pushover_app_token: document.getElementById('setting-pushover-app-token').value,
+        notify_on_start: document.getElementById('setting-notify-start').checked ? '1' : '0',
+        notify_on_complete: document.getElementById('setting-notify-complete').checked ? '1' : '0',
+        notify_on_failed: document.getElementById('setting-notify-failed').checked ? '1' : '0',
+        notify_on_error: document.getElementById('setting-notify-error').checked ? '1' : '0',
+        notify_checkpoint1_enabled: document.getElementById('setting-notify-checkpoint1-enabled').checked ? '1' : '0',
+        notify_checkpoint1_percent: document.getElementById('setting-notify-checkpoint1-percent').value || '5',
+        notify_checkpoint2_enabled: document.getElementById('setting-notify-checkpoint2-enabled').checked ? '1' : '0',
+        notify_checkpoint2_percent: document.getElementById('setting-notify-checkpoint2-percent').value || '50',
+    };
+    NOTIFY_TYPES.forEach(t => {
+        settings[`notify_${t}_title`] = document.getElementById(`setting-notify-${t}-title`).value;
+        settings[`notify_${t}_message`] = document.getElementById(`setting-notify-${t}-message`).value;
+        settings[`notify_${t}_sound`] = document.getElementById(`setting-notify-${t}-sound`).value;
+        settings[`notify_${t}_image`] = document.getElementById(`setting-notify-${t}-image`).value;
+        settings[`notify_${t}_high_priority`] = document.getElementById(`setting-notify-${t}-high-priority`).checked ? '1' : '0';
+    });
+    await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings),
+    });
+    closeModal();
+}
+
+async function sendTestNotification() {
+    const result = document.getElementById('notify-test-result');
+    result.textContent = 'Sending...';
+    try {
+        const resp = await fetch('/api/notify-test', {method: 'POST'});
+        const data = await resp.json();
+        result.textContent = data.success ? 'Test notification sent - check your device.' : `Failed: ${data.error}`;
+    } catch (e) {
+        result.textContent = `Failed: ${e.message}`;
+    }
 }
 
 let snapshotTimer = null;

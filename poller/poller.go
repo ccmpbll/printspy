@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
+	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/printmeta"
 	"github.com/ccmpbll/printspy/smartplug"
@@ -27,6 +29,11 @@ type polledPrinter struct {
 	// auto-off-after-idle-timeout feature. Zero value means "not idle" (or
 	// auto-off already fired for this idle streak).
 	idleSince time.Time
+	// notifiedCheckpoint1/2 are one-shot per print latches for the
+	// checkpoint-percent notifications - reset to false whenever the
+	// printer transitions into a fresh print.
+	notifiedCheckpoint1 bool
+	notifiedCheckpoint2 bool
 }
 
 type SSEMessage struct {
@@ -56,6 +63,11 @@ type Poller struct {
 	// to the same printer's USB storage is exactly the kind of thing that
 	// corrupts a transfer. Lazily created, keyed by printer ID.
 	uploadLocks sync.Map
+
+	// notifyClient is used for notification image capture (camera snapshots,
+	// print thumbnails) - separate from other per-purpose clients in this
+	// codebase (e.g. prusalink.Plugin's client/uploadClient split).
+	notifyClient *http.Client
 }
 
 func (p *Poller) uploadLock(id int64) *sync.Mutex {
@@ -65,10 +77,11 @@ func (p *Poller) uploadLock(id int64) *sync.Mutex {
 
 func New(database *db.DB) *Poller {
 	return &Poller{
-		printers:    make(map[int64]*polledPrinter),
-		cache:       make(map[int64]*models.PrinterStatus),
-		db:          database,
-		subscribers: make(map[*subscriber]struct{}),
+		printers:     make(map[int64]*polledPrinter),
+		cache:        make(map[int64]*models.PrinterStatus),
+		db:           database,
+		subscribers:  make(map[*subscriber]struct{}),
+		notifyClient: &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -495,6 +508,66 @@ func (p *Poller) GetThumbnailURL(id int64) string {
 	return ""
 }
 
+// captureCameraOrThumbnail fetches an image to attach to a notification:
+// the assigned camera's live snapshot if reachable, else the current print's
+// plate thumbnail. Mirrors handleSnapshotProxy/handleThumbnailProxy
+// (api/handlers.go) exactly, just returning bytes instead of streaming to
+// an http.ResponseWriter. Returns an error only when neither source is
+// available - callers should treat that as "send text-only", not a failure.
+func (p *Poller) captureCameraOrThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
+	snapshotURL := ""
+	usingCamera := false
+	if cam, err := p.db.GetCameraForPrinter(id); err == nil {
+		snapshotURL = strings.TrimRight(cam.URL, "/") + "/snapshot"
+		usingCamera = true
+	} else {
+		snapshotURL = p.GetSnapshotURL(id)
+	}
+	if snapshotURL != "" {
+		if data, ct, err := p.fetchImageURL(ctx, id, snapshotURL, usingCamera); err == nil {
+			return data, ct, nil
+		}
+	}
+	return p.captureThumbnail(ctx, id)
+}
+
+// captureThumbnail fetches only the current print's plate thumbnail,
+// skipping any assigned camera entirely.
+func (p *Poller) captureThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
+	thumbURL := p.GetThumbnailURL(id)
+	if thumbURL == "" {
+		return nil, "", fmt.Errorf("no image available")
+	}
+	return p.fetchImageURL(ctx, id, thumbURL, false)
+}
+
+func (p *Poller) fetchImageURL(ctx context.Context, id int64, url string, direct bool) ([]byte, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var resp *http.Response
+	if direct {
+		resp, err = p.notifyClient.Do(req)
+	} else {
+		resp, err = p.AuthenticatedDo(id, p.notifyClient, req)
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("http %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, resp.Header.Get("Content-Type"), nil
+}
+
 // SSE subscriber management
 
 func (p *Poller) Subscribe(ctx context.Context) *subscriber {
@@ -621,6 +694,9 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.checkAutoOff(ctx, id, status)
 	p.checkThermalRunaway(ctx, id, status)
 	p.checkIngestOnline(ctx, id, prevState, status)
+	p.checkCheckpoints(ctx, id, status)
+	p.checkErrorNotify(ctx, id, prevState, status)
+	p.checkPrintStartNotify(ctx, id, prevState, status)
 
 	p.broadcast(id, status)
 }
@@ -685,6 +761,256 @@ func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
 	}
 	p.db.DeleteIngestJob(jobID)
 	os.RemoveAll(filepath.Dir(job.FilePath))
+}
+
+// sendNotification is the shared Pushover send path for every notification
+// type (checkpoints, complete/failed, error). No-ops silently if Pushover
+// credentials aren't configured. Image capture failure (no camera, no
+// thumbnail) degrades to a text-only notification rather than blocking send.
+//
+// eventType is the settings-key prefix ("checkpoint1", "complete", "error",
+// etc) used to look up a per-type custom title/message/sound/priority
+// override; defaultTitle/defaultMessage are used verbatim when no override
+// is set, so leaving a type uncustomized reproduces the exact previous
+// hardcoded behavior. When a custom template IS set, placeholders (e.g.
+// "{printer}") are substituted from values.
+func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defaultTitle, defaultMessage string, values map[string]string) {
+	token, _ := p.db.GetSetting("pushover_app_token")
+	userKey, _ := p.db.GetSetting("pushover_user_key")
+	if token == "" || userKey == "" {
+		return
+	}
+
+	title := defaultTitle
+	if custom, _ := p.db.GetSetting("notify_" + eventType + "_title"); custom != "" {
+		title = applyPlaceholders(custom, values)
+	}
+	message := defaultMessage
+	if custom, _ := p.db.GetSetting("notify_" + eventType + "_message"); custom != "" {
+		message = applyPlaceholders(custom, values)
+	}
+	priority := 0
+	if p.notifySettingBool("notify_" + eventType + "_high_priority") {
+		priority = 1
+	}
+	sound, _ := p.db.GetSetting("notify_" + eventType + "_sound")
+
+	// Print Started defaults to thumbnail-only (nothing's necessarily even
+	// visible on the camera yet at the very start of a print); every other
+	// type defaults to camera-with-thumbnail-fallback. Either is overridable
+	// per type via notify_<type>_image.
+	defaultImageMode := "camera"
+	if eventType == "start" {
+		defaultImageMode = "thumbnail"
+	}
+	imageMode := defaultImageMode
+	if v, _ := p.db.GetSetting("notify_" + eventType + "_image"); v != "" {
+		imageMode = v
+	}
+
+	var image []byte
+	var contentType string
+	switch imageMode {
+	case "none":
+	case "thumbnail":
+		image, contentType, _ = p.captureThumbnail(ctx, id)
+	default: // "camera"
+		image, contentType, _ = p.captureCameraOrThumbnail(ctx, id)
+	}
+
+	msg := notify.Message{
+		Title: title, Text: message,
+		Image: image, ImageContentType: contentType,
+		Priority: priority, Sound: sound,
+	}
+	if err := notify.Send(token, userKey, msg); err != nil {
+		log.Printf("[printer:%d] pushover send failed: %v", id, err)
+	}
+}
+
+func applyPlaceholders(tmpl string, values map[string]string) string {
+	pairs := make([]string, 0, len(values)*2)
+	for k, v := range values {
+		pairs = append(pairs, "{"+k+"}", v)
+	}
+	return strings.NewReplacer(pairs...).Replace(tmpl)
+}
+
+// notifyPrinterName resolves the printer's configured nickname for use in
+// a notification title/message; falls back to the numeric id if the
+// printer record can't be read (shouldn't happen for an actively-polled
+// printer, but a notification is worth sending either way).
+func (p *Poller) notifyPrinterName(id int64) string {
+	if printer, err := p.db.GetPrinter(id); err == nil {
+		return printer.Name
+	}
+	return fmt.Sprintf("printer %d", id)
+}
+
+func (p *Poller) notifySettingBool(key string) bool {
+	v, err := p.db.GetSetting(key)
+	return err == nil && v == "1"
+}
+
+func (p *Poller) notifySettingPercent(key string, def float64) float64 {
+	v, err := p.db.GetSetting(key)
+	if err != nil || v == "" {
+		return def
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	return n
+}
+
+// checkCheckpoints fires the checkpoint1/checkpoint2 percent-of-completion
+// notifications, each one-shot per print. Latches reset whenever the
+// printer isn't actively printing/paused, so they're armed again for the
+// next print without needing a separate "print just started" transition
+// check.
+func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.PrinterStatus) {
+	printing := status.State == models.StatePrinting || status.State == models.StatePaused
+
+	p.mu.Lock()
+	pp, ok := p.printers[id]
+	if !ok {
+		p.mu.Unlock()
+		return
+	}
+	if !printing {
+		pp.notifiedCheckpoint1 = false
+		pp.notifiedCheckpoint2 = false
+		p.mu.Unlock()
+		return
+	}
+	if status.State != models.StatePrinting || status.Job == nil {
+		p.mu.Unlock()
+		return
+	}
+
+	progress := status.Job.Progress
+	fire1 := !pp.notifiedCheckpoint1 && p.notifySettingBool("notify_checkpoint1_enabled") && progress >= p.notifySettingPercent("notify_checkpoint1_percent", 5)
+	fire2 := !pp.notifiedCheckpoint2 && p.notifySettingBool("notify_checkpoint2_enabled") && progress >= p.notifySettingPercent("notify_checkpoint2_percent", 50)
+	if fire1 {
+		pp.notifiedCheckpoint1 = true
+	}
+	if fire2 {
+		pp.notifiedCheckpoint2 = true
+	}
+	p.mu.Unlock()
+
+	if !fire1 && !fire2 {
+		return
+	}
+	printerName := p.notifyPrinterName(id)
+	fileName := status.Job.FileName
+	defaultMessage := fmt.Sprintf("%s: %s reached %.0f%%", printerName, fileName, status.Job.Progress)
+	placeholders := map[string]string{
+		"printer": printerName,
+		"file":    fileName,
+		"percent": fmt.Sprintf("%.0f", status.Job.Progress),
+	}
+	if fire1 {
+		p.sendNotification(ctx, id, "checkpoint1", "Print checkpoint", defaultMessage, placeholders)
+	}
+	if fire2 {
+		p.sendNotification(ctx, id, "checkpoint2", "Print checkpoint", defaultMessage, placeholders)
+	}
+}
+
+// notifyPrintResult sends the Print Complete/Failed notification. A
+// cancelled print (user-initiated) sends nothing - not a "failure" in the
+// alarming sense a Pushover alert implies.
+func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.PrintHistory) {
+	var enabled bool
+	var eventType, title string
+	switch h.Result {
+	case "completed":
+		enabled = p.notifySettingBool("notify_on_complete")
+		eventType, title = "complete", "Print complete"
+	case "failed":
+		enabled = p.notifySettingBool("notify_on_failed")
+		eventType, title = "failed", "Print failed"
+	default:
+		return
+	}
+	if !enabled {
+		return
+	}
+
+	printerName := p.notifyPrinterName(id)
+	message := fmt.Sprintf("%s: %s", printerName, h.FileName)
+	if h.Material != "" {
+		message += fmt.Sprintf(" (%s", h.Material)
+		if h.FilamentUsedG > 0 {
+			message += fmt.Sprintf(", %.0fg", h.FilamentUsedG)
+		}
+		message += ")"
+	}
+	message += fmt.Sprintf(" - %s", formatDuration(h.DurationSecs))
+
+	placeholders := map[string]string{
+		"printer":    printerName,
+		"file":       h.FileName,
+		"material":   h.Material,
+		"filament_g": fmt.Sprintf("%.0f", h.FilamentUsedG),
+		"duration":   formatDuration(h.DurationSecs),
+	}
+	p.sendNotification(ctx, id, eventType, title, message, placeholders)
+}
+
+func formatDuration(secs int) string {
+	d := time.Duration(secs) * time.Second
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh%dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
+}
+
+// checkErrorNotify fires the Error/Attention notification on the
+// transition edge only - independent of trackPrintHistory's printing->done
+// logic, since a thermal-runaway cutoff while idle should still notify.
+func (p *Poller) checkErrorNotify(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus) {
+	wasError := prevState == models.StateError || prevState == models.StateAttention
+	isError := status.State == models.StateError || status.State == models.StateAttention
+	if wasError || !isError {
+		return
+	}
+	if !p.notifySettingBool("notify_on_error") {
+		return
+	}
+	printerName := p.notifyPrinterName(id)
+	message := status.StateMessage
+	if message == "" {
+		message = string(status.State)
+	}
+	placeholders := map[string]string{"printer": printerName, "message": message}
+	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders)
+}
+
+// checkPrintStartNotify fires the Print Started notification on the
+// transition edge only, mirroring checkErrorNotify. Known limitation shared
+// with checkErrorNotify/checkIngestOnline: on the very first poll after an
+// app restart, prevState defaults to Offline, so a printer already mid-print
+// at startup looks like a fresh start and fires once spuriously - accepted,
+// same tradeoff this codebase already makes elsewhere for restart edges.
+func (p *Poller) checkPrintStartNotify(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus) {
+	wasPrinting := prevState == models.StatePrinting || prevState == models.StatePaused
+	nowPrinting := status.State == models.StatePrinting
+	if wasPrinting || !nowPrinting || status.Job == nil {
+		return
+	}
+	if !p.notifySettingBool("notify_on_start") {
+		return
+	}
+	printerName := p.notifyPrinterName(id)
+	fileName := status.Job.FileName
+	message := fmt.Sprintf("%s: %s", printerName, fileName)
+	placeholders := map[string]string{"printer": printerName, "file": fileName}
+	p.sendNotification(ctx, id, "start", "Print started", message, placeholders)
 }
 
 // checkAutoOff powers off a printer's assigned smart plug(s) after it's
@@ -916,7 +1242,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 	// tick for every other printer.
 	downloader, ok := pl.(plugin.MetadataDownloader)
 	if !ok || filePath == "" {
-		p.insertPrintHistory(id, h)
+		p.insertPrintHistory(ctx, id, h)
 		return
 	}
 	go func() {
@@ -944,14 +1270,15 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 				}
 			}
 		}
-		p.insertPrintHistory(id, h)
+		p.insertPrintHistory(ctx, id, h)
 	}()
 }
 
-func (p *Poller) insertPrintHistory(id int64, h *models.PrintHistory) {
+func (p *Poller) insertPrintHistory(ctx context.Context, id int64, h *models.PrintHistory) {
 	if err := p.db.InsertPrintHistory(h); err != nil {
 		log.Printf("[printer:%d] failed to record print history: %v", id, err)
-	} else {
-		log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, h.FileName, h.Result, h.DurationSecs)
+		return
 	}
+	log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, h.FileName, h.Result, h.DurationSecs)
+	p.notifyPrintResult(ctx, id, h)
 }

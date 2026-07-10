@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/netguard"
+	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/poller"
 	"gopkg.in/yaml.v3"
@@ -75,6 +77,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/test", h.handleTestConnection)
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.HandleFunc("/api/settings", h.handleSettings)
+	mux.HandleFunc("/api/notify-test", h.handleNotifyTest)
 	mux.HandleFunc("/api/config/export", h.handleConfigExport)
 	mux.HandleFunc("/api/config/import", h.handleConfigImport)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
@@ -518,6 +521,31 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleNotifyTest sends a text-only Pushover notification using whatever
+// credentials are currently saved, so the user can confirm delivery without
+// waiting for a real print event. Credentials are read from settings, never
+// accepted in the request body - this only ever tests what's already saved.
+func (h *Handler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	token, _ := h.db.GetSetting("pushover_app_token")
+	userKey, _ := h.db.GetSetting("pushover_user_key")
+	if token == "" || userKey == "" {
+		jsonResponse(w, map[string]any{"success": false, "error": "Pushover user key and app token must be saved first"})
+		return
+	}
+
+	msg := notify.Message{Title: "PrintSpy test", Text: "This is a test notification from PrintSpy."}
+	if err := notify.Send(token, userKey, msg); err != nil {
+		jsonResponse(w, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
 }
 
 // Power control
@@ -1603,6 +1631,44 @@ func validateSetting(key, value string) (string, error) {
 		return validateTempSetting(key, value, 150)
 	case "thermal_max_extruder_temp":
 		return validateTempSetting(key, value, 350)
+	case "notify_on_start", "notify_on_complete", "notify_on_failed", "notify_on_error",
+		"notify_checkpoint1_enabled", "notify_checkpoint2_enabled",
+		"notify_start_high_priority", "notify_complete_high_priority", "notify_failed_high_priority", "notify_error_high_priority",
+		"notify_checkpoint1_high_priority", "notify_checkpoint2_high_priority":
+		if value != "0" && value != "1" {
+			return "", fmt.Errorf("%s must be 0 or 1", key)
+		}
+		return value, nil
+	case "notify_checkpoint1_percent", "notify_checkpoint2_percent":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return "", fmt.Errorf("%s must be a number", key)
+		}
+		if n < 1 {
+			n = 1
+		} else if n > 99 {
+			n = 99
+		}
+		return strconv.Itoa(n), nil
+	case "notify_start_sound", "notify_complete_sound", "notify_failed_sound", "notify_error_sound",
+		"notify_checkpoint1_sound", "notify_checkpoint2_sound":
+		if value != "" && !slices.Contains(notify.Sounds, value) {
+			return "", fmt.Errorf("%s must be a valid Pushover sound", key)
+		}
+		return value, nil
+	case "notify_start_title", "notify_complete_title", "notify_failed_title", "notify_error_title",
+		"notify_checkpoint1_title", "notify_checkpoint2_title",
+		"notify_start_message", "notify_complete_message", "notify_failed_message", "notify_error_message",
+		"notify_checkpoint1_message", "notify_checkpoint2_message":
+		return value, nil
+	case "notify_start_image", "notify_complete_image", "notify_failed_image", "notify_error_image",
+		"notify_checkpoint1_image", "notify_checkpoint2_image":
+		if value != "" && value != "camera" && value != "thumbnail" && value != "none" {
+			return "", fmt.Errorf("%s must be camera, thumbnail, or none", key)
+		}
+		return value, nil
+	case "pushover_user_key", "pushover_app_token":
+		return value, nil
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)
 	}

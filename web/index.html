@@ -384,6 +384,72 @@
             </div>
 
             <div class="settings-section">
+                <h3>Notifications (Pushover)</h3>
+                <form onsubmit="saveNotificationSettings(event)">
+                    <div class="form-group">
+                        <label for="setting-pushover-user-key">Pushover user key</label>
+                        <input type="text" id="setting-pushover-user-key" placeholder="e.g. u1a2b3c4d5e6f7g8h9">
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-pushover-app-token">Pushover app token</label>
+                        <input type="text" id="setting-pushover-app-token" placeholder="e.g. a1b2c3d4e5f6g7h8i9">
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-start" style="width:auto">
+                            Print started
+                        </label>
+                        <div class="notify-customize" data-type="start"></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-complete" style="width:auto">
+                            Print complete
+                        </label>
+                        <div class="notify-customize" data-type="complete"></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-failed" style="width:auto">
+                            Print failed
+                        </label>
+                        <div class="notify-customize" data-type="failed"></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-error" style="width:auto">
+                            Printer error (thermal runaway, attention, etc)
+                        </label>
+                        <div class="notify-customize" data-type="error"></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-checkpoint1-enabled" style="width:auto">
+                            Checkpoint 1 at
+                            <input type="number" id="setting-notify-checkpoint1-percent" value="5" min="1" max="99" style="width:4rem">
+                            %
+                        </label>
+                        <div class="notify-customize" data-type="checkpoint1"></div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-notify-checkpoint2-enabled" style="width:auto">
+                            Checkpoint 2 at
+                            <input type="number" id="setting-notify-checkpoint2-percent" value="50" min="1" max="99" style="width:4rem">
+                            %
+                        </label>
+                        <div class="notify-customize" data-type="checkpoint2"></div>
+                    </div>
+                    <div class="form-hint">Checkpoint and print-complete/failed notifications include a live webcam snapshot when a camera's assigned, otherwise the plate thumbnail.</div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" class="btn" onclick="sendTestNotification()">Send test notification</button>
+                    </div>
+                    <div id="notify-test-result" class="form-hint"></div>
+                </form>
+            </div>
+
+            <div class="settings-section">
                 <h3>Your account</h3>
                 <form onsubmit="changePassword(event)">
                     <div class="form-group">
