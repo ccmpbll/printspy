@@ -1015,68 +1015,12 @@ header .printer-count {
     min-height: 1.1em;
 }
 
-/* Print history table - read-only, no thumb/buttons */
-.history-table-wrapper {
-    max-height: 60vh;
-    overflow-y: auto;
-    overflow-x: hidden;
-}
-.history-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.78rem;
-}
-.history-table th {
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    text-align: left;
-    color: var(--text-tertiary);
-    font-weight: 500;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-}
-.history-table td {
-    padding: 0.2rem 0.6rem;
-    color: var(--text-primary);
-    vertical-align: top;
-    overflow-wrap: break-word;
-}
-/* Each entry is two rows: a full-width filename line, then its data below -
-   grouped visually as one unit, with the border only after the data row. */
-.history-name-row td {
-    font-weight: 500;
-    padding-top: 0.6rem;
-    padding-bottom: 0.15rem;
-    white-space: normal;
-}
-.history-data-row td {
-    font-size: 0.75rem;
-    padding-bottom: 0.6rem;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-}
-.history-table tbody tr:hover {
-    background: var(--bg-secondary);
-}
-/* Specificity fights the plain ".history-table td" color rule above -
-   needs td.recent-status-* (not just .recent-status-*) to win. */
-.history-data-row td.recent-status-success { color: var(--success); }
-.history-data-row td.recent-status-failed { color: var(--error); }
-.history-data-row td.recent-status-cancelled { color: var(--text-tertiary); }
+/* Print history - same row shape as the File Manager list (.recent-item),
+   read-only so no thumb/buttons. Reuses .filemanager-list for the
+   scrolling container. */
 .history-est {
     color: var(--text-tertiary);
     font-size: 0.7rem;
-}
-/* A multi-tool print's material string (e.g. "PLA (T1), PLA (T3)") can run
-   longer than the Material column - wrap just this cell rather than
-   loosening the row-wide nowrap rule above. */
-.history-tools-cell {
-    white-space: normal;
 }
 .history-pagination {
     display: flex;

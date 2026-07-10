@@ -216,7 +216,7 @@ async function loadHistoryPage() {
     const prevBtn = document.getElementById('history-prev');
     const nextBtn = document.getElementById('history-next');
     const label = document.getElementById('history-page-label');
-    list.innerHTML = '<tr><td colspan="8" class="settings-empty">Loading…</td></tr>';
+    list.innerHTML = '<div class="settings-empty">Loading…</div>';
     prevBtn.disabled = true;
     nextBtn.disabled = true;
     try {
@@ -225,7 +225,7 @@ async function loadHistoryPage() {
         const data = await resp.json();
         const entries = data.entries || [];
         if (!entries.length) {
-            list.innerHTML = `<tr><td colspan="8" class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</td></tr>`;
+            list.innerHTML = `<div class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</div>`;
         } else {
             list.innerHTML = entries.map(historyRowHTML).join('');
         }
@@ -234,7 +234,7 @@ async function loadHistoryPage() {
         prevBtn.disabled = historyPage === 0;
         nextBtn.disabled = !historyHasMore;
     } catch (e) {
-        list.innerHTML = '<tr><td colspan="8" class="settings-empty">Failed to load history.</td></tr>';
+        list.innerHTML = '<div class="settings-empty">Failed to load history.</div>';
     }
 }
 
@@ -259,22 +259,23 @@ function historyRowHTML(h) {
     // or multi-tool print - h.tools (only present for 2+ tools) just adds
     // more of the same pairing, not a different format.
     const tools = (h.tools && h.tools.length) ? h.tools : (h.material ? [{material: h.material, tool_index: h.tool_index}] : []);
-    const materialCell = tools.length
-        ? `<span class="history-tools-cell">${tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ')}</span>`
-        : '';
-    const toolCell = h.tool_changes || '';
+    const materialStr = tools.length ? tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ') : '';
 
-    return `<tr class="history-name-row"><td colspan="8">${esc(h.filename)}</td></tr>
-    <tr class="history-data-row">
-        <td class="${statusClass}">${status}</td>
-        <td>${formatHistoryDate(h.completed_at)}</td>
-        <td>${materialCell}</td>
-        <td>${h.layer_height_mm ? `${h.layer_height_mm}mm` : ''}</td>
-        <td>${esc(h.fill_density || '')}</td>
-        <td>${filament}</td>
-        <td>${toolCell}</td>
-        <td>${durationStr}${estStr}</td>
-    </tr>`;
+    const details = [
+        materialStr,
+        h.layer_height_mm ? `${h.layer_height_mm}mm` : '',
+        esc(h.fill_density || ''),
+        filament,
+        h.tool_changes ? `${h.tool_changes} tool changes` : '',
+    ].filter(Boolean).join(' &middot; ');
+
+    return `<div class="recent-item history-item">
+        <div class="recent-item-info">
+            <span class="recent-name" title="${esc(h.filename)}">${esc(h.filename)}</span>
+            <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatHistoryDate(h.completed_at)} &middot; ${durationStr}${estStr}</span>
+            ${details ? `<span class="recent-meta">${details}</span>` : ''}
+        </div>
+    </div>`;
 }
 
 function formatHistoryDate(isoStr) {
