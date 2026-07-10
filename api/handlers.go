@@ -1661,6 +1661,12 @@ func validateSetting(key, value string) (string, error) {
 		"notify_start_message", "notify_complete_message", "notify_failed_message", "notify_error_message",
 		"notify_checkpoint1_message", "notify_checkpoint2_message":
 		return value, nil
+	case "notify_start_image", "notify_complete_image", "notify_failed_image", "notify_error_image",
+		"notify_checkpoint1_image", "notify_checkpoint2_image":
+		if value != "" && value != "camera" && value != "thumbnail" && value != "none" {
+			return "", fmt.Errorf("%s must be camera, thumbnail, or none", key)
+		}
+		return value, nil
 	case "pushover_user_key", "pushover_app_token":
 		return value, nil
 	default:

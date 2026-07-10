@@ -508,13 +508,13 @@ func (p *Poller) GetThumbnailURL(id int64) string {
 	return ""
 }
 
-// captureNotificationImage fetches an image to attach to a notification:
+// captureCameraOrThumbnail fetches an image to attach to a notification:
 // the assigned camera's live snapshot if reachable, else the current print's
 // plate thumbnail. Mirrors handleSnapshotProxy/handleThumbnailProxy
 // (api/handlers.go) exactly, just returning bytes instead of streaming to
 // an http.ResponseWriter. Returns an error only when neither source is
 // available - callers should treat that as "send text-only", not a failure.
-func (p *Poller) captureNotificationImage(ctx context.Context, id int64) ([]byte, string, error) {
+func (p *Poller) captureCameraOrThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
 	snapshotURL := ""
 	usingCamera := false
 	if cam, err := p.db.GetCameraForPrinter(id); err == nil {
@@ -528,7 +528,12 @@ func (p *Poller) captureNotificationImage(ctx context.Context, id int64) ([]byte
 			return data, ct, nil
 		}
 	}
+	return p.captureThumbnail(ctx, id)
+}
 
+// captureThumbnail fetches only the current print's plate thumbnail,
+// skipping any assigned camera entirely.
+func (p *Poller) captureThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
 	thumbURL := p.GetThumbnailURL(id)
 	if thumbURL == "" {
 		return nil, "", fmt.Errorf("no image available")
@@ -790,7 +795,29 @@ func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defa
 	}
 	sound, _ := p.db.GetSetting("notify_" + eventType + "_sound")
 
-	image, contentType, _ := p.captureNotificationImage(ctx, id)
+	// Print Started defaults to thumbnail-only (nothing's necessarily even
+	// visible on the camera yet at the very start of a print); every other
+	// type defaults to camera-with-thumbnail-fallback. Either is overridable
+	// per type via notify_<type>_image.
+	defaultImageMode := "camera"
+	if eventType == "start" {
+		defaultImageMode = "thumbnail"
+	}
+	imageMode := defaultImageMode
+	if v, _ := p.db.GetSetting("notify_" + eventType + "_image"); v != "" {
+		imageMode = v
+	}
+
+	var image []byte
+	var contentType string
+	switch imageMode {
+	case "none":
+	case "thumbnail":
+		image, contentType, _ = p.captureThumbnail(ctx, id)
+	default: // "camera"
+		image, contentType, _ = p.captureCameraOrThumbnail(ctx, id)
+	}
+
 	msg := notify.Message{
 		Title: title, Text: message,
 		Image: image, ImageContentType: contentType,

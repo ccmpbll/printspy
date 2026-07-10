@@ -917,6 +917,7 @@ function openSettings() {
             document.getElementById(`setting-notify-${t}-title`).value = settings[`notify_${t}_title`] || '';
             document.getElementById(`setting-notify-${t}-message`).value = settings[`notify_${t}_message`] || '';
             document.getElementById(`setting-notify-${t}-sound`).value = settings[`notify_${t}_sound`] || '';
+            document.getElementById(`setting-notify-${t}-image`).value = settings[`notify_${t}_image`] || '';
             document.getElementById(`setting-notify-${t}-high-priority`).checked = settings[`notify_${t}_high_priority`] === '1';
         });
     });
@@ -1733,6 +1734,7 @@ async function saveNotificationSettings(e) {
         settings[`notify_${t}_title`] = document.getElementById(`setting-notify-${t}-title`).value;
         settings[`notify_${t}_message`] = document.getElementById(`setting-notify-${t}-message`).value;
         settings[`notify_${t}_sound`] = document.getElementById(`setting-notify-${t}-sound`).value;
+        settings[`notify_${t}_image`] = document.getElementById(`setting-notify-${t}-image`).value;
         settings[`notify_${t}_high_priority`] = document.getElementById(`setting-notify-${t}-high-priority`).checked ? '1' : '0';
     });
     await fetch('/api/settings', {
