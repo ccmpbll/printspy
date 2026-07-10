@@ -155,7 +155,7 @@ async function loadFileManagerFiles(printerId) {
                 status = 'Failed';
                 statusClass = 'recent-status-failed';
             }
-            const btnLabel = f.success_count > 0 ? '&#8634; Reprint' : '&#9654; Print';
+            const btnLabel = f.success_count > 0 ? '&#8634; Reprint' : '<span class="icon-play"></span> Print';
             return `<div class="recent-item">
                 ${thumb}
                 <div class="recent-item-info">
@@ -417,7 +417,7 @@ function toggleWebcamMode(printerId) {
     const btn = card.querySelector('.webcam-toggle');
     if (btn) {
         btn.className = next === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
-        btn.innerHTML = next === 'live' ? '&#9724;' : '&#9654;';
+        btn.innerHTML = next === 'live' ? '<span class="icon-stop"></span>' : '<span class="icon-play"></span>';
     }
     const placeholder = card.querySelector('.webcam-placeholder');
     if (placeholder) placeholder.style.display = 'none';
@@ -604,9 +604,9 @@ function renderPrinterCard(printer) {
 
     let controlHTML = '';
     if (state === 'printing') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))">&#9724; Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     } else if (state === 'paused') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))">&#9654; Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))">&#9724; Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))"><span class="icon-play"></span> Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     }
 
     const filesHTML = `<button class="btn btn-sm btn-files" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
@@ -632,7 +632,7 @@ function renderPrinterCard(printer) {
                             <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
                         </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
-                        ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '&#9724;' : '&#9654;'}</button>` : ''}
+                        ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '<span class="icon-stop"></span>' : '<span class="icon-play"></span>'}</button>` : ''}
                     </div>
                 </div>
                 <div class="printer-stats">

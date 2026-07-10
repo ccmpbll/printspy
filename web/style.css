@@ -146,6 +146,29 @@ header .printer-count {
     font-size: 0.75rem;
 }
 
+/* CSS-drawn stop icon for Cancel, instead of a Unicode glyph (&#9724;) -
+   iOS Safari/Firefox render that codepoint via the emoji font: fixed
+   black color (ignores .btn-danger's red) and an oversized glyph. */
+.icon-stop {
+    display: inline-block;
+    width: 0.6em;
+    height: 0.6em;
+    background: currentColor;
+    vertical-align: -0.05em;
+}
+
+/* Same story as .icon-stop, for the webcam live/snapshot toggle's play
+   glyph (&#9654;). */
+.icon-play {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0.35em 0 0.35em 0.55em;
+    border-color: transparent transparent transparent currentColor;
+    vertical-align: -0.1em;
+}
+
 /* Same height as the other header-row buttons (Pause/Cancel/Edit, plain
    .btn-sm) - just a muted text color to read as secondary next to them. */
 .btn-files, .btn-history {
