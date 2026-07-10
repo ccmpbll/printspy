@@ -46,6 +46,20 @@ type Keepalive interface {
 	KeepaliveHost() (string, bool)
 }
 
+// MetadataDownloader is an optional capability for plugins whose printer
+// type keeps a completed print's own metadata (material, filament used,
+// layer height, ...) embedded in the file itself rather than exposing it
+// via the API (PrusaLink). Not part of PrinterPlugin since OctoPrint
+// already exposes richer job metadata through its own API and has no
+// equivalent need.
+type MetadataDownloader interface {
+	// DownloadFileForMetadata fetches path (a plugin-native ref, e.g.
+	// models.JobInfo.FilePath) for the purpose of extracting print
+	// metadata from it - displayName (the human-readable filename) decides
+	// whether the whole file is needed or just its leading bytes.
+	DownloadFileForMetadata(ctx context.Context, path, displayName string) ([]byte, error)
+}
+
 type PluginFactory func(config models.PrinterConfig) PrinterPlugin
 
 var (

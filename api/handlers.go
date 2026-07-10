@@ -208,6 +208,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.testPrinter(w, r, id)
 		case "history":
 			h.getPrintHistory(w, r, id)
+		case "history/list":
+			h.getPrintHistoryList(w, r, id)
 		case "power":
 			h.handlePower(w, r, id)
 		case "recent":
@@ -372,6 +374,31 @@ func (h *Handler) getPrintHistory(w http.ResponseWriter, r *http.Request, id int
 		return
 	}
 	jsonResponse(w, summary)
+}
+
+func (h *Handler) getPrintHistoryList(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	limit := 20
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	offset := 0
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
+		offset = v
+	}
+
+	entries, hasMore, err := h.db.ListPrintHistory(id, limit, offset)
+	if err != nil {
+		jsonError(w, "failed to get history", http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []models.PrintHistory{}
+	}
+	jsonResponse(w, map[string]any{"entries": entries, "has_more": hasMore})
 }
 
 func (h *Handler) handleReorder(w http.ResponseWriter, r *http.Request) {

@@ -264,6 +264,39 @@
         </div>
     </div>
 
+    <!-- Print History Modal -->
+    <div class="modal-overlay" id="history-modal">
+        <div class="modal modal-files">
+            <h2 id="history-modal-title">History</h2>
+            <div class="history-summary-line" id="history-summary-line"></div>
+            <div class="history-table-wrapper">
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>Result</th>
+                            <th>Date</th>
+                            <th>Material</th>
+                            <th>Layer</th>
+                            <th>Fill</th>
+                            <th>Filament</th>
+                            <th title="Tool changes">Changes</th>
+                            <th>Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-list"></tbody>
+                </table>
+            </div>
+            <div class="history-pagination">
+                <button type="button" class="btn btn-sm" id="history-prev" onclick="historyPrevPage()">&larr; Prev</button>
+                <span id="history-page-label"></span>
+                <button type="button" class="btn btn-sm" id="history-next" onclick="historyNextPage()">Next &rarr;</button>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Settings Modal -->
     <div class="modal-overlay" id="settings-modal">
         <div class="modal modal-wide">

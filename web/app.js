@@ -96,30 +96,6 @@ function updateHeaderCount() {
 
 // Power control
 
-// Print history summary
-
-function reloadIdlePrinterRecentPrints() {
-    printers.forEach(p => loadHistorySummary(p.config.id));
-}
-
-async function loadHistorySummary(printerId) {
-    const card = document.querySelector(`[data-printer-id="${printerId}"]`);
-    if (!card) return;
-    const container = card.querySelector('[data-field="history-summary"]');
-    if (!container) return;
-
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/history`);
-        if (!resp.ok) { container.textContent = ''; return; }
-        const summary = await resp.json();
-        if (!summary || summary.count === 0) {
-            container.textContent = '';
-            return;
-        }
-        container.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
-    } catch (e) { container.textContent = ''; }
-}
-
 async function startReprint(btn) {
     const printerId = btn.dataset.printer;
     const origin = btn.dataset.origin;
@@ -193,6 +169,125 @@ async function loadFileManagerFiles(printerId) {
     } catch (e) {
         list.innerHTML = '<div class="settings-empty">Failed to load files.</div>';
     }
+}
+
+// Print history - separate from the file manager (that's what's on the
+// printer now; this is what's ever been printed, one row per completed job).
+let historyPrinterId = null;
+let historyPage = 0;
+let historyHasMore = false;
+const HISTORY_PAGE_SIZE = 20;
+
+async function openPrintHistory(printerId) {
+    historyPrinterId = printerId;
+    historyPage = 0;
+    document.getElementById('history-modal-title').textContent = `History — ${esc(printerName(printerId))}`;
+    document.getElementById('history-modal').classList.add('active');
+    loadHistorySummaryLine(printerId);
+    await loadHistoryPage();
+}
+
+async function loadHistorySummaryLine(printerId) {
+    const line = document.getElementById('history-summary-line');
+    line.textContent = '';
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/history`);
+        if (!resp.ok) return;
+        const summary = await resp.json();
+        if (!summary || summary.count === 0) return;
+        line.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
+    } catch (e) {}
+}
+
+function historyPrevPage() {
+    if (historyPage === 0) return;
+    historyPage--;
+    loadHistoryPage();
+}
+
+function historyNextPage() {
+    if (!historyHasMore) return;
+    historyPage++;
+    loadHistoryPage();
+}
+
+async function loadHistoryPage() {
+    const list = document.getElementById('history-list');
+    const prevBtn = document.getElementById('history-prev');
+    const nextBtn = document.getElementById('history-next');
+    const label = document.getElementById('history-page-label');
+    list.innerHTML = '<tr><td colspan="8" class="settings-empty">Loading…</td></tr>';
+    prevBtn.disabled = true;
+    nextBtn.disabled = true;
+    try {
+        const offset = historyPage * HISTORY_PAGE_SIZE;
+        const resp = await fetch(`/api/printers/${historyPrinterId}/history/list?limit=${HISTORY_PAGE_SIZE}&offset=${offset}`);
+        const data = await resp.json();
+        const entries = data.entries || [];
+        if (!entries.length) {
+            list.innerHTML = `<tr><td colspan="8" class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</td></tr>`;
+        } else {
+            list.innerHTML = entries.map(historyRowHTML).join('');
+        }
+        historyHasMore = !!data.has_more;
+        label.textContent = `Page ${historyPage + 1}`;
+        prevBtn.disabled = historyPage === 0;
+        nextBtn.disabled = !historyHasMore;
+    } catch (e) {
+        list.innerHTML = '<tr><td colspan="8" class="settings-empty">Failed to load history.</td></tr>';
+    }
+}
+
+function historyRowHTML(h) {
+    let status = 'Completed';
+    let statusClass = 'recent-status-success';
+    if (h.result === 'failed') {
+        status = 'Failed';
+        statusClass = 'recent-status-failed';
+    } else if (h.result === 'cancelled') {
+        status = 'Cancelled';
+        statusClass = 'recent-status-cancelled';
+    }
+
+    const filament = h.filament_used_g
+        ? (h.filament_cost ? `${h.filament_used_g.toFixed(0)}g ($${h.filament_cost.toFixed(2)})` : `${h.filament_used_g.toFixed(0)}g`)
+        : '';
+    const durationStr = formatDuration(h.duration_secs);
+    const estStr = h.estimated_secs ? ` <span class="history-est">(est. ${formatDuration(h.estimated_secs)})</span>` : '';
+
+    // Material always reads "{material} (T{n})" whether it's a single-tool
+    // or multi-tool print - h.tools (only present for 2+ tools) just adds
+    // more of the same pairing, not a different format.
+    const tools = (h.tools && h.tools.length) ? h.tools : (h.material ? [{material: h.material, tool_index: h.tool_index}] : []);
+    const materialCell = tools.length
+        ? `<span class="history-tools-cell">${tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ')}</span>`
+        : '';
+    const toolCell = h.tool_changes || '';
+
+    return `<tr class="history-name-row"><td colspan="8">${esc(h.filename)}</td></tr>
+    <tr class="history-data-row">
+        <td class="${statusClass}">${status}</td>
+        <td>${formatHistoryDate(h.completed_at)}</td>
+        <td>${materialCell}</td>
+        <td>${h.layer_height_mm ? `${h.layer_height_mm}mm` : ''}</td>
+        <td>${esc(h.fill_density || '')}</td>
+        <td>${filament}</td>
+        <td>${toolCell}</td>
+        <td>${durationStr}${estStr}</td>
+    </tr>`;
+}
+
+function formatHistoryDate(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr);
+    return d.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'});
+}
+
+function formatDuration(secs) {
+    if (!secs) return '0m';
+    const h = Math.floor(secs / 3600);
+    const m = Math.round((secs % 3600) / 60);
+    return h > 0 ? `${h}h${m}m` : `${m}m`;
 }
 
 async function deleteManagedFile(btn) {
@@ -435,7 +530,6 @@ function updateDashboard() {
     if (structureChanged) {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
-        reloadIdlePrinterRecentPrints();
         renderIngestBanners();
     }
 }
@@ -447,7 +541,6 @@ function renderMaintenanceCard(printer) {
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 <span class="printer-state state-maintenance">Maintenance</span>
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
             </div>
             <div class="printer-body">
                 <div class="idle-message" data-field="idle-msg">In maintenance — polling paused</div>
@@ -517,7 +610,7 @@ function renderPrinterCard(printer) {
     }
 
     const filesHTML = `<button class="btn btn-sm btn-files" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
-    const historySummaryHTML = `<span class="history-summary" data-field="history-summary"></span>`;
+    const historyHTML = `<button class="btn btn-sm btn-history" onclick="event.stopPropagation();openPrintHistory(${cfg.id})">History</button>`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
@@ -528,8 +621,7 @@ function renderPrinterCard(printer) {
                 ${powerHTML}
                 ${controlHTML}
                 ${filesHTML}
-                ${historySummaryHTML}
-                <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener">${esc(printer.display_name)} &#8599;</a>
+                ${historyHTML}
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
@@ -1226,6 +1318,7 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
+                    <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener" title="Open ${esc(p.display_name)}">${esc(p.display_name)} &#8599;</a>
                     <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
                 </div>
@@ -1590,7 +1683,6 @@ async function saveSettings(e) {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     closeModal();
-    reloadIdlePrinterRecentPrints();
 }
 
 let snapshotTimer = null;
