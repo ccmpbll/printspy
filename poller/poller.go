@@ -761,16 +761,51 @@ func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
 // type (checkpoints, complete/failed, error). No-ops silently if Pushover
 // credentials aren't configured. Image capture failure (no camera, no
 // thumbnail) degrades to a text-only notification rather than blocking send.
-func (p *Poller) sendNotification(ctx context.Context, id int64, title, message string) {
+//
+// eventType is the settings-key prefix ("checkpoint1", "complete", "error",
+// etc) used to look up a per-type custom title/message/sound/priority
+// override; defaultTitle/defaultMessage are used verbatim when no override
+// is set, so leaving a type uncustomized reproduces the exact previous
+// hardcoded behavior. When a custom template IS set, placeholders (e.g.
+// "{printer}") are substituted from values.
+func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defaultTitle, defaultMessage string, values map[string]string) {
 	token, _ := p.db.GetSetting("pushover_app_token")
 	userKey, _ := p.db.GetSetting("pushover_user_key")
 	if token == "" || userKey == "" {
 		return
 	}
+
+	title := defaultTitle
+	if custom, _ := p.db.GetSetting("notify_" + eventType + "_title"); custom != "" {
+		title = applyPlaceholders(custom, values)
+	}
+	message := defaultMessage
+	if custom, _ := p.db.GetSetting("notify_" + eventType + "_message"); custom != "" {
+		message = applyPlaceholders(custom, values)
+	}
+	priority := 0
+	if p.notifySettingBool("notify_" + eventType + "_high_priority") {
+		priority = 1
+	}
+	sound, _ := p.db.GetSetting("notify_" + eventType + "_sound")
+
 	image, contentType, _ := p.captureNotificationImage(ctx, id)
-	if err := notify.SendPushover(token, userKey, title, message, image, contentType); err != nil {
+	msg := notify.Message{
+		Title: title, Text: message,
+		Image: image, ImageContentType: contentType,
+		Priority: priority, Sound: sound,
+	}
+	if err := notify.Send(token, userKey, msg); err != nil {
 		log.Printf("[printer:%d] pushover send failed: %v", id, err)
 	}
+}
+
+func applyPlaceholders(tmpl string, values map[string]string) string {
+	pairs := make([]string, 0, len(values)*2)
+	for k, v := range values {
+		pairs = append(pairs, "{"+k+"}", v)
+	}
+	return strings.NewReplacer(pairs...).Replace(tmpl)
 }
 
 // notifyPrinterName resolves the printer's configured nickname for use in
@@ -842,11 +877,17 @@ func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.
 	}
 	printerName := p.notifyPrinterName(id)
 	fileName := status.Job.FileName
+	defaultMessage := fmt.Sprintf("%s: %s reached %.0f%%", printerName, fileName, status.Job.Progress)
+	placeholders := map[string]string{
+		"printer": printerName,
+		"file":    fileName,
+		"percent": fmt.Sprintf("%.0f", status.Job.Progress),
+	}
 	if fire1 {
-		p.sendNotification(ctx, id, "Print checkpoint", fmt.Sprintf("%s: %s reached %.0f%%", printerName, fileName, status.Job.Progress))
+		p.sendNotification(ctx, id, "checkpoint1", "Print checkpoint", defaultMessage, placeholders)
 	}
 	if fire2 {
-		p.sendNotification(ctx, id, "Print checkpoint", fmt.Sprintf("%s: %s reached %.0f%%", printerName, fileName, status.Job.Progress))
+		p.sendNotification(ctx, id, "checkpoint2", "Print checkpoint", defaultMessage, placeholders)
 	}
 }
 
@@ -855,14 +896,14 @@ func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.
 // alarming sense a Pushover alert implies.
 func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.PrintHistory) {
 	var enabled bool
-	var title string
+	var eventType, title string
 	switch h.Result {
 	case "completed":
 		enabled = p.notifySettingBool("notify_on_complete")
-		title = "Print complete"
+		eventType, title = "complete", "Print complete"
 	case "failed":
 		enabled = p.notifySettingBool("notify_on_failed")
-		title = "Print failed"
+		eventType, title = "failed", "Print failed"
 	default:
 		return
 	}
@@ -880,7 +921,15 @@ func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.Prin
 		message += ")"
 	}
 	message += fmt.Sprintf(" - %s", formatDuration(h.DurationSecs))
-	p.sendNotification(ctx, id, title, message)
+
+	placeholders := map[string]string{
+		"printer":    printerName,
+		"file":       h.FileName,
+		"material":   h.Material,
+		"filament_g": fmt.Sprintf("%.0f", h.FilamentUsedG),
+		"duration":   formatDuration(h.DurationSecs),
+	}
+	p.sendNotification(ctx, id, eventType, title, message, placeholders)
 }
 
 func formatDuration(secs int) string {
@@ -910,7 +959,8 @@ func (p *Poller) checkErrorNotify(ctx context.Context, id int64, prevState model
 	if message == "" {
 		message = string(status.State)
 	}
-	p.sendNotification(ctx, id, fmt.Sprintf("%s: error", printerName), message)
+	placeholders := map[string]string{"printer": printerName, "message": message}
+	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders)
 }
 
 // checkAutoOff powers off a printer's assigned smart plug(s) after it's

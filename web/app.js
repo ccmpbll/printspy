@@ -878,6 +878,20 @@ function setStatValue(card, field, main, unit) {
 
 // Settings modal with printer management
 
+const NOTIFY_TYPES = ['complete', 'failed', 'error', 'checkpoint1', 'checkpoint2'];
+const PUSHOVER_SOUNDS = ['pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic', 'falling', 'gamelan',
+    'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien',
+    'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none'];
+
+document.querySelectorAll('.notify-sound-select').forEach(select => {
+    for (const sound of PUSHOVER_SOUNDS) {
+        const opt = document.createElement('option');
+        opt.value = sound;
+        opt.textContent = sound;
+        select.appendChild(opt);
+    }
+});
+
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
@@ -898,6 +912,12 @@ function openSettings() {
         document.getElementById('setting-notify-checkpoint1-percent').value = settings.notify_checkpoint1_percent || '5';
         document.getElementById('setting-notify-checkpoint2-enabled').checked = settings.notify_checkpoint2_enabled === '1';
         document.getElementById('setting-notify-checkpoint2-percent').value = settings.notify_checkpoint2_percent || '50';
+        NOTIFY_TYPES.forEach(t => {
+            document.getElementById(`setting-notify-${t}-title`).value = settings[`notify_${t}_title`] || '';
+            document.getElementById(`setting-notify-${t}-message`).value = settings[`notify_${t}_message`] || '';
+            document.getElementById(`setting-notify-${t}-sound`).value = settings[`notify_${t}_sound`] || '';
+            document.getElementById(`setting-notify-${t}-high-priority`).checked = settings[`notify_${t}_high_priority`] === '1';
+        });
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -1707,6 +1727,12 @@ async function saveNotificationSettings(e) {
         notify_checkpoint2_enabled: document.getElementById('setting-notify-checkpoint2-enabled').checked ? '1' : '0',
         notify_checkpoint2_percent: document.getElementById('setting-notify-checkpoint2-percent').value || '50',
     };
+    NOTIFY_TYPES.forEach(t => {
+        settings[`notify_${t}_title`] = document.getElementById(`setting-notify-${t}-title`).value;
+        settings[`notify_${t}_message`] = document.getElementById(`setting-notify-${t}-message`).value;
+        settings[`notify_${t}_sound`] = document.getElementById(`setting-notify-${t}-sound`).value;
+        settings[`notify_${t}_high_priority`] = document.getElementById(`setting-notify-${t}-high-priority`).checked ? '1' : '0';
+    });
     await fetch('/api/settings', {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},

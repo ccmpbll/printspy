@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -15,24 +16,49 @@ const pushoverURL = "https://api.pushover.net/1/messages.json"
 
 var client = &http.Client{Timeout: 15 * time.Second}
 
-// SendPushover posts a notification to Pushover. image may be nil for a
-// text-only notification - never block sending on a missing/failed image.
-func SendPushover(token, userKey, title, message string, image []byte, imageContentType string) error {
+// Sounds is Pushover's fixed set of built-in notification sounds.
+var Sounds = []string{
+	"pushover", "bike", "bugle", "cashregister", "classical", "cosmic",
+	"falling", "gamelan", "incoming", "intermission", "magic", "mechanical",
+	"pianobar", "siren", "spacealarm", "tugboat", "alien", "climb",
+	"persistent", "echo", "updown", "vibrate", "none",
+}
+
+// Message is a Pushover notification. Image may be nil for text-only.
+// Priority 0 = normal, 1 = high (bypasses phone quiet hours/DND). Sound
+// empty uses the receiving device's default Pushover sound.
+type Message struct {
+	Title, Text      string
+	Image            []byte
+	ImageContentType string
+	Priority         int
+	Sound            string
+}
+
+// Send posts msg to Pushover.
+func Send(token, userKey string, msg Message) error {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
 	fields := map[string]string{
 		"token":   token,
 		"user":    userKey,
-		"title":   title,
-		"message": message,
+		"title":   msg.Title,
+		"message": msg.Text,
+	}
+	if msg.Priority != 0 {
+		fields["priority"] = strconv.Itoa(msg.Priority)
+	}
+	if msg.Sound != "" {
+		fields["sound"] = msg.Sound
 	}
 	for k, v := range fields {
 		if err := w.WriteField(k, v); err != nil {
 			return fmt.Errorf("write field %s: %w", k, err)
 		}
 	}
-	if len(image) > 0 {
+	if len(msg.Image) > 0 {
+		imageContentType := msg.ImageContentType
 		if imageContentType == "" {
 			imageContentType = "image/jpeg"
 		}
@@ -43,7 +69,7 @@ func SendPushover(token, userKey, title, message string, image []byte, imageCont
 		if err != nil {
 			return fmt.Errorf("create attachment part: %w", err)
 		}
-		if _, err := part.Write(image); err != nil {
+		if _, err := part.Write(msg.Image); err != nil {
 			return fmt.Errorf("write attachment: %w", err)
 		}
 	}

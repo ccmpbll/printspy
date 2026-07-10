@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -539,7 +540,8 @@ func (h *Handler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := notify.SendPushover(token, userKey, "PrintSpy test", "This is a test notification from PrintSpy.", nil, ""); err != nil {
+	msg := notify.Message{Title: "PrintSpy test", Text: "This is a test notification from PrintSpy."}
+	if err := notify.Send(token, userKey, msg); err != nil {
 		jsonResponse(w, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
@@ -1630,7 +1632,9 @@ func validateSetting(key, value string) (string, error) {
 	case "thermal_max_extruder_temp":
 		return validateTempSetting(key, value, 350)
 	case "notify_on_complete", "notify_on_failed", "notify_on_error",
-		"notify_checkpoint1_enabled", "notify_checkpoint2_enabled":
+		"notify_checkpoint1_enabled", "notify_checkpoint2_enabled",
+		"notify_complete_high_priority", "notify_failed_high_priority", "notify_error_high_priority",
+		"notify_checkpoint1_high_priority", "notify_checkpoint2_high_priority":
 		if value != "0" && value != "1" {
 			return "", fmt.Errorf("%s must be 0 or 1", key)
 		}
@@ -1646,6 +1650,17 @@ func validateSetting(key, value string) (string, error) {
 			n = 99
 		}
 		return strconv.Itoa(n), nil
+	case "notify_complete_sound", "notify_failed_sound", "notify_error_sound",
+		"notify_checkpoint1_sound", "notify_checkpoint2_sound":
+		if value != "" && !slices.Contains(notify.Sounds, value) {
+			return "", fmt.Errorf("%s must be a valid Pushover sound", key)
+		}
+		return value, nil
+	case "notify_complete_title", "notify_failed_title", "notify_error_title",
+		"notify_checkpoint1_title", "notify_checkpoint2_title",
+		"notify_complete_message", "notify_failed_message", "notify_error_message",
+		"notify_checkpoint1_message", "notify_checkpoint2_message":
+		return value, nil
 	case "pushover_user_key", "pushover_app_token":
 		return value, nil
 	default:
