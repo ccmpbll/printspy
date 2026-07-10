@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type PrinterState string
 
@@ -151,6 +154,12 @@ type PrintHistory struct {
 	EstimatedSecs int     `json:"estimated_secs,omitempty"`
 	MaxLayerZ     float64 `json:"max_layer_z,omitempty"`
 	ObjectNames   string  `json:"object_names,omitempty"`
+	// ToolChanges/Tools are only populated for genuinely multi-tool prints
+	// (2+ tools with non-zero usage) - Tools embeds printmeta.ToolUsage
+	// JSON directly (a real nested array in the API response, not a string
+	// to re-parse client-side).
+	ToolChanges int             `json:"tool_changes,omitempty"`
+	Tools       json.RawMessage `json:"tools,omitempty"`
 }
 
 type User struct {

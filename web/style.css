@@ -99,6 +99,7 @@ header .printer-count {
     background: var(--bg-primary);
     color: var(--text-primary);
     font-size: 0.8rem;
+    line-height: 1.2;
     cursor: pointer;
     text-decoration: none;
     transition: background 0.15s;
@@ -145,11 +146,9 @@ header .printer-count {
     font-size: 0.75rem;
 }
 
-/* Matches the printer-header row's power-toggle/link button height (~26px)
-   and muted text color - plain .btn-sm alone renders shorter and brighter
-   than those, standing out sitting next to it in the same row. */
+/* Same height as the other header-row buttons (Pause/Cancel/Edit, plain
+   .btn-sm) - just a muted text color to read as secondary next to them. */
 .btn-files, .btn-history {
-    padding: 0.32rem 0.6rem;
     color: var(--text-secondary);
 }
 
@@ -227,16 +226,16 @@ header .printer-count {
     font-weight: 600;
 }
 
-.printer-model, .history-summary {
+.printer-model {
     font-size: 0.75rem;
     color: var(--text-secondary);
 }
 
-.history-summary { margin-left: auto; }
-
 .printer-state {
     font-size: 0.75rem;
-    padding: 0.15rem 0.6rem;
+    line-height: 1.2;
+    padding: 0.25rem 0.6rem;
+    border: 1px solid transparent;
     border-radius: var(--radius);
     font-weight: 500;
 }
@@ -267,8 +266,9 @@ header .printer-count {
     border: 1px solid var(--border);
 }
 .power-toggle-btn {
-    padding: 0.2rem 0.5rem;
+    padding: 0.25rem 0.5rem;
     font-size: 0.75rem;
+    line-height: 1.2;
     border: none;
     background: var(--bg-primary);
     color: var(--text-secondary);
@@ -989,6 +989,13 @@ header .printer-count {
     white-space: nowrap;
 }
 
+.history-summary-line {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin: -0.5rem 0 0.75rem;
+    min-height: 1.1em;
+}
+
 /* Print history table - read-only, no thumb/buttons */
 .history-table-wrapper {
     max-height: 60vh;
@@ -1045,6 +1052,12 @@ header .printer-count {
 .history-est {
     color: var(--text-tertiary);
     font-size: 0.7rem;
+}
+/* A multi-tool print's material string (e.g. "PLA (T1), PLA (T3)") can run
+   longer than the Material column - wrap just this cell rather than
+   loosening the row-wide nowrap rule above. */
+.history-tools-cell {
+    white-space: normal;
 }
 .history-pagination {
     display: flex;

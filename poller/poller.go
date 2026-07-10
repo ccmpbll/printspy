@@ -937,6 +937,12 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			h.EstimatedSecs = info.EstimatedSecs
 			h.MaxLayerZ = info.MaxLayerZ
 			h.ObjectNames = strings.Join(info.ObjectNames, ", ")
+			h.ToolChanges = info.ToolChanges
+			if len(info.Tools) > 1 {
+				if b, err := json.Marshal(info.Tools); err == nil {
+					h.Tools = b
+				}
+			}
 		}
 		p.insertPrintHistory(id, h)
 	}()

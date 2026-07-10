@@ -16,18 +16,29 @@ import (
 	"strings"
 )
 
+// ToolUsage is one tool's contribution to a print - a print using two
+// colors/materials produces two of these, not one.
+type ToolUsage struct {
+	ToolIndex     int     `json:"tool_index"`
+	Material      string  `json:"material"`
+	FilamentUsedG float64 `json:"filament_used_g"`
+	FilamentCost  float64 `json:"filament_cost"`
+}
+
 type Info struct {
 	LayerHeightMM  float64
 	FillDensity    string
 	PrinterModel   string
-	Material       string // resolved filament_type for the tool actually used
-	ToolIndex      int    // 0 for non-MMU
+	Material       string // primary (first) tool's material - back-compat, == Tools[0].Material
+	ToolIndex      int    // primary (first) tool's index - back-compat, == Tools[0].ToolIndex
 	FilamentUsedMM float64
-	FilamentUsedG  float64
-	FilamentCost   float64
-	EstimatedSecs  int // normal-mode estimate
+	FilamentUsedG  float64 // print total (from the file's own "total filament used [g]" when present)
+	FilamentCost   float64 // print total (from the file's own "total filament cost" when present)
+	EstimatedSecs  int     // normal-mode estimate
 	MaxLayerZ      float64
 	ObjectNames    []string
+	Tools          []ToolUsage // every tool with non-zero usage; len 1 for single-tool prints
+	ToolChanges    int         // "total toolchanges"; 0 when absent (single-material prints)
 }
 
 func Parse(filename string, data []byte) (*Info, error) {
@@ -172,27 +183,54 @@ func infoFromKV(kv map[string]string) *Info {
 	info.EstimatedSecs = parseDuration(kv["estimated printing time (normal mode)"])
 	info.ObjectNames = parseObjectNames(kv["objects_info"])
 
+	info.ToolChanges, _ = strconv.Atoi(kv["total toolchanges"])
+
 	usedMM := splitValues(kv["filament used [mm]"])
 	usedG := splitValues(kv["filament used [g]"])
 	cost := splitValues(kv["filament cost"])
 	material := splitValues(kv["filament_type"])
 
 	// Only a multi-tool printer's fields are actually arrays - a
-	// single-extruder file has plain scalars and ToolIndex stays 0. Resolve
-	// which index was used by whichever slot has non-zero filament used.
-	idx := 0
+	// single-extruder file has plain scalars. Every slot with non-zero
+	// usage was genuinely printed with - an MMU job can and does use more
+	// than one, not just the first.
 	for i, v := range usedMM {
 		if f, _ := strconv.ParseFloat(v, 64); f > 0 {
-			idx = i
-			break
+			g, _ := strconv.ParseFloat(at(usedG, i), 64)
+			c, _ := strconv.ParseFloat(at(cost, i), 64)
+			info.Tools = append(info.Tools, ToolUsage{
+				ToolIndex: i, Material: at(material, i),
+				FilamentUsedG: g, FilamentCost: c,
+			})
 		}
 	}
-	info.ToolIndex = idx
+	if len(info.Tools) == 0 {
+		// Nothing measured non-zero - fall back to slot 0.
+		info.Tools = append(info.Tools, ToolUsage{Material: at(material, 0)})
+	}
 
-	info.FilamentUsedMM, _ = strconv.ParseFloat(at(usedMM, idx), 64)
-	info.FilamentUsedG, _ = strconv.ParseFloat(at(usedG, idx), 64)
-	info.FilamentCost, _ = strconv.ParseFloat(at(cost, idx), 64)
-	info.Material = at(material, idx)
+	primary := info.Tools[0]
+	info.ToolIndex = primary.ToolIndex
+	info.Material = primary.Material
+	info.FilamentUsedMM, _ = strconv.ParseFloat(at(usedMM, primary.ToolIndex), 64)
+
+	// Prefer the slicer's own precomputed total over re-summing Tools - it
+	// can include wipe-tower waste the per-tool breakdown doesn't
+	// attribute to any one slot.
+	if v, ok := kv["total filament used [g]"]; ok {
+		info.FilamentUsedG, _ = strconv.ParseFloat(v, 64)
+	} else {
+		for _, t := range info.Tools {
+			info.FilamentUsedG += t.FilamentUsedG
+		}
+	}
+	if v, ok := kv["total filament cost"]; ok {
+		info.FilamentCost, _ = strconv.ParseFloat(v, 64)
+	} else {
+		for _, t := range info.Tools {
+			info.FilamentCost += t.FilamentCost
+		}
+	}
 
 	return info
 }

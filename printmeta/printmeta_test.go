@@ -45,6 +45,12 @@ func TestParseBgcodeMK4SSpool(t *testing.T) {
 	if len(info.ObjectNames) != 6 {
 		t.Errorf("len(ObjectNames) = %d, want 6", len(info.ObjectNames))
 	}
+	if len(info.Tools) != 1 {
+		t.Errorf("len(Tools) = %d, want 1", len(info.Tools))
+	}
+	if info.ToolChanges != 0 {
+		t.Errorf("ToolChanges = %d, want 0", info.ToolChanges)
+	}
 }
 
 func TestParseGcodeBenchy(t *testing.T) {
@@ -83,6 +89,48 @@ func TestParseGcodeBenchy(t *testing.T) {
 	}
 	if len(info.ObjectNames) != 1 || info.ObjectNames[0] != "3dbenchy.stl" {
 		t.Errorf("ObjectNames = %v, want [3dbenchy.stl]", info.ObjectNames)
+	}
+	if len(info.Tools) != 1 {
+		t.Errorf("len(Tools) = %d, want 1", len(info.Tools))
+	}
+	if info.ToolChanges != 0 {
+		t.Errorf("ToolChanges = %d, want 0", info.ToolChanges)
+	}
+}
+
+func TestParseBgcodeMultiToolBenchy(t *testing.T) {
+	data, err := os.ReadFile("testdata/multi_benchy.bgcode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := Parse("3dbenchy_0.4n_0.2mm_PLA,PLA_Ext0_2_MK4SMMU3_3h43m.bgcode", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(info.Tools) != 2 {
+		t.Fatalf("len(Tools) = %d, want 2", len(info.Tools))
+	}
+	if got := info.Tools[0]; got.ToolIndex != 0 || got.Material != "PLA" || abs(got.FilamentUsedG-26.28) > 0.01 || abs(got.FilamentCost-0.74) > 0.001 {
+		t.Errorf("Tools[0] = %+v, want {0 PLA 26.28 0.74}", got)
+	}
+	if got := info.Tools[1]; got.ToolIndex != 2 || got.Material != "PLA" || abs(got.FilamentUsedG-14.78) > 0.01 || abs(got.FilamentCost-0.41) > 0.001 {
+		t.Errorf("Tools[1] = %+v, want {2 PLA 14.78 0.41}", got)
+	}
+	if got, want := info.FilamentUsedG, 41.06; abs(got-want) > 0.01 {
+		t.Errorf("FilamentUsedG = %v, want %v", got, want)
+	}
+	if got, want := info.FilamentCost, 1.15; abs(got-want) > 0.001 {
+		t.Errorf("FilamentCost = %v, want %v", got, want)
+	}
+	if info.ToolChanges != 169 {
+		t.Errorf("ToolChanges = %d, want 169", info.ToolChanges)
+	}
+	if info.Material != "PLA" {
+		t.Errorf("Material = %q, want PLA (primary/first tool)", info.Material)
+	}
+	if info.ToolIndex != 0 {
+		t.Errorf("ToolIndex = %d, want 0 (primary/first tool)", info.ToolIndex)
 	}
 }
 
