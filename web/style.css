@@ -534,10 +534,6 @@ header .printer-count {
     gap: 0.4rem;
 }
 
-.stat-grid-2 {
-    grid-template-columns: repeat(2, 1fr);
-}
-
 .stat-grid-auto {
     grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
 }
