@@ -889,6 +889,15 @@ function openSettings() {
         document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
         document.getElementById('setting-thermal-max-bed').value = settings.thermal_max_bed_temp || '';
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
+        document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
+        document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
+        document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
+        document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
+        document.getElementById('setting-notify-error').checked = settings.notify_on_error === '1';
+        document.getElementById('setting-notify-checkpoint1-enabled').checked = settings.notify_checkpoint1_enabled === '1';
+        document.getElementById('setting-notify-checkpoint1-percent').value = settings.notify_checkpoint1_percent || '5';
+        document.getElementById('setting-notify-checkpoint2-enabled').checked = settings.notify_checkpoint2_enabled === '1';
+        document.getElementById('setting-notify-checkpoint2-percent').value = settings.notify_checkpoint2_percent || '50';
     });
     renderSettingsPrinterList();
     loadUsers();
@@ -1683,6 +1692,39 @@ async function saveSettings(e) {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     closeModal();
+}
+
+async function saveNotificationSettings(e) {
+    e.preventDefault();
+    const settings = {
+        pushover_user_key: document.getElementById('setting-pushover-user-key').value,
+        pushover_app_token: document.getElementById('setting-pushover-app-token').value,
+        notify_on_complete: document.getElementById('setting-notify-complete').checked ? '1' : '0',
+        notify_on_failed: document.getElementById('setting-notify-failed').checked ? '1' : '0',
+        notify_on_error: document.getElementById('setting-notify-error').checked ? '1' : '0',
+        notify_checkpoint1_enabled: document.getElementById('setting-notify-checkpoint1-enabled').checked ? '1' : '0',
+        notify_checkpoint1_percent: document.getElementById('setting-notify-checkpoint1-percent').value || '5',
+        notify_checkpoint2_enabled: document.getElementById('setting-notify-checkpoint2-enabled').checked ? '1' : '0',
+        notify_checkpoint2_percent: document.getElementById('setting-notify-checkpoint2-percent').value || '50',
+    };
+    await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings),
+    });
+    closeModal();
+}
+
+async function sendTestNotification() {
+    const result = document.getElementById('notify-test-result');
+    result.textContent = 'Sending...';
+    try {
+        const resp = await fetch('/api/notify-test', {method: 'POST'});
+        const data = await resp.json();
+        result.textContent = data.success ? 'Test notification sent - check your device.' : `Failed: ${data.error}`;
+    } catch (e) {
+        result.textContent = `Failed: ${e.message}`;
+    }
 }
 
 let snapshotTimer = null;
