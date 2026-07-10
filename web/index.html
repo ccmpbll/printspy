@@ -399,148 +399,28 @@
                             <input type="checkbox" id="setting-notify-start" style="width:auto">
                             Print started
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-start-title">Title</label>
-                                <input type="text" id="setting-notify-start-title" placeholder="Print started">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-start-message">Message</label>
-                                <input type="text" id="setting-notify-start-message" placeholder="{printer}: {file}">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {file}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-start-sound">Sound</label>
-                                <select id="setting-notify-start-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-start-image">Image</label>
-                                <select id="setting-notify-start-image">
-                                    <option value="">Default (thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-start-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="start"></div>
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
                             <input type="checkbox" id="setting-notify-complete" style="width:auto">
                             Print complete
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-complete-title">Title</label>
-                                <input type="text" id="setting-notify-complete-title" placeholder="Print complete">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-complete-message">Message</label>
-                                <input type="text" id="setting-notify-complete-message" placeholder="{printer}: {file} ({material}, {filament_g}g) - {duration}">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {file} {material} {filament_g} {duration}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-complete-sound">Sound</label>
-                                <select id="setting-notify-complete-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-complete-image">Image</label>
-                                <select id="setting-notify-complete-image">
-                                    <option value="">Default (camera, fallback to thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-complete-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="complete"></div>
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
                             <input type="checkbox" id="setting-notify-failed" style="width:auto">
                             Print failed
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-failed-title">Title</label>
-                                <input type="text" id="setting-notify-failed-title" placeholder="Print failed">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-failed-message">Message</label>
-                                <input type="text" id="setting-notify-failed-message" placeholder="{printer}: {file} ({material}, {filament_g}g) - {duration}">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {file} {material} {filament_g} {duration}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-failed-sound">Sound</label>
-                                <select id="setting-notify-failed-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-failed-image">Image</label>
-                                <select id="setting-notify-failed-image">
-                                    <option value="">Default (camera, fallback to thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-failed-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="failed"></div>
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
                             <input type="checkbox" id="setting-notify-error" style="width:auto">
                             Printer error (thermal runaway, attention, etc)
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-error-title">Title</label>
-                                <input type="text" id="setting-notify-error-title" placeholder="{printer}: error">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-error-message">Message</label>
-                                <input type="text" id="setting-notify-error-message" placeholder="{message}">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {message}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-error-sound">Sound</label>
-                                <select id="setting-notify-error-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-error-image">Image</label>
-                                <select id="setting-notify-error-image">
-                                    <option value="">Default (camera, fallback to thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-error-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="error"></div>
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
@@ -549,37 +429,7 @@
                             <input type="number" id="setting-notify-checkpoint1-percent" value="5" min="1" max="99" style="width:4rem">
                             %
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint1-title">Title</label>
-                                <input type="text" id="setting-notify-checkpoint1-title" placeholder="Print checkpoint">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint1-message">Message</label>
-                                <input type="text" id="setting-notify-checkpoint1-message" placeholder="{printer}: {file} reached {percent}%">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {file} {percent}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint1-sound">Sound</label>
-                                <select id="setting-notify-checkpoint1-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint1-image">Image</label>
-                                <select id="setting-notify-checkpoint1-image">
-                                    <option value="">Default (camera, fallback to thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-checkpoint1-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="checkpoint1"></div>
                     </div>
                     <div class="form-group">
                         <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
@@ -588,37 +438,7 @@
                             <input type="number" id="setting-notify-checkpoint2-percent" value="50" min="1" max="99" style="width:4rem">
                             %
                         </label>
-                        <details style="margin-left:1.75rem;margin-top:0.25rem">
-                            <summary>Customize</summary>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint2-title">Title</label>
-                                <input type="text" id="setting-notify-checkpoint2-title" placeholder="Print checkpoint">
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint2-message">Message</label>
-                                <input type="text" id="setting-notify-checkpoint2-message" placeholder="{printer}: {file} reached {percent}%">
-                            </div>
-                            <div class="form-hint">Placeholders: {printer} {file} {percent}</div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint2-sound">Sound</label>
-                                <select id="setting-notify-checkpoint2-sound" class="notify-sound-select"><option value="">App default</option></select>
-                            </div>
-                            <div class="form-group">
-                                <label for="setting-notify-checkpoint2-image">Image</label>
-                                <select id="setting-notify-checkpoint2-image">
-                                    <option value="">Default (camera, fallback to thumbnail)</option>
-                                    <option value="camera">Camera (fallback to thumbnail)</option>
-                                    <option value="thumbnail">Thumbnail only</option>
-                                    <option value="none">None</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                                    <input type="checkbox" id="setting-notify-checkpoint2-high-priority" style="width:auto">
-                                    High priority
-                                </label>
-                            </div>
-                        </details>
+                        <div class="notify-customize" data-type="checkpoint2"></div>
                     </div>
                     <div class="form-hint">Checkpoint and print-complete/failed notifications include a live webcam snapshot when a camera's assigned, otherwise the plate thumbnail.</div>
                     <div class="form-actions">

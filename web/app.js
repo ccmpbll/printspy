@@ -883,13 +883,61 @@ const PUSHOVER_SOUNDS = ['pushover', 'bike', 'bugle', 'cashregister', 'classical
     'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien',
     'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none'];
 
-document.querySelectorAll('.notify-sound-select').forEach(select => {
-    for (const sound of PUSHOVER_SOUNDS) {
-        const opt = document.createElement('option');
-        opt.value = sound;
-        opt.textContent = sound;
-        select.appendChild(opt);
-    }
+// Per-type placeholder/hint text for the Customize panel. 'start' is the
+// only type that defaults to a thumbnail-only image (see poller.go's
+// sendNotification) - everything else defaults to camera-with-fallback.
+const NOTIFY_CUSTOMIZE = {
+    start:       {titlePh: 'Print started', messagePh: '{printer}: {file}', hint: 'Placeholders: {printer} {file}', imageDefault: 'Default (thumbnail)'},
+    complete:    {titlePh: 'Print complete', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    failed:      {titlePh: 'Print failed', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    error:       {titlePh: '{printer}: error', messagePh: '{message}', hint: 'Placeholders: {printer} {message}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    checkpoint1: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+    checkpoint2: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
+};
+
+function notifySoundOptionsHTML() {
+    return '<option value="">App default</option>' +
+        PUSHOVER_SOUNDS.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
+function notifyCustomizeHTML(t) {
+    const c = NOTIFY_CUSTOMIZE[t];
+    return `
+        <details style="margin-left:1.75rem;margin-top:0.25rem">
+            <summary>Customize</summary>
+            <div class="form-group">
+                <label for="setting-notify-${t}-title">Title</label>
+                <input type="text" id="setting-notify-${t}-title" placeholder="${esc(c.titlePh)}">
+            </div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-message">Message</label>
+                <input type="text" id="setting-notify-${t}-message" placeholder="${esc(c.messagePh)}">
+            </div>
+            <div class="form-hint">${esc(c.hint)}</div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-sound">Sound</label>
+                <select id="setting-notify-${t}-sound">${notifySoundOptionsHTML()}</select>
+            </div>
+            <div class="form-group">
+                <label for="setting-notify-${t}-image">Image</label>
+                <select id="setting-notify-${t}-image">
+                    <option value="">${esc(c.imageDefault)}</option>
+                    <option value="camera">Camera (fallback to thumbnail)</option>
+                    <option value="thumbnail">Thumbnail only</option>
+                    <option value="none">None</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                    <input type="checkbox" id="setting-notify-${t}-high-priority" style="width:auto">
+                    High priority
+                </label>
+            </div>
+        </details>`;
+}
+
+document.querySelectorAll('.notify-customize').forEach(el => {
+    el.innerHTML = notifyCustomizeHTML(el.dataset.type);
 });
 
 function openSettings() {
