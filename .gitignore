@@ -3,3 +3,4 @@ printspy
 /data/
 config.yaml
 .devdata/
+.DS_Store

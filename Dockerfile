@@ -8,10 +8,12 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 RUN go mod tidy && CGO_ENABLED=1 go build -o printspy -ldflags="-s -w -X main.version=${VERSION}" .
+RUN CGO_ENABLED=1 go build -o backfill-history ./cmd/backfill-history
 
 FROM alpine:3.21
 RUN apk add --no-cache sqlite sqlite-libs ca-certificates
 COPY --from=builder /build/printspy /usr/local/bin/
+COPY --from=builder /build/backfill-history /usr/local/bin/
 COPY --from=builder /build/web /usr/local/share/printspy/web
 
 VOLUME /data
