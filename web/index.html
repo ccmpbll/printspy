@@ -327,9 +327,9 @@
                         <div class="form-hint">Global override for how often printers are polled. Leave empty to use per-printer settings.</div>
                     </div>
                     <div class="form-group">
-                        <label for="setting-recent-files">Recent files to show</label>
-                        <input type="number" id="setting-recent-files" value="5" min="1" max="20">
-                        <div class="form-hint">Number of files shown in the recent files dropdown per printer.</div>
+                        <label for="setting-history-retention">Print history retention (days)</label>
+                        <input type="number" id="setting-history-retention" value="" min="0" max="3650" placeholder="0 = keep forever">
+                        <div class="form-hint">Entries older than this are pruned the next time a print completes. 0 keeps everything.</div>
                     </div>
                     <div class="form-group">
                         <label for="setting-print-control-timeout">Print control timeout (seconds)</label>

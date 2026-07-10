@@ -589,6 +589,16 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 	return entries, hasMore, nil
 }
 
+// PrunePrintHistory deletes completed_at-older-than-days rows across every
+// printer. Called opportunistically after each new history insert rather
+// than on a ticker - ties cleanup to a real signal (a print just finished)
+// instead of a guessed interval, same principle used elsewhere in this
+// codebase.
+func (db *DB) PrunePrintHistory(days int) error {
+	_, err := db.conn.Exec(`DELETE FROM print_history WHERE completed_at < datetime('now', ?)`, fmt.Sprintf("-%d days", days))
+	return err
+}
+
 // Settings
 
 func (db *DB) GetSetting(key string) (string, error) {

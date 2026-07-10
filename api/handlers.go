@@ -954,10 +954,6 @@ func (h *Handler) getRecentPrints(w http.ResponseWriter, r *http.Request, id int
 	limit := 5
 	if r.URL.Query().Get("all") == "1" {
 		limit = 0
-	} else if v, err := h.db.GetSetting("recent_files_count"); err == nil && v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
 	}
 	files, err := h.poller.GetRecentFiles(r.Context(), id, limit)
 	if err != nil {
@@ -1557,15 +1553,15 @@ func validateSetting(key, value string) (string, error) {
 			n = 300
 		}
 		return strconv.Itoa(n), nil
-	case "recent_files_count":
+	case "history_retention_days":
 		n, err := strconv.Atoi(value)
 		if err != nil {
-			return "", fmt.Errorf("recent_files_count must be a number")
+			return "", fmt.Errorf("history_retention_days must be a number")
 		}
-		if n < 1 {
-			n = 1
-		} else if n > 20 {
-			n = 20
+		if n < 0 {
+			n = 0
+		} else if n > 3650 {
+			n = 3650
 		}
 		return strconv.Itoa(n), nil
 	case "poll_interval":

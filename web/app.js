@@ -115,10 +115,9 @@ async function startReprint(btn) {
     } catch (e) {}
 }
 
-// File manager - replaces the old per-card "Recent files" dropdown (was
-// capped at recent_files_count, idle-only). Same row look (thumbnail,
-// print-history status badge), but every file, and reachable regardless of
-// printer state.
+// File manager - replaces the old per-card "Recent files" dropdown. Same
+// row look (thumbnail, print-history status badge), but every file, and
+// reachable regardless of printer state.
 let fileManagerPrinterId = null;
 
 async function openFileManager(printerId) {
@@ -945,7 +944,7 @@ function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
-        document.getElementById('setting-recent-files').value = settings.recent_files_count || '5';
+        document.getElementById('setting-history-retention').value = settings.history_retention_days || '';
         document.getElementById('setting-print-control-timeout').value = settings.print_control_timeout_secs || '15';
         document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
         document.getElementById('setting-auto-off-idle').value = settings.auto_off_idle_minutes || '';
@@ -1745,7 +1744,7 @@ async function saveSettings(e) {
     e.preventDefault();
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
-        recent_files_count: document.getElementById('setting-recent-files').value,
+        history_retention_days: document.getElementById('setting-history-retention').value || '0',
         print_control_timeout_secs: document.getElementById('setting-print-control-timeout').value || '15',
         prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
         auto_off_idle_minutes: document.getElementById('setting-auto-off-idle').value || '0',

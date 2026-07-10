@@ -1281,4 +1281,24 @@ func (p *Poller) insertPrintHistory(ctx context.Context, id int64, h *models.Pri
 	}
 	log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, h.FileName, h.Result, h.DurationSecs)
 	p.notifyPrintResult(ctx, id, h)
+
+	if days := p.historyRetentionDays(); days > 0 {
+		if err := p.db.PrunePrintHistory(days); err != nil {
+			log.Printf("[printer:%d] failed to prune old print history: %v", id, err)
+		}
+	}
+}
+
+// historyRetentionDays is global-only (not per-printer) - 0 disables
+// pruning entirely (default: keep everything).
+func (p *Poller) historyRetentionDays() int {
+	v, err := p.db.GetSetting("history_retention_days")
+	if err != nil || v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0
+	}
+	return n
 }
