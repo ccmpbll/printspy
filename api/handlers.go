@@ -1925,20 +1925,30 @@ func plugIsOn(status *models.PrinterStatus, plugID string) bool {
 func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig) {
 	defer h.poller.BroadcastRefresh()
 
-	plugs, err := h.db.ListSmartPlugs(printer.ID)
-	if err != nil {
-		h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
-		return
-	}
-	status := h.poller.GetStatus(printer.ID)
-	for _, plug := range plugs {
-		plugID := plug.IP + ":" + plug.Idx
-		if plugIsOn(status, plugID) {
-			continue
-		}
-		if err := h.poller.SetPowerState(h.ctx, printer.ID, plugID, true); err != nil {
-			h.db.SetIngestJobFailed(job.ID, "failed to power on printer: "+err.Error())
+	// Printer API reachability is ground truth over a plug's reported on/off -
+	// a plug can go unresponsive on the network while the printer itself is
+	// already powered on, and trying to toggle a dead plug just hangs the
+	// dispatch. Skip power-on entirely if the printer's already answering.
+	h.poller.Repoll(h.ctx, printer.ID)
+	s := currentState(h.poller.GetStatus(printer.ID))
+	alreadyOnline := s != models.StateOffline && s != models.StateDisconnected
+
+	if !alreadyOnline {
+		plugs, err := h.db.ListSmartPlugs(printer.ID)
+		if err != nil {
+			h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
 			return
+		}
+		status := h.poller.GetStatus(printer.ID)
+		for _, plug := range plugs {
+			plugID := plug.IP + ":" + plug.Idx
+			if plugIsOn(status, plugID) {
+				continue
+			}
+			if err := h.poller.SetPowerState(h.ctx, printer.ID, plugID, true); err != nil {
+				h.db.SetIngestJobFailed(job.ID, "failed to power on printer: "+err.Error())
+				return
+			}
 		}
 	}
 
