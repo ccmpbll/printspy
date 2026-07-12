@@ -1930,16 +1930,14 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 	// already powered on, and trying to toggle a dead plug just hangs the
 	// dispatch. Skip power-on entirely if the printer's already answering.
 	h.poller.Repoll(h.ctx, printer.ID)
-	s := currentState(h.poller.GetStatus(printer.ID))
-	alreadyOnline := s != models.StateOffline && s != models.StateDisconnected
+	status := h.poller.GetStatus(printer.ID)
 
-	if !alreadyOnline {
+	if !h.poller.IsOnline(printer.ID) {
 		plugs, err := h.db.ListSmartPlugs(printer.ID)
 		if err != nil {
 			h.db.SetIngestJobFailed(job.ID, "failed to look up smart plugs: "+err.Error())
 			return
 		}
-		status := h.poller.GetStatus(printer.ID)
 		for _, plug := range plugs {
 			plugID := plug.IP + ":" + plug.Idx
 			if plugIsOn(status, plugID) {

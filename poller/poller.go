@@ -397,7 +397,7 @@ func (p *Poller) ResetAllIdleClocks() {
 // cached "offline" from the last tick.
 func (p *Poller) WaitOnline(ctx context.Context, id int64) error {
 	p.Repoll(ctx, id)
-	if p.isOnline(id) {
+	if p.IsOnline(id) {
 		return nil
 	}
 
@@ -409,14 +409,14 @@ func (p *Poller) WaitOnline(ctx context.Context, id int64) error {
 			return fmt.Errorf("printer %d did not come online: %w", id, ctx.Err())
 		case <-ticker.C:
 			p.Repoll(ctx, id)
-			if p.isOnline(id) {
+			if p.IsOnline(id) {
 				return nil
 			}
 		}
 	}
 }
 
-func (p *Poller) isOnline(id int64) bool {
+func (p *Poller) IsOnline(id int64) bool {
 	status := p.GetStatus(id)
 	if status == nil {
 		return false
@@ -750,7 +750,7 @@ func (p *Poller) checkIngestOnline(ctx context.Context, id int64, prevState mode
 // upload-time case), but re-checking here avoids a race against a printer
 // that dropped offline again in between.
 func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
-	if !p.isOnline(printerID) {
+	if !p.IsOnline(printerID) {
 		return
 	}
 	claimed, err := p.db.ClaimIngestJobForDispatch(jobID, printerID)
