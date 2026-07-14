@@ -1663,7 +1663,7 @@ func validateSetting(key, value string) (string, error) {
 		"notify_checkpoint1_enabled", "notify_checkpoint2_enabled",
 		"notify_start_high_priority", "notify_complete_high_priority", "notify_failed_high_priority", "notify_error_high_priority",
 		"notify_checkpoint1_high_priority", "notify_checkpoint2_high_priority",
-		"hide_webcam_section":
+		"hide_webcam_when_unreachable":
 		if value != "0" && value != "1" {
 			return "", fmt.Errorf("%s must be 0 or 1", key)
 		}

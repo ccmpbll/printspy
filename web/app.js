@@ -609,6 +609,9 @@ function renderPrinterCard(printer) {
     // it's gated on tryThumb alone.
     const camAttempt = isPlate ? tryThumb : (tryThumb || printer.has_camera);
     const cardClass = stateCardClass(state);
+    // hideWebcamWhenUnreachable only kicks in for a genuinely unreachable
+    // printer - not a blanket hide for every card regardless of state.
+    const sectionHidden = hideWebcamWhenUnreachable && (state === 'offline' || state === 'disconnected');
 
     let powerHTML = '';
     if (status && status.power && status.power.length > 0) {
@@ -648,7 +651,7 @@ function renderPrinterCard(printer) {
                 ${historyHTML}
             </div>
             <div class="printer-body">
-                ${hideWebcamSection ? '' : `
+                ${sectionHidden ? '' : `
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${camAttempt ? (isPlate || isPrinting || printer.has_camera ? '' : 'webcam-idle') : 'webcam-collapsed'}">
                         <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id, wcMode)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera},'${wcMode}')" onload="webcamRecovered(this)">
@@ -664,7 +667,7 @@ function renderPrinterCard(printer) {
                     </div>
                 </div>`}
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(cfg, status, !hideWebcamSection && !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status, !sectionHidden && !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;
@@ -782,8 +785,11 @@ function updateCard(card, printer) {
     // full rebuild here would only tear down and reconnect an already-fine
     // camera feed, showing a blank gap while it reloads for no reason.
     // Camera-less printers still need it, to toggle the collapsed
-    // placeholder and its "No camera"/"Camera unreachable" text.
-    const downTransitionNeedsRebuild = (wasDown !== isDown) && !printer.has_camera;
+    // placeholder and its "No camera"/"Camera unreachable" text. That
+    // optimization only holds when hideWebcamWhenUnreachable is off though -
+    // with it on, the whole section's presence depends on this exact
+    // boundary even for a camera-equipped printer.
+    const downTransitionNeedsRebuild = (wasDown !== isDown) && (!printer.has_camera || hideWebcamWhenUnreachable);
 
     // Pause/Resume swaps controlHTML's button set (Pause/Cancel <->
     // Resume/Cancel), but isPrinting is true for both printing and paused -
@@ -971,7 +977,7 @@ document.querySelectorAll('.notify-customize').forEach(el => {
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
-        document.getElementById('setting-hide-webcam').checked = settings.hide_webcam_section === '1';
+        document.getElementById('setting-hide-webcam').checked = settings.hide_webcam_when_unreachable === '1';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-history-retention').value = settings.history_retention_days || '';
         document.getElementById('setting-print-control-timeout').value = settings.print_control_timeout_secs || '15';
@@ -1773,7 +1779,7 @@ async function saveSettings(e) {
     e.preventDefault();
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
-        hide_webcam_section: document.getElementById('setting-hide-webcam').checked ? '1' : '0',
+        hide_webcam_when_unreachable: document.getElementById('setting-hide-webcam').checked ? '1' : '0',
         history_retention_days: document.getElementById('setting-history-retention').value || '0',
         print_control_timeout_secs: document.getElementById('setting-print-control-timeout').value || '15',
         prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
@@ -1791,7 +1797,7 @@ async function saveSettings(e) {
     });
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
-    hideWebcamSection = settings.hide_webcam_section === '1';
+    hideWebcamWhenUnreachable = settings.hide_webcam_when_unreachable === '1';
     prevPrinterIDs = [];
     updateDashboard();
     closeModal();
@@ -1840,7 +1846,7 @@ async function sendTestNotification() {
 
 let snapshotTimer = null;
 let snapshotInterval = 10;
-let hideWebcamSection = false;
+let hideWebcamWhenUnreachable = false;
 
 function restartSnapshotTimer() {
     if (snapshotTimer) clearInterval(snapshotTimer);
@@ -1991,7 +1997,7 @@ async function discardIngestJob(jobID) {
 // Initialize
 fetch('/api/settings').then(r => r.json()).then(settings => {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
-    hideWebcamSection = settings.hide_webcam_section === '1';
+    hideWebcamWhenUnreachable = settings.hide_webcam_when_unreachable === '1';
     restartSnapshotTimer();
 }).catch(() => {
     restartSnapshotTimer();
