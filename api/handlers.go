@@ -137,18 +137,19 @@ func (h *Handler) buildPrinterWithStatus(p models.PrinterConfig, statuses map[in
 }
 
 type printerRequest struct {
-	Name               string  `json:"name"`
-	Type               string  `json:"type"`
-	Model              string  `json:"model"`
-	HideModel          bool    `json:"hide_model"`
-	URL                string  `json:"url"`
-	APIKey             string  `json:"api_key"`
-	Username           string  `json:"username"`
-	Enabled            bool    `json:"enabled"`
-	PollInterval       int     `json:"poll_interval"`
-	IdleTimeoutMinutes int     `json:"idle_timeout_minutes"`
-	MaxBedTemp         float64 `json:"max_bed_temp"`
-	MaxExtruderTemp    float64 `json:"max_extruder_temp"`
+	Name                     string  `json:"name"`
+	Type                     string  `json:"type"`
+	Model                    string  `json:"model"`
+	HideModel                bool    `json:"hide_model"`
+	URL                      string  `json:"url"`
+	APIKey                   string  `json:"api_key"`
+	Username                 string  `json:"username"`
+	Enabled                  bool    `json:"enabled"`
+	PollInterval             int     `json:"poll_interval"`
+	IdleTimeoutMinutes       int     `json:"idle_timeout_minutes"`
+	MaxBedTemp               float64 `json:"max_bed_temp"`
+	MaxExtruderTemp          float64 `json:"max_extruder_temp"`
+	DashboardPreferThumbnail bool    `json:"dashboard_prefer_thumbnail"`
 }
 
 func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
@@ -159,17 +160,18 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := models.PrinterConfig{
-		Name:               req.Name,
-		Type:               req.Type,
-		Model:              req.Model,
-		HideModel:          req.HideModel,
-		URL:                req.URL,
-		APIKey:             req.APIKey,
-		Username:           req.Username,
-		PollInterval:       req.PollInterval,
-		IdleTimeoutMinutes: req.IdleTimeoutMinutes,
-		MaxBedTemp:         req.MaxBedTemp,
-		MaxExtruderTemp:    req.MaxExtruderTemp,
+		Name:                     req.Name,
+		Type:                     req.Type,
+		Model:                    req.Model,
+		HideModel:                req.HideModel,
+		URL:                      req.URL,
+		APIKey:                   req.APIKey,
+		Username:                 req.Username,
+		PollInterval:             req.PollInterval,
+		IdleTimeoutMinutes:       req.IdleTimeoutMinutes,
+		MaxBedTemp:               req.MaxBedTemp,
+		MaxExtruderTemp:          req.MaxExtruderTemp,
+		DashboardPreferThumbnail: req.DashboardPreferThumbnail,
 	}
 
 	if p.Name == "" || p.URL == "" || p.APIKey == "" {
@@ -263,19 +265,20 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		return
 	}
 	p := models.PrinterConfig{
-		ID:                 id,
-		Name:               req.Name,
-		Type:               req.Type,
-		Model:              req.Model,
-		HideModel:          req.HideModel,
-		URL:                req.URL,
-		APIKey:             req.APIKey,
-		Username:           req.Username,
-		Enabled:            req.Enabled,
-		PollInterval:       req.PollInterval,
-		IdleTimeoutMinutes: req.IdleTimeoutMinutes,
-		MaxBedTemp:         req.MaxBedTemp,
-		MaxExtruderTemp:    req.MaxExtruderTemp,
+		ID:                       id,
+		Name:                     req.Name,
+		Type:                     req.Type,
+		Model:                    req.Model,
+		HideModel:                req.HideModel,
+		URL:                      req.URL,
+		APIKey:                   req.APIKey,
+		Username:                 req.Username,
+		Enabled:                  req.Enabled,
+		PollInterval:             req.PollInterval,
+		IdleTimeoutMinutes:       req.IdleTimeoutMinutes,
+		MaxBedTemp:               req.MaxBedTemp,
+		MaxExtruderTemp:          req.MaxExtruderTemp,
+		DashboardPreferThumbnail: req.DashboardPreferThumbnail,
 	}
 
 	if err := h.db.UpdatePrinter(&p); err != nil {
@@ -1148,18 +1151,19 @@ type configExportCamera struct {
 }
 
 type configExportPrinter struct {
-	Name               string  `yaml:"name"`
-	Type               string  `yaml:"type"`
-	Model              string  `yaml:"model,omitempty"`
-	HideModel          bool    `yaml:"hide_model,omitempty"`
-	URL                string  `yaml:"url"`
-	APIKey             string  `yaml:"api_key"`
-	Username           string  `yaml:"username,omitempty"`
-	PollInterval       int     `yaml:"poll_interval"`
-	Enabled            bool    `yaml:"enabled"`
-	IdleTimeoutMinutes int     `yaml:"idle_timeout_minutes,omitempty"`
-	MaxBedTemp         float64 `yaml:"max_bed_temp,omitempty"`
-	MaxExtruderTemp    float64 `yaml:"max_extruder_temp,omitempty"`
+	Name                     string  `yaml:"name"`
+	Type                     string  `yaml:"type"`
+	Model                    string  `yaml:"model,omitempty"`
+	HideModel                bool    `yaml:"hide_model,omitempty"`
+	URL                      string  `yaml:"url"`
+	APIKey                   string  `yaml:"api_key"`
+	Username                 string  `yaml:"username,omitempty"`
+	PollInterval             int     `yaml:"poll_interval"`
+	Enabled                  bool    `yaml:"enabled"`
+	IdleTimeoutMinutes       int     `yaml:"idle_timeout_minutes,omitempty"`
+	MaxBedTemp               float64 `yaml:"max_bed_temp,omitempty"`
+	MaxExtruderTemp          float64 `yaml:"max_extruder_temp,omitempty"`
+	DashboardPreferThumbnail bool    `yaml:"dashboard_prefer_thumbnail,omitempty"`
 }
 
 func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
@@ -1192,18 +1196,19 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		export.Printers[i] = configExportPrinter{
-			Name:               full.Name,
-			Type:               full.Type,
-			Model:              full.Model,
-			HideModel:          full.HideModel,
-			URL:                full.URL,
-			APIKey:             full.APIKey,
-			Username:           full.Username,
-			PollInterval:       full.PollInterval,
-			Enabled:            full.Enabled,
-			IdleTimeoutMinutes: full.IdleTimeoutMinutes,
-			MaxBedTemp:         full.MaxBedTemp,
-			MaxExtruderTemp:    full.MaxExtruderTemp,
+			Name:                     full.Name,
+			Type:                     full.Type,
+			Model:                    full.Model,
+			HideModel:                full.HideModel,
+			URL:                      full.URL,
+			APIKey:                   full.APIKey,
+			Username:                 full.Username,
+			PollInterval:             full.PollInterval,
+			Enabled:                  full.Enabled,
+			IdleTimeoutMinutes:       full.IdleTimeoutMinutes,
+			MaxBedTemp:               full.MaxBedTemp,
+			MaxExtruderTemp:          full.MaxExtruderTemp,
+			DashboardPreferThumbnail: full.DashboardPreferThumbnail,
 		}
 	}
 
@@ -1279,18 +1284,19 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 			ep.PollInterval = 10
 		}
 		p := models.PrinterConfig{
-			Name:               ep.Name,
-			Type:               ep.Type,
-			Model:              ep.Model,
-			HideModel:          ep.HideModel,
-			URL:                ep.URL,
-			APIKey:             ep.APIKey,
-			Username:           ep.Username,
-			PollInterval:       ep.PollInterval,
-			Enabled:            ep.Enabled,
-			IdleTimeoutMinutes: ep.IdleTimeoutMinutes,
-			MaxBedTemp:         ep.MaxBedTemp,
-			MaxExtruderTemp:    ep.MaxExtruderTemp,
+			Name:                     ep.Name,
+			Type:                     ep.Type,
+			Model:                    ep.Model,
+			HideModel:                ep.HideModel,
+			URL:                      ep.URL,
+			APIKey:                   ep.APIKey,
+			Username:                 ep.Username,
+			PollInterval:             ep.PollInterval,
+			Enabled:                  ep.Enabled,
+			IdleTimeoutMinutes:       ep.IdleTimeoutMinutes,
+			MaxBedTemp:               ep.MaxBedTemp,
+			MaxExtruderTemp:          ep.MaxExtruderTemp,
+			DashboardPreferThumbnail: ep.DashboardPreferThumbnail,
 		}
 		if err := h.db.CreatePrinter(&p); err != nil {
 			continue

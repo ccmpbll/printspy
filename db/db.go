@@ -154,6 +154,12 @@ func (db *DB) migrate() error {
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_bed_temp REAL NOT NULL DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_extruder_temp REAL NOT NULL DEFAULT 0`)
 
+	// Migration: add dashboard image-source override to printers if missing -
+	// forces the Dashboard card to always show the plate thumbnail even when
+	// a camera's assigned, instead of the default camera-with-thumbnail-
+	// fallback behavior.
+	db.conn.Exec(`ALTER TABLE printers ADD COLUMN dashboard_prefer_thumbnail INTEGER NOT NULL DEFAULT 0`)
+
 	// Migration: add auto_dispatch_on_print_now column to ingest_targets if missing
 	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0`)
 
@@ -186,7 +192,7 @@ func (db *DB) migrate() error {
 
 func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	rows, err := db.conn.Query(`
-		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at, idle_timeout_minutes, max_bed_temp, max_extruder_temp
+		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at, idle_timeout_minutes, max_bed_temp, max_extruder_temp, dashboard_prefer_thumbnail
 		FROM printers ORDER BY sort_order, id
 	`)
 	if err != nil {
@@ -197,13 +203,14 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 	var printers []models.PrinterConfig
 	for rows.Next() {
 		var p models.PrinterConfig
-		var enabled, maintenance, hideModel int
-		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt, &p.IdleTimeoutMinutes, &p.MaxBedTemp, &p.MaxExtruderTemp); err != nil {
+		var enabled, maintenance, hideModel, preferThumb int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt, &p.IdleTimeoutMinutes, &p.MaxBedTemp, &p.MaxExtruderTemp, &preferThumb); err != nil {
 			return nil, err
 		}
 		p.Enabled = enabled == 1
 		p.Maintenance = maintenance == 1
 		p.HideModel = hideModel == 1
+		p.DashboardPreferThumbnail = preferThumb == 1
 		printers = append(printers, p)
 	}
 	return printers, rows.Err()
@@ -211,17 +218,18 @@ func (db *DB) ListPrinters() ([]models.PrinterConfig, error) {
 
 func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	var p models.PrinterConfig
-	var enabled, maintenance, hideModel int
+	var enabled, maintenance, hideModel, preferThumb int
 	err := db.conn.QueryRow(`
-		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at, idle_timeout_minutes, max_bed_temp, max_extruder_temp
+		SELECT id, name, type, model, hide_model, url, api_key, username, enabled, maintenance, poll_interval, sort_order, created_at, updated_at, idle_timeout_minutes, max_bed_temp, max_extruder_temp, dashboard_prefer_thumbnail
 		FROM printers WHERE id = ?
-	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt, &p.IdleTimeoutMinutes, &p.MaxBedTemp, &p.MaxExtruderTemp)
+	`, id).Scan(&p.ID, &p.Name, &p.Type, &p.Model, &hideModel, &p.URL, &p.APIKey, &p.Username, &enabled, &maintenance, &p.PollInterval, &p.SortOrder, &p.CreatedAt, &p.UpdatedAt, &p.IdleTimeoutMinutes, &p.MaxBedTemp, &p.MaxExtruderTemp, &preferThumb)
 	if err != nil {
 		return nil, err
 	}
 	p.HideModel = hideModel == 1
 	p.Enabled = enabled == 1
 	p.Maintenance = maintenance == 1
+	p.DashboardPreferThumbnail = preferThumb == 1
 	return &p, nil
 }
 
@@ -441,11 +449,15 @@ func (db *DB) CreatePrinter(p *models.PrinterConfig) error {
 	if p.HideModel {
 		hideModel = 1
 	}
+	preferThumb := 0
+	if p.DashboardPreferThumbnail {
+		preferThumb = 1
+	}
 
 	result, err := db.conn.Exec(`
-		INSERT INTO printers (name, type, model, hide_model, url, api_key, username, enabled, poll_interval, sort_order, idle_timeout_minutes, max_bed_temp, max_extruder_temp)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.SortOrder, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp)
+		INSERT INTO printers (name, type, model, hide_model, url, api_key, username, enabled, poll_interval, sort_order, idle_timeout_minutes, max_bed_temp, max_extruder_temp, dashboard_prefer_thumbnail)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.SortOrder, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp, preferThumb)
 	if err != nil {
 		return err
 	}
@@ -462,10 +474,14 @@ func (db *DB) UpdatePrinter(p *models.PrinterConfig) error {
 	if p.HideModel {
 		hideModel = 1
 	}
+	preferThumb := 0
+	if p.DashboardPreferThumbnail {
+		preferThumb = 1
+	}
 	_, err := db.conn.Exec(`
-		UPDATE printers SET name=?, type=?, model=?, hide_model=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, idle_timeout_minutes=?, max_bed_temp=?, max_extruder_temp=?, updated_at=CURRENT_TIMESTAMP
+		UPDATE printers SET name=?, type=?, model=?, hide_model=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, idle_timeout_minutes=?, max_bed_temp=?, max_extruder_temp=?, dashboard_prefer_thumbnail=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?
-	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp, p.ID)
+	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp, preferThumb, p.ID)
 	return err
 }
 
