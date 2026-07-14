@@ -391,7 +391,7 @@ function refreshSnapshots() {
         // assigned - a camera-less printer's img has nothing to reconnect
         // to, it's just sitting there permanently failed by design.
         if (img.style.display !== 'none' || img.dataset.hasCamera === 'true') {
-            img.src = img.dataset.preferThumb === 'true' ? `/api/thumbnail/${id}?t=${pollCounter}` : `/api/snapshot/${id}?t=${pollCounter}`;
+            img.src = `/api/snapshot/${id}?t=${pollCounter}`;
         }
     });
     // The print-thumbnail fallback (see webcamError()) is a one-shot attempt
@@ -509,11 +509,7 @@ function webcamRecovered(img) {
     if (beside) beside.style.display = '';
 }
 
-// preferThumb bypasses /api/snapshot entirely - that endpoint resolves the
-// assigned camera server-side regardless of this per-printer override, so
-// routing through it would still fetch (and briefly flash) the real camera.
-function webcamSrc(printerId, preferThumb) {
-    if (preferThumb) return `/api/thumbnail/${printerId}?t=${pollCounter}`;
+function webcamSrc(printerId) {
     const mode = getWebcamMode(printerId);
     if (mode === 'live') return `/api/webcam/${printerId}`;
     return `/api/snapshot/${printerId}?t=${pollCounter}`;
@@ -547,7 +543,7 @@ function updateDashboard() {
 
     updateHeaderCount();
 
-    const currentIDs = printers.map(p => `${p.config.id}:${p.has_camera}:${p.config.maintenance}:${p.config.dashboard_prefer_thumbnail}`);
+    const currentIDs = printers.map(p => `${p.config.id}:${p.has_camera}:${p.config.maintenance}`);
     const structureChanged = JSON.stringify(currentIDs) !== JSON.stringify(prevPrinterIDs);
 
     if (structureChanged) {
@@ -594,10 +590,6 @@ function renderPrinterCard(printer) {
     // decorative plate render doesn't belong on an error/attention/offline/
     // disconnected card - see webcamError()).
     const tryThumb = state === 'idle' || isPrinting;
-    // dashboard_prefer_thumbnail forces this card to behave as if no camera
-    // were assigned at all - always the plate thumbnail, no live feed
-    // attempt, no live/snapshot toggle.
-    const hasCamera = printer.has_camera && !cfg.dashboard_prefer_thumbnail;
     // An assigned printspy-cam is a separate device, independent of the
     // printer's own connectivity - still worth attempting even when the
     // printer itself is offline. Without one, this column's own
@@ -605,11 +597,11 @@ function renderPrinterCard(printer) {
     // spot on idle/printing - only skip the attempt entirely (collapse up
     // front) when there's no camera assigned *and* the state wouldn't show
     // a thumbnail anyway.
-    const camAttempt = tryThumb || hasCamera;
+    const camAttempt = tryThumb || printer.has_camera;
     // Live streaming needs either a plugin-reported webcam stream URL or an
     // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
     // webcam URL of their own).
-    const supportsLive = !cfg.dashboard_prefer_thumbnail && (printer.has_webcam || hasCamera);
+    const supportsLive = printer.has_webcam || printer.has_camera;
     const wcMode = supportsLive ? getWebcamMode(cfg.id) : 'snapshot';
     const cardClass = stateCardClass(state);
 
@@ -652,18 +644,18 @@ function renderPrinterCard(printer) {
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
-                    <div class="webcam-container ${(isPrinting || hasCamera) ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" data-has-camera="${!!hasCamera}" data-prefer-thumb="${!!cfg.dashboard_prefer_thumbnail}" ${camAttempt ? `src="${webcamSrc(cfg.id, cfg.dashboard_prefer_thumbnail)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!hasCamera})" onload="webcamRecovered(this)">
+                    <div class="webcam-container ${(isPrinting || printer.has_camera) ? '' : 'webcam-idle'}">
+                        <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})" onload="webcamRecovered(this)">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
-                            <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !hasCamera) ? 'No camera' : 'Camera Unreachable'}</span>
+                            <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
                         </div>
                         <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
                         ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '<span class="icon-stop"></span>' : '<span class="icon-play"></span>'}</button>` : ''}
                     </div>
                 </div>
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(cfg, status, !!(hasCamera || printer.has_webcam)) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status, !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;
@@ -1485,7 +1477,6 @@ function openAddModal() {
     document.getElementById('printer-name').value = '';
     document.getElementById('printer-model').value = '';
     document.getElementById('printer-hide-model').checked = false;
-    document.getElementById('printer-dashboard-prefer-thumbnail').checked = false;
     document.getElementById('printer-type').value = 'octoprint';
     document.getElementById('printer-url').value = '';
     document.getElementById('printer-username').value = 'maker';
@@ -1510,7 +1501,6 @@ async function openEditModal(id) {
     document.getElementById('printer-name').value = cfg.name;
     document.getElementById('printer-model').value = cfg.model || '';
     document.getElementById('printer-hide-model').checked = !!cfg.hide_model;
-    document.getElementById('printer-dashboard-prefer-thumbnail').checked = !!cfg.dashboard_prefer_thumbnail;
     document.getElementById('printer-type').value = cfg.type;
     document.getElementById('printer-url').value = cfg.url;
     document.getElementById('printer-apikey').value = '';
@@ -1680,7 +1670,6 @@ async function savePrinter(e) {
         type: printerType,
         model: document.getElementById('printer-model').value,
         hide_model: document.getElementById('printer-hide-model').checked,
-        dashboard_prefer_thumbnail: document.getElementById('printer-dashboard-prefer-thumbnail').checked,
         url: document.getElementById('printer-url').value.replace(/\/+$/, ''),
         api_key: document.getElementById('printer-apikey').value,
         username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',

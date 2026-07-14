@@ -38,10 +38,6 @@ type PrinterConfig struct {
 	IdleTimeoutMinutes int     `json:"idle_timeout_minutes,omitempty"`
 	MaxBedTemp         float64 `json:"max_bed_temp,omitempty"`
 	MaxExtruderTemp    float64 `json:"max_extruder_temp,omitempty"`
-	// DashboardPreferThumbnail forces the Dashboard card to always show the
-	// plate thumbnail, even when a camera's assigned (default: camera live
-	// feed, falling back to thumbnail only if the camera's unreachable).
-	DashboardPreferThumbnail bool `json:"dashboard_prefer_thumbnail,omitempty"`
 }
 
 // SmartPlug is a directly-configured Tasmota device, managed independently of
