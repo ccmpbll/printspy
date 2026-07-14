@@ -368,6 +368,14 @@ func (p *Plugin) DeleteFile(ctx context.Context, storage, path string) error {
 	return p.doDelete(ctx, "/api/v1/files/"+storage+"/"+path)
 }
 
+// DownloadFile fetches the file's raw bytes - GET /api/v1/files/{storage}/{path}
+// (the same URL DeleteFile/StartPrint use) returns metadata JSON, not
+// content; the actual bytes live at the bare /{storage}/{path} ref, same
+// shape as a file's own refs.download (see DownloadFileForMetadata).
+func (p *Plugin) DownloadFile(ctx context.Context, storage, path string) ([]byte, error) {
+	return p.downloadFile(ctx, "/"+storage+"/"+path, 0)
+}
+
 func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
 	_, err := p.doPost(ctx, "/api/v1/files/"+location+"/"+path, nil)
 	return err

@@ -593,6 +593,12 @@ func (p *Plugin) DeleteFile(ctx context.Context, storage, path string) error {
 	return p.doDelete(ctx, "/api/files/"+storage+"/"+path)
 }
 
+// DownloadFile uses OctoPrint's separate /downloads/ prefix, not /api/files/
+// (which only ever returns file metadata JSON, never raw content).
+func (p *Plugin) DownloadFile(ctx context.Context, storage, path string) ([]byte, error) {
+	return p.doGet(ctx, "/downloads/files/"+storage+"/"+path)
+}
+
 func (p *Plugin) StartPrint(ctx context.Context, location, path string) error {
 	_, err := p.doPost(ctx, "/api/files/"+location+"/"+path, map[string]any{
 		"command": "select",

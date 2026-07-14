@@ -24,6 +24,9 @@ type PrinterPlugin interface {
 	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
 	UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error
 	DeleteFile(ctx context.Context, storage, path string) error
+	// DownloadFile returns a file's raw bytes for the user to save locally -
+	// same storage/path convention as DeleteFile/StartPrint.
+	DownloadFile(ctx context.Context, storage, path string) ([]byte, error)
 	StartPrint(ctx context.Context, location, path string) error
 	PausePrint(ctx context.Context) error
 	ResumePrint(ctx context.Context) error

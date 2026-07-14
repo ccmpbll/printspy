@@ -217,6 +217,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.handlePower(w, r, id)
 		case "recent":
 			h.getRecentPrints(w, r, id)
+		case "download":
+			h.downloadFile(w, r, id)
 		case "print":
 			h.startPrint(w, r, id)
 		case "upload":
@@ -983,6 +985,36 @@ func (h *Handler) deleteRecentFile(w http.ResponseWriter, r *http.Request, id in
 		return
 	}
 	jsonResponse(w, map[string]any{"success": true})
+}
+
+func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	origin := r.URL.Query().Get("origin")
+	path := r.URL.Query().Get("path")
+	filename := r.URL.Query().Get("filename")
+	if origin == "" || path == "" {
+		jsonError(w, "origin and path are required", http.StatusBadRequest)
+		return
+	}
+	if strings.Contains(path, "..") {
+		jsonError(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	if filename == "" {
+		filename = path
+	}
+
+	data, err := h.poller.DownloadFile(r.Context(), id, origin, path)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filename, `"`, "")))
+	w.Write(data)
 }
 
 func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {

@@ -162,6 +162,7 @@ async function loadFileManagerFiles(printerId) {
                     <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}</span>
                 </div>
                 <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
+                <a class="btn btn-sm" href="/api/printers/${printerId}/download?origin=${encodeURIComponent(f.origin)}&path=${encodeURIComponent(f.path)}&filename=${encodeURIComponent(f.file_name)}" title="Download">&#8595; Download</a>
                 <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
             </div>`;
         }).join('');
