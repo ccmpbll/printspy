@@ -423,36 +423,46 @@ header .printer-count {
     background: var(--accent);
 }
 
-.webcam-toggle {
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    border: none;
-    background: rgba(0,0,0,0.6);
-    color: #ccc;
-    font-size: 0.6rem;
-    cursor: pointer;
+.webcam-badge .dot-gray {
+    background: #888;
+}
+
+/* Snapshot/live/plate mode buttons, under the image (not on it) - one row
+   per printer card, always the same three options regardless of state;
+   LIVE/PLATE just disable themselves when not applicable rather than
+   disappearing, so the row never jumps around. */
+.webcam-mode-row {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    line-height: 1;
+    gap: 2px;
+    margin-top: 0.35rem;
 }
 
-.webcam-toggle:hover {
-    background: rgba(0,0,0,0.8);
+.webcam-mode-btn {
+    flex: 1;
+    padding: 0.2rem 0;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.webcam-mode-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+}
+
+.webcam-mode-btn.active {
+    background: var(--accent);
     color: #fff;
+    border-color: var(--accent);
 }
 
-.webcam-toggle.live {
-    background: rgba(220,38,38,0.6);
-}
-
-.webcam-toggle.live:hover {
-    background: rgba(220,38,38,0.8);
+.webcam-mode-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 
 /* Collapsed webcam for idle printers */
@@ -461,10 +471,13 @@ header .printer-count {
     min-height: 0;
 }
 
-/* Applied to .webcam-wrapper, not .webcam-container - the wrapper carries
-   the fixed width, so hiding only the container would leave the column's
-   space reserved and empty instead of letting printer-stats expand into it. */
-.webcam-wrapper.webcam-collapsed {
+/* Collapses just the image box, not the whole .webcam-wrapper - the
+   snap/live/plate mode buttons live below it and need to stay reachable
+   even when the current mode has nothing to show (e.g. plate mode with no
+   thumbnail available), or there'd be no way to switch modes back. Means
+   the 200px column stays reserved even with nothing to show in it, unlike
+   the old full-wrapper collapse that let printer-stats expand to fill it. */
+.webcam-container.webcam-collapsed {
     display: none;
 }
 

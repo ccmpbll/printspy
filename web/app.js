@@ -386,12 +386,17 @@ function refreshSnapshots() {
     pollCounter++;
     document.querySelectorAll('.webcam-img').forEach(img => {
         const id = img.closest('[data-printer-id]')?.dataset.printerId;
-        if (!id || getWebcamMode(parseInt(id)) !== 'snapshot') return;
+        if (!id) return;
+        const mode = getWebcamMode(parseInt(id));
+        if (mode === 'live') return;
         // A hidden (errored) img only gets retried when a real camera is
         // assigned - a camera-less printer's img has nothing to reconnect
-        // to, it's just sitting there permanently failed by design.
-        if (img.style.display !== 'none' || img.dataset.hasCamera === 'true') {
-            img.src = `/api/snapshot/${id}?t=${pollCounter}`;
+        // to, it's just sitting there permanently failed by design. Plate
+        // mode is the exception: thumbnail availability can change the
+        // moment a print starts regardless of camera assignment, so it's
+        // always worth retrying.
+        if (mode === 'plate' || img.style.display !== 'none' || img.dataset.hasCamera === 'true') {
+            img.src = mode === 'plate' ? `/api/thumbnail/${id}?t=${pollCounter}` : `/api/snapshot/${id}?t=${pollCounter}`;
         }
     });
     // The print-thumbnail fallback (see webcamError()) is a one-shot attempt
@@ -399,67 +404,67 @@ function refreshSnapshots() {
     // moments after a print starts - retry it here too, same as the webcam
     // img above, as long as it's still sitting in its failed (hidden) state.
     // Reassigning .src re-fires the onload/onerror handlers webcamError()
-    // already attached to this element, no need to re-set them.
+    // already attached to this element, no need to re-set them. Skipped
+    // entirely for plate mode - the main img above already retries the
+    // thumbnail directly, this fallback element never gets shown there.
     document.querySelectorAll('.webcam-print-thumb').forEach(thumb => {
         const placeholder = thumb.closest('.webcam-placeholder');
         const printerId = thumb.closest('[data-printer-id]')?.dataset.printerId;
-        if (printerId && placeholder && placeholder.style.display !== 'none' && thumb.style.display === 'none') {
+        if (!printerId || getWebcamMode(parseInt(printerId)) === 'plate') return;
+        if (placeholder && placeholder.style.display !== 'none' && thumb.style.display === 'none') {
             thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
         }
     });
 }
 
-// Webcam mode
+// Webcam mode - snapshot/live/plate, client-side only (localStorage),
+// same as the previous snapshot/live toggle just extended to a third
+// option. Buttons live under the image rather than on it (see
+// renderPrinterCard) so a full card re-render on click is simplest and
+// correct - it naturally handles LIVE being disabled, the corner
+// thumb-beside box appearing/disappearing for plate mode, etc, all through
+// the same render path the regular poll tick already uses.
 
 function getWebcamMode(printerId) {
     return localStorage.getItem(`webcam-mode-${printerId}`) || 'snapshot';
 }
 
-function toggleWebcamMode(printerId) {
-    const current = getWebcamMode(printerId);
-    const next = current === 'snapshot' ? 'live' : 'snapshot';
-    localStorage.setItem(`webcam-mode-${printerId}`, next);
+function setWebcamMode(printerId, mode) {
+    localStorage.setItem(`webcam-mode-${printerId}`, mode);
+    const printer = printers.find(p => p.config.id === printerId);
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
-    if (!card) return;
-
-    const img = card.querySelector('.webcam-img');
-    if (img) {
-        img.style.display = '';
-        img.src = next === 'live' ? `/api/webcam/${printerId}` : `/api/snapshot/${printerId}?t=${pollCounter}`;
-    }
-    const badge = card.querySelector('.webcam-badge');
-    if (badge) {
-        const dot = badge.querySelector('.dot');
-        if (dot) dot.className = next === 'live' ? 'dot' : 'dot dot-blue';
-        badge.lastChild.textContent = next === 'live' ? ' LIVE' : ' SNAP';
-    }
-    const btn = card.querySelector('.webcam-toggle');
-    if (btn) {
-        btn.className = next === 'live' ? 'webcam-toggle live' : 'webcam-toggle';
-        btn.innerHTML = next === 'live' ? '<span class="icon-stop"></span>' : '<span class="icon-play"></span>';
-    }
-    const placeholder = card.querySelector('.webcam-placeholder');
-    if (placeholder) placeholder.style.display = 'none';
+    if (!printer || !card) return;
+    card.outerHTML = renderPrinterCard(printer);
 }
 
-function webcamError(img, isPrinting, tryThumb, hasCamera) {
+function webcamError(img, isPrinting, tryThumb, hasCamera, mode) {
     const container = img.parentElement;
-    const wrapper = container.parentElement;
     img.style.display = 'none';
     container.querySelector('.webcam-placeholder').style.display = 'flex';
     container.querySelector('.webcam-badge').style.display = 'none';
-    const toggle = container.querySelector('.webcam-toggle');
-    if (toggle) toggle.style.display = 'none';
+
+    const text = container.querySelector('.webcam-placeholder-text');
+    if (mode === 'plate') {
+        // Plate mode only ever attempts the thumbnail - nothing left to
+        // fall back to if that itself fails.
+        text.textContent = 'No plate thumbnail available';
+        text.style.display = 'block';
+        // Collapses just the image box, not the mode-button row below it
+        // (see .webcam-mode-row) - the buttons must stay reachable even
+        // when the current mode has nothing to show, or there'd be no way
+        // to switch back.
+        if (!isPrinting) container.classList.add('webcam-collapsed');
+        return;
+    }
 
     // No camera assigned - fall back to the print thumbnail (current job, or
     // last loaded file) rather than collapsing the space immediately, but
     // only when idle/printing - a decorative plate render doesn't belong
     // next to an error/attention/offline card, it just competes with the
     // actual message for space. Only collapse (when idle) once the
-    // thumbnail also fails to load. Collapsing the wrapper (not just the
-    // inner container) is what actually frees up the row for printer-stats
-    // to expand into - the wrapper has a fixed width that survives the
-    // container being hidden.
+    // thumbnail also fails to load. Collapsing the container (not the
+    // mode-button row below it) keeps SNAP/LIVE/PLATE always reachable
+    // regardless of whether the current attempt succeeded.
     //
     // A printer WITH an assigned camera never auto-collapses on failure,
     // even when idle - the "Camera unreachable" text is a real diagnostic
@@ -467,14 +472,13 @@ function webcamError(img, isPrinting, tryThumb, hasCamera) {
     // fallback, and collapsing right after showing it made it effectively
     // unseeable outside of active prints.
     const thumb = container.querySelector('.webcam-print-thumb');
-    const text = container.querySelector('.webcam-placeholder-text');
     const card = container.closest('[data-printer-id]');
     const printerId = card?.dataset.printerId;
     if (tryThumb && printerId) {
         thumb.onload = () => {
             thumb.style.display = 'block';
             text.style.display = 'none';
-            wrapper.classList.remove('webcam-collapsed');
+            container.classList.remove('webcam-collapsed');
             // The corner thumb-beside box (printer-stats) shows the same
             // plate render this fallback just filled the main webcam slot
             // with - would otherwise duplicate it whenever an assigned
@@ -485,11 +489,11 @@ function webcamError(img, isPrinting, tryThumb, hasCamera) {
         thumb.onerror = () => {
             thumb.style.display = 'none';
             text.style.display = 'block';
-            if (!isPrinting && !hasCamera) wrapper.classList.add('webcam-collapsed');
+            if (!isPrinting && !hasCamera) container.classList.add('webcam-collapsed');
         };
         thumb.src = `/api/thumbnail/${printerId}?t=${pollCounter}`;
     } else if (!isPrinting && !hasCamera) {
-        wrapper.classList.add('webcam-collapsed');
+        container.classList.add('webcam-collapsed');
     }
 }
 
@@ -499,18 +503,15 @@ function webcamError(img, isPrinting, tryThumb, hasCamera) {
 // state it's setting).
 function webcamRecovered(img) {
     const container = img.parentElement;
-    const wrapper = container.parentElement;
     container.querySelector('.webcam-placeholder').style.display = 'none';
     container.querySelector('.webcam-badge').style.display = '';
-    const toggle = container.querySelector('.webcam-toggle');
-    if (toggle) toggle.style.display = '';
-    wrapper.classList.remove('webcam-collapsed');
+    container.classList.remove('webcam-collapsed');
     const beside = container.closest('[data-printer-id]')?.querySelector('.thumb-beside');
     if (beside) beside.style.display = '';
 }
 
-function webcamSrc(printerId) {
-    const mode = getWebcamMode(printerId);
+function webcamSrc(printerId, mode) {
+    if (mode === 'plate') return `/api/thumbnail/${printerId}?t=${pollCounter}`;
     if (mode === 'live') return `/api/webcam/${printerId}`;
     return `/api/snapshot/${printerId}?t=${pollCounter}`;
 }
@@ -590,19 +591,22 @@ function renderPrinterCard(printer) {
     // decorative plate render doesn't belong on an error/attention/offline/
     // disconnected card - see webcamError()).
     const tryThumb = state === 'idle' || isPrinting;
+    // Live streaming needs either a plugin-reported webcam stream URL or an
+    // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
+    // webcam URL of their own).
+    const supportsLive = printer.has_webcam || printer.has_camera;
+    let wcMode = getWebcamMode(cfg.id);
+    if (wcMode === 'live' && !supportsLive) wcMode = 'snapshot';
+    const isPlate = wcMode === 'plate';
     // An assigned printspy-cam is a separate device, independent of the
     // printer's own connectivity - still worth attempting even when the
     // printer itself is offline. Without one, this column's own
     // print-thumbnail fallback (see webcamError()) is what fills the camera
     // spot on idle/printing - only skip the attempt entirely (collapse up
     // front) when there's no camera assigned *and* the state wouldn't show
-    // a thumbnail anyway.
-    const camAttempt = tryThumb || printer.has_camera;
-    // Live streaming needs either a plugin-reported webcam stream URL or an
-    // assigned printspy-cam (snapshot-only plugins like PrusaLink report no
-    // webcam URL of their own).
-    const supportsLive = printer.has_webcam || printer.has_camera;
-    const wcMode = supportsLive ? getWebcamMode(cfg.id) : 'snapshot';
+    // a thumbnail anyway. Plate mode never attempts the camera at all, so
+    // it's gated on tryThumb alone.
+    const camAttempt = isPlate ? tryThumb : (tryThumb || printer.has_camera);
     const cardClass = stateCardClass(state);
 
     let powerHTML = '';
@@ -643,19 +647,23 @@ function renderPrinterCard(printer) {
                 ${historyHTML}
             </div>
             <div class="printer-body">
-                <div class="webcam-wrapper ${camAttempt ? '' : 'webcam-collapsed'}">
-                    <div class="webcam-container ${(isPrinting || printer.has_camera) ? '' : 'webcam-idle'}">
-                        <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera})" onload="webcamRecovered(this)">
+                <div class="webcam-wrapper">
+                    <div class="webcam-container ${camAttempt ? (isPrinting || printer.has_camera ? '' : 'webcam-idle') : 'webcam-collapsed'}">
+                        <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id, wcMode)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera},'${wcMode}')" onload="webcamRecovered(this)">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
                         </div>
-                        <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : 'dot dot-blue'}"></span> ${wcMode === 'live' ? 'LIVE' : 'SNAP'}</div>
-                        ${supportsLive ? `<button class="webcam-toggle ${wcMode === 'live' ? 'live' : ''}" onclick="event.stopPropagation();toggleWebcamMode(${cfg.id})" title="Toggle snapshot/live">${wcMode === 'live' ? '<span class="icon-stop"></span>' : '<span class="icon-play"></span>'}</button>` : ''}
+                        <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : (isPlate ? 'dot dot-gray' : 'dot dot-blue')}"></span> ${wcMode.toUpperCase()}</div>
+                    </div>
+                    <div class="webcam-mode-row">
+                        <button class="webcam-mode-btn ${wcMode === 'snapshot' ? 'active' : ''}" onclick="event.stopPropagation();setWebcamMode(${cfg.id},'snapshot')">SNAP</button>
+                        <button class="webcam-mode-btn ${wcMode === 'live' ? 'active' : ''}" ${!supportsLive ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'live')">LIVE</button>
+                        <button class="webcam-mode-btn ${isPlate ? 'active' : ''}" ${!tryThumb ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'plate')">PLATE</button>
                     </div>
                 </div>
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(cfg, status, !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status, !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;

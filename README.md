@@ -29,7 +29,7 @@ Plugin architecture — new platforms are straightforward to add.
 - Pushover notifications — print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
 - Smart plug power control via a directly-configured Tasmota device, independent of any platform plugin, assignable to any printer
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
-- Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — includes a per-printer "always show plate thumbnail instead" override
+- Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — snapshot/live/plate-thumbnail toggle buttons under each card's image
 - Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Printer reordering, optional free-text "model" field, dark mode, responsive layout
