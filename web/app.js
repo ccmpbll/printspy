@@ -445,14 +445,16 @@ function webcamError(img, isPrinting, tryThumb, hasCamera, mode) {
     const text = container.querySelector('.webcam-placeholder-text');
     if (mode === 'plate') {
         // Plate mode only ever attempts the thumbnail - nothing left to
-        // fall back to if that itself fails.
-        text.textContent = 'No plate thumbnail available';
+        // fall back to if that itself fails. This only fires when tryThumb
+        // was already true (idle or printing - see camAttempt), so the two
+        // real cases are "idle, nothing's ever been loaded" and the rarer
+        // "printing, but this file has no embedded thumbnail". Never
+        // collapses - keeps the box at its normal size instead of the
+        // layout jumping around every time the current job/thumbnail
+        // changes.
+        text.textContent = isPrinting ? 'No plate thumbnail available' : 'No job running';
         text.style.display = 'block';
-        // Collapses just the image box, not the mode-button row below it
-        // (see .webcam-mode-row) - the buttons must stay reachable even
-        // when the current mode has nothing to show, or there'd be no way
-        // to switch back.
-        if (!isPrinting) container.classList.add('webcam-collapsed');
+        container.classList.remove('webcam-collapsed');
         return;
     }
 
@@ -646,7 +648,7 @@ function renderPrinterCard(printer) {
             </div>
             <div class="printer-body">
                 <div class="webcam-wrapper">
-                    <div class="webcam-container ${camAttempt ? (isPrinting || printer.has_camera ? '' : 'webcam-idle') : 'webcam-collapsed'}">
+                    <div class="webcam-container ${camAttempt ? (isPlate || isPrinting || printer.has_camera ? '' : 'webcam-idle') : 'webcam-collapsed'}">
                         <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id, wcMode)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera},'${wcMode}')" onload="webcamRecovered(this)">
                         <div class="webcam-placeholder" style="display:none">
                             <img class="webcam-print-thumb" style="display:none" alt="">
