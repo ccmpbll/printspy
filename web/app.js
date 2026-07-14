@@ -426,7 +426,7 @@ function refreshSnapshots() {
 // the same render path the regular poll tick already uses.
 
 function getWebcamMode(printerId) {
-    return localStorage.getItem(`webcam-mode-${printerId}`) || 'snapshot';
+    return localStorage.getItem(`webcam-mode-${printerId}`) || 'plate';
 }
 
 function setWebcamMode(printerId, mode) {
@@ -441,7 +441,6 @@ function webcamError(img, isPrinting, tryThumb, hasCamera, mode) {
     const container = img.parentElement;
     img.style.display = 'none';
     container.querySelector('.webcam-placeholder').style.display = 'flex';
-    container.querySelector('.webcam-badge').style.display = 'none';
 
     const text = container.querySelector('.webcam-placeholder-text');
     if (mode === 'plate') {
@@ -504,7 +503,6 @@ function webcamError(img, isPrinting, tryThumb, hasCamera, mode) {
 function webcamRecovered(img) {
     const container = img.parentElement;
     container.querySelector('.webcam-placeholder').style.display = 'none';
-    container.querySelector('.webcam-badge').style.display = '';
     container.classList.remove('webcam-collapsed');
     const beside = container.closest('[data-printer-id]')?.querySelector('.thumb-beside');
     if (beside) beside.style.display = '';
@@ -654,12 +652,11 @@ function renderPrinterCard(printer) {
                             <img class="webcam-print-thumb" style="display:none" alt="">
                             <span class="webcam-placeholder-text" data-field="webcam-placeholder-text">${(state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable'}</span>
                         </div>
-                        <div class="webcam-badge"><span class="${wcMode === 'live' ? 'dot' : (isPlate ? 'dot dot-gray' : 'dot dot-blue')}"></span> ${wcMode.toUpperCase()}</div>
                     </div>
                     <div class="webcam-mode-row">
+                        <button class="webcam-mode-btn ${isPlate ? 'active' : ''}" ${!tryThumb ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'plate')">PLATE</button>
                         <button class="webcam-mode-btn ${wcMode === 'snapshot' ? 'active' : ''}" onclick="event.stopPropagation();setWebcamMode(${cfg.id},'snapshot')">SNAP</button>
                         <button class="webcam-mode-btn ${wcMode === 'live' ? 'active' : ''}" ${!supportsLive ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'live')">LIVE</button>
-                        <button class="webcam-mode-btn ${isPlate ? 'active' : ''}" ${!tryThumb ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'plate')">PLATE</button>
                     </div>
                 </div>
                 <div class="printer-stats">

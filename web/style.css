@@ -361,11 +361,22 @@ header .printer-count {
 .webcam-wrapper {
     min-width: 200px;
     width: 200px;
+    /* Column layout so .webcam-container can take "the rest of the stretched
+       height minus the mode-button row" via flex:1, instead of height:100%
+       which assumed the container was the wrapper's only child - with the
+       button row added below it, 100% left no room for it and pushed it
+       out past the card's bottom edge. */
+    display: flex;
+    flex-direction: column;
 }
 
 .webcam-container {
     width: 100%;
-    height: 100%;
+    /* auto basis (not the flex:1 shorthand's 0%) so the mobile breakpoint's
+       explicit height:200px still wins as the starting size there (where
+       .webcam-wrapper has no external stretch pressure to grow into) -
+       grow:1 still consumes any real leftover space on desktop regardless. */
+    flex: 1 1 auto;
     background: #111;
     border-radius: var(--radius);
     overflow: hidden;
@@ -398,35 +409,6 @@ header .printer-count {
     object-fit: contain;
 }
 
-.webcam-badge {
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: rgba(0,0,0,0.6);
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 0.6rem;
-    color: #ccc;
-}
-
-.webcam-badge .dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--error);
-}
-
-.webcam-badge .dot-blue {
-    background: var(--accent);
-}
-
-.webcam-badge .dot-gray {
-    background: #888;
-}
-
 /* Snapshot/live/plate mode buttons, under the image (not on it) - one row
    per printer card, always the same three options regardless of state;
    LIVE/PLATE just disable themselves when not applicable rather than
@@ -435,19 +417,28 @@ header .printer-count {
     display: flex;
     gap: 2px;
     margin-top: 0.35rem;
+    /* Hard cap at the wrapper's own width regardless of button content -
+       flex items refuse to shrink below their intrinsic content size by
+       default (min-width:auto), which let 3 buttons' text overflow the
+       fixed 200px column on desktop (only ever tested at a narrower,
+       single-column mobile width where this doesn't show up). */
+    overflow: hidden;
 }
 
 .webcam-mode-btn {
     flex: 1;
+    min-width: 0;
     padding: 0.2rem 0;
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     font-weight: 600;
-    letter-spacing: 0.03em;
     border: 1px solid var(--border);
     border-radius: 4px;
     background: var(--bg-primary);
     color: var(--text-secondary);
     cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: clip;
 }
 
 .webcam-mode-btn:hover:not(:disabled) {
@@ -467,6 +458,10 @@ header .printer-count {
 
 /* Collapsed webcam for idle printers */
 .webcam-idle {
+    /* Overrides .webcam-container's flex:1 (which would otherwise still
+       grow to fill the column) so this collapses to its actual content
+       size instead. */
+    flex: 0 0 auto;
     height: auto;
     min-height: 0;
 }
