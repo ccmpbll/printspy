@@ -335,11 +335,7 @@ header .printer-count {
 .printer-body {
     display: flex;
     gap: 0.75rem;
-    /* Webcam column now has a fixed height (see .webcam-container) - stretch
-       would force the stats column to match it even when idle-state content
-       is naturally shorter, or leave blank space under the webcam box when
-       printing-state content runs taller. */
-    align-items: flex-start;
+    align-items: stretch;
 }
 
 .ingest-banner {
@@ -361,9 +357,7 @@ header .printer-count {
     flex-shrink: 0;
 }
 
-/* Webcam - fixed size regardless of state, so cards stay scannable at a
-   glance instead of the image resizing to whatever height the stats column
-   next to it happens to need that tick. */
+/* Webcam */
 .webcam-wrapper {
     min-width: 200px;
     width: 200px;
@@ -371,7 +365,7 @@ header .printer-count {
 
 .webcam-container {
     width: 100%;
-    height: 200px;
+    height: 100%;
     background: #111;
     border-radius: var(--radius);
     overflow: hidden;
@@ -399,9 +393,9 @@ header .printer-count {
 }
 
 .webcam-placeholder img.webcam-print-thumb {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
 }
 
 .webcam-badge {
@@ -515,9 +509,9 @@ header .printer-count {
 }
 
 .thumb-beside img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
 }
 
 /* Filename */
