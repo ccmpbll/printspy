@@ -220,57 +220,63 @@ func (p *Poller) GetAllStatuses() map[int64]*models.PrinterStatus {
 	return result
 }
 
-func (p *Poller) GetWebcamURL(id int64) string {
+// plugin returns printer id's plugin, or an error if the printer's unknown -
+// collapses the RLock/lookup/RUnlock/not-found-check that used to precede
+// every method below individually.
+func (p *Poller) plugin(id int64) (plugin.PrinterPlugin, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if pp, ok := p.printers[id]; ok {
-		return pp.plugin.GetWebcamURL()
+	pp, ok := p.printers[id]
+	if !ok {
+		return nil, fmt.Errorf("printer %d not found", id)
 	}
-	return ""
+	return pp.plugin, nil
+}
+
+func (p *Poller) GetWebcamURL(id int64) string {
+	pl, err := p.plugin(id)
+	if err != nil {
+		return ""
+	}
+	return pl.GetWebcamURL()
 }
 
 // GetDisplayName returns the plugin's human-readable name for its printer
 // type (e.g. "PrusaLink", "OctoPrint"), so callers don't need to hardcode
 // a mapping from config.Type themselves.
 func (p *Poller) GetDisplayName(id int64) string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if pp, ok := p.printers[id]; ok {
-		return pp.plugin.DisplayName()
+	pl, err := p.plugin(id)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return pl.DisplayName()
 }
 
 func (p *Poller) GetSnapshotURL(id int64) string {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if pp, ok := p.printers[id]; ok {
-		return pp.plugin.GetSnapshotURL()
+	pl, err := p.plugin(id)
+	if err != nil {
+		return ""
 	}
-	return ""
+	return pl.GetSnapshotURL()
 }
 
 // AuthenticatedDo proxies req through the printer's plugin, which applies
 // whatever auth scheme that printer type needs - callers don't need to
 // know or care which one.
 func (p *Poller) AuthenticatedDo(id int64, client *http.Client, req *http.Request) (*http.Response, error) {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return nil, err
 	}
-	return pp.plugin.AuthenticatedDo(client, req)
+	return pl.AuthenticatedDo(client, req)
 }
 
 func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]models.RecentFile, error) {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return nil, err
 	}
-	files, err := pp.plugin.GetRecentFiles(ctx, limit)
+	files, err := pl.GetRecentFiles(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -313,52 +319,52 @@ func (p *Poller) backfillFileStats(id int64, files []models.RecentFile) {
 }
 
 func (p *Poller) UploadFile(ctx context.Context, id int64, storage, path string, data []byte, printAfter bool) error {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return err
 	}
 	lock := p.uploadLock(id)
 	lock.Lock()
 	defer lock.Unlock()
-	return pp.plugin.UploadFile(ctx, storage, path, data, printAfter)
+	return pl.UploadFile(ctx, storage, path, data, printAfter)
 }
 
 func (p *Poller) DeleteFile(ctx context.Context, id int64, storage, path string) error {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return err
 	}
-	return pp.plugin.DeleteFile(ctx, storage, path)
+	return pl.DeleteFile(ctx, storage, path)
+}
+
+func (p *Poller) DownloadFile(ctx context.Context, id int64, storage, path string) ([]byte, error) {
+	pl, err := p.plugin(id)
+	if err != nil {
+		return nil, err
+	}
+	return pl.DownloadFile(ctx, storage, path)
 }
 
 func (p *Poller) StartPrint(ctx context.Context, id int64, location, path string) error {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return err
 	}
-	return pp.plugin.StartPrint(ctx, location, path)
+	return pl.StartPrint(ctx, location, path)
 }
 
 func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) error {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return err
 	}
 	switch action {
 	case "pause":
-		return pp.plugin.PausePrint(ctx)
+		return pl.PausePrint(ctx)
 	case "resume":
-		return pp.plugin.ResumePrint(ctx)
+		return pl.ResumePrint(ctx)
 	case "cancel":
-		return pp.plugin.CancelPrint(ctx)
+		return pl.CancelPrint(ctx)
 	default:
 		return fmt.Errorf("unknown action: %s", action)
 	}
@@ -369,13 +375,11 @@ func (p *Poller) ControlPrint(ctx context.Context, id int64, action string) erro
 // printer's smart plug assignment/label, so the dashboard reflects it right
 // away rather than sitting stale until the next tick.
 func (p *Poller) Repoll(ctx context.Context, id int64) {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
+	pl, err := p.plugin(id)
+	if err != nil {
 		return
 	}
-	p.poll(ctx, id, pp.plugin)
+	p.poll(ctx, id, pl)
 }
 
 // ResetAllIdleClocks restarts every printer's idle-timeout clock. Called
@@ -432,11 +436,9 @@ func (p *Poller) IsOnline(id int64) bool {
 // to reconcile everything else (watts, printer state), but the visible
 // plug toggle doesn't wait on it.
 func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on bool) error {
-	p.mu.RLock()
-	pp, ok := p.printers[id]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("printer %d not found", id)
+	pl, err := p.plugin(id)
+	if err != nil {
+		return err
 	}
 
 	plugs, err := p.db.ListSmartPlugs(id)
@@ -454,13 +456,13 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 		}
 	}
 	if !direct {
-		setErr = pp.plugin.SetPowerState(ctx, plugID, on)
+		setErr = pl.SetPowerState(ctx, plugID, on)
 	}
 
 	if setErr == nil {
 		p.patchPowerState(id, plugID, "", on)
 	}
-	go p.poll(context.Background(), id, pp.plugin)
+	go p.poll(context.Background(), id, pl)
 	return setErr
 }
 
