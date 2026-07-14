@@ -9,31 +9,46 @@ This has been created mostly for my own use. If someone else finds it useful, al
 
 ## What it does
 
-Each printer gets a row: webcam/snapshot, GCode thumbnail, progress/ETA, temps, layer progress (OctoPrint + DisplayLayerProgress), and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
-
-## Features
-
-- Real-time SSE updates, no manual refresh
-- Auto-detects camera stack, printer name, and installed plugins
-- Works with [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware) for a webcam feed on printers with no native camera support, like PrusaLink
-- Smart plug power control + energy monitoring — auto-detected via OctoPrint (Tasmota, PSU Control), or talk directly to a Tasmota device independent of any plugin, assignable to any printer type
-- Print control (pause/resume/cancel) and a File Manager per printer — browse every file on its storage, one-click reprint or delete, with success/failure stats per file (native on OctoPrint, backfilled from print history on PrusaLink)
-- Print history per printer — material, filament used/cost, duration vs. estimate, and per-tool breakdown for multi-material prints, parsed directly from the file's own slicer metadata (PrusaLink)
-- Pushover notifications for print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
-- Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
-- PrusaLink keepalive ping — works around printers whose wifi drops off after sitting idle
-- Optional free-text "model" field to group physically-alike printers on the dashboard
-- Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy, pinned to one specific printer; "Upload" relays automatically once the printer's online, "Upload and Print" also powers it on first if it's off — no manual step either way
-- Multi-user login with per-account passwords, no roles/tiers
-- Config backup/restore as YAML
-- Snapshot/live toggle, printer reordering, dark mode, responsive layout
+Each printer gets a row: webcam/snapshot, progress/ETA, temps, and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
 ## Supported platforms
 
 - **OctoPrint** — fully supported
-- **PrusaLink** — experimental (Only tested on MK4S and Core One)
+- **PrusaLink** — experimental (only tested on MK4S and Core One)
 
 Plugin architecture — new platforms are straightforward to add.
+
+## Features
+
+### Core (both platforms)
+
+- Real-time dashboard updates via SSE, no manual refresh
+- Print control — pause, resume, cancel
+- File Manager per printer — browse every file on its storage, one-click reprint or delete, thumbnail previews (success/failure badges per file: native on OctoPrint, backfilled from print history on PrusaLink)
+- Print history per printer, with configurable retention (days, 0 = keep forever)
+- Pushover notifications — print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
+- Smart plug power control via a directly-configured Tasmota device, independent of any platform plugin, assignable to any printer
+- Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
+- Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — includes a per-printer "always show plate thumbnail instead" override
+- Multi-user login with per-account passwords, no roles/tiers
+- Config backup/restore as YAML
+- Printer reordering, optional free-text "model" field, dark mode, responsive layout
+
+### OctoPrint
+
+- Auto-detects camera stack (MJPEG or camera-streamer), printer name, and installed plugins
+- Native smart plug power control + energy monitoring, auto-detected via the Tasmota or PSU Control plugin
+- Layer progress display (needs the DisplayLayerProgress plugin)
+- Live webcam streaming, with a snapshot/live toggle
+
+### PrusaLink
+
+- Snapshot only — no live stream from the printer's own camera (assign a printspy-cam for a live feed)
+- No native power control over the API — use a directly-configured smart plug instead
+- Keepalive ping — works around printers whose wifi drops off after sitting idle
+- File upload from the dashboard, with an optional "print immediately"
+- Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy, pinned to one specific printer; "Upload" relays automatically once the printer's online, "Upload and Print" also powers it on first if it's off — no manual step either way
+- Print history enriched with real per-print metadata — material, filament used/cost, layer height, duration vs. estimate, and per-tool breakdown for multi-material prints — parsed directly from the file's own slicer metadata, since none of this is exposed over PrusaLink's API
 
 ## Quick start
 
