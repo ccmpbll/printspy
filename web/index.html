@@ -322,6 +322,13 @@
                         <div class="form-hint">How often webcam snapshots refresh. Lower values use more bandwidth.</div>
                     </div>
                     <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-hide-webcam" style="width:auto">
+                            Hide camera/thumbnail section on dashboard
+                        </label>
+                        <div class="form-hint">Removes the image box and SNAP/LIVE/PLATE buttons from every printer card - useful if printers are frequently unreachable and the section is just dead space. Applies to all printers.</div>
+                    </div>
+                    <div class="form-group">
                         <label for="setting-poll-interval">Poll interval (seconds)</label>
                         <input type="number" id="setting-poll-interval" value="" min="3" max="60" placeholder="Per-printer default">
                         <div class="form-hint">Global override for how often printers are polled. Leave empty to use per-printer settings.</div>

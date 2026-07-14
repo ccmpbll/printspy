@@ -648,6 +648,7 @@ function renderPrinterCard(printer) {
                 ${historyHTML}
             </div>
             <div class="printer-body">
+                ${hideWebcamSection ? '' : `
                 <div class="webcam-wrapper">
                     <div class="webcam-container ${camAttempt ? (isPlate || isPrinting || printer.has_camera ? '' : 'webcam-idle') : 'webcam-collapsed'}">
                         <img class="webcam-img" data-has-camera="${!!printer.has_camera}" ${camAttempt ? `src="${webcamSrc(cfg.id, wcMode)}"` : ''} alt="Webcam" onerror="webcamError(this,${isPrinting},${tryThumb},${!!printer.has_camera},'${wcMode}')" onload="webcamRecovered(this)">
@@ -661,9 +662,9 @@ function renderPrinterCard(printer) {
                         <button class="webcam-mode-btn ${wcMode === 'snapshot' ? 'active' : ''}" onclick="event.stopPropagation();setWebcamMode(${cfg.id},'snapshot')">SNAP</button>
                         <button class="webcam-mode-btn ${wcMode === 'live' ? 'active' : ''}" ${!supportsLive ? 'disabled' : ''} onclick="event.stopPropagation();setWebcamMode(${cfg.id},'live')">LIVE</button>
                     </div>
-                </div>
+                </div>`}
                 <div class="printer-stats">
-                    ${isPrinting ? renderPrintingStats(cfg, status, !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
+                    ${isPrinting ? renderPrintingStats(cfg, status, !hideWebcamSection && !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
         </div>`;
@@ -970,6 +971,7 @@ document.querySelectorAll('.notify-customize').forEach(el => {
 function openSettings() {
     fetch('/api/settings').then(r => r.json()).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
+        document.getElementById('setting-hide-webcam').checked = settings.hide_webcam_section === '1';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
         document.getElementById('setting-history-retention').value = settings.history_retention_days || '';
         document.getElementById('setting-print-control-timeout').value = settings.print_control_timeout_secs || '15';
@@ -1771,6 +1773,7 @@ async function saveSettings(e) {
     e.preventDefault();
     const settings = {
         snapshot_interval: document.getElementById('setting-snapshot-interval').value,
+        hide_webcam_section: document.getElementById('setting-hide-webcam').checked ? '1' : '0',
         history_retention_days: document.getElementById('setting-history-retention').value || '0',
         print_control_timeout_secs: document.getElementById('setting-print-control-timeout').value || '15',
         prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
@@ -1788,6 +1791,9 @@ async function saveSettings(e) {
     });
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
+    hideWebcamSection = settings.hide_webcam_section === '1';
+    prevPrinterIDs = [];
+    updateDashboard();
     closeModal();
 }
 
@@ -1834,6 +1840,7 @@ async function sendTestNotification() {
 
 let snapshotTimer = null;
 let snapshotInterval = 10;
+let hideWebcamSection = false;
 
 function restartSnapshotTimer() {
     if (snapshotTimer) clearInterval(snapshotTimer);
@@ -1984,6 +1991,7 @@ async function discardIngestJob(jobID) {
 // Initialize
 fetch('/api/settings').then(r => r.json()).then(settings => {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
+    hideWebcamSection = settings.hide_webcam_section === '1';
     restartSnapshotTimer();
 }).catch(() => {
     restartSnapshotTimer();
