@@ -24,12 +24,12 @@ Plugin architecture — new platforms are straightforward to add.
 
 - Real-time dashboard updates via SSE, no manual refresh
 - Print control — pause, resume, cancel
-- File Manager per printer — browse every file on its storage, one-click reprint or delete, thumbnail previews (success/failure badges per file: native on OctoPrint, backfilled from print history on PrusaLink)
+- File Manager per printer — browse every file on its storage, one-click reprint, download, or delete, thumbnail previews (success/failure badges per file: native on OctoPrint, backfilled from print history on PrusaLink)
 - Print history per printer, with configurable retention (days, 0 = keep forever)
 - Pushover notifications — print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
 - Smart plug power control via a directly-configured Tasmota device, independent of any platform plugin, assignable to any printer
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
-- Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — snapshot/live/plate-thumbnail toggle buttons under each card's image
+- Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — snapshot/live/plate-thumbnail toggle buttons under each card's image, with an optional global setting to hide the whole section for a printer while it's unreachable
 - Multi-user login with per-account passwords, no roles/tiers
 - Config backup/restore as YAML
 - Printer reordering, optional free-text "model" field, dark mode, responsive layout
