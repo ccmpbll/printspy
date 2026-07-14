@@ -379,19 +379,43 @@ func scanCameras(rows *sql.Rows) ([]models.Camera, error) {
 	return cams, rows.Err()
 }
 
+// unassignOtherCameras clears printer_id on any camera other than
+// exceptID currently pointing at printerID - one camera per printer, so
+// assigning a new one bumps whatever was assigned before rather than both
+// silently pointing at the same printer (GetCameraForPrinter only ever
+// returns one, oldest wins, so a second assignment used to just do nothing).
+func (db *DB) unassignOtherCameras(printerID int64, exceptID int64) error {
+	_, err := db.conn.Exec(`UPDATE cameras SET printer_id=NULL WHERE printer_id=? AND id!=?`, printerID, exceptID)
+	return err
+}
+
 func (db *DB) CreateCamera(url, name string, printerID *int64) (int64, error) {
 	result, err := db.conn.Exec(`INSERT INTO cameras (printer_id, url, name) VALUES (?, ?, ?)`,
 		printerID, url, name)
 	if err != nil {
 		return 0, err
 	}
-	return result.LastInsertId()
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if printerID != nil {
+		if err := db.unassignOtherCameras(*printerID, id); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
 }
 
 func (db *DB) UpdateCamera(id int64, url, name string, printerID *int64) error {
-	_, err := db.conn.Exec(`UPDATE cameras SET url=?, name=?, printer_id=? WHERE id=?`,
-		url, name, printerID, id)
-	return err
+	if _, err := db.conn.Exec(`UPDATE cameras SET url=?, name=?, printer_id=? WHERE id=?`,
+		url, name, printerID, id); err != nil {
+		return err
+	}
+	if printerID != nil {
+		return db.unassignOtherCameras(*printerID, id)
+	}
+	return nil
 }
 
 func (db *DB) DeleteCamera(id int64) error {
