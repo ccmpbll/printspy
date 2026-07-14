@@ -514,7 +514,12 @@ func (p *Poller) GetThumbnailURL(id int64) string {
 // (api/handlers.go) exactly, just returning bytes instead of streaming to
 // an http.ResponseWriter. Returns an error only when neither source is
 // available - callers should treat that as "send text-only", not a failure.
-func (p *Poller) captureCameraOrThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
+// urlOverride, when non-empty, is used instead of the live cached status's
+// thumbnail URL - the print-complete/failed notification fires after the
+// job has already cleared from the cache (the next poll's status has no
+// Job), so by then GetThumbnailURL would always return "". Callers still
+// mid-job (checkpoints, print-started) pass "" and get the live lookup.
+func (p *Poller) captureCameraOrThumbnail(ctx context.Context, id int64, urlOverride string) ([]byte, string, error) {
 	snapshotURL := ""
 	usingCamera := false
 	if cam, err := p.db.GetCameraForPrinter(id); err == nil {
@@ -528,13 +533,17 @@ func (p *Poller) captureCameraOrThumbnail(ctx context.Context, id int64) ([]byte
 			return data, ct, nil
 		}
 	}
-	return p.captureThumbnail(ctx, id)
+	return p.captureThumbnail(ctx, id, urlOverride)
 }
 
 // captureThumbnail fetches only the current print's plate thumbnail,
-// skipping any assigned camera entirely.
-func (p *Poller) captureThumbnail(ctx context.Context, id int64) ([]byte, string, error) {
-	thumbURL := p.GetThumbnailURL(id)
+// skipping any assigned camera entirely. See captureCameraOrThumbnail for
+// what urlOverride is for.
+func (p *Poller) captureThumbnail(ctx context.Context, id int64, urlOverride string) ([]byte, string, error) {
+	thumbURL := urlOverride
+	if thumbURL == "" {
+		thumbURL = p.GetThumbnailURL(id)
+	}
 	if thumbURL == "" {
 		return nil, "", fmt.Errorf("no image available")
 	}
@@ -787,7 +796,7 @@ func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
 // is set, so leaving a type uncustomized reproduces the exact previous
 // hardcoded behavior. When a custom template IS set, placeholders (e.g.
 // "{printer}") are substituted from values.
-func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defaultTitle, defaultMessage string, values map[string]string) {
+func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defaultTitle, defaultMessage string, values map[string]string, thumbnailURLOverride string) {
 	token, _ := p.db.GetSetting("pushover_app_token")
 	userKey, _ := p.db.GetSetting("pushover_user_key")
 	if token == "" || userKey == "" {
@@ -826,9 +835,9 @@ func (p *Poller) sendNotification(ctx context.Context, id int64, eventType, defa
 	switch imageMode {
 	case "none":
 	case "thumbnail":
-		image, contentType, _ = p.captureThumbnail(ctx, id)
+		image, contentType, _ = p.captureThumbnail(ctx, id, thumbnailURLOverride)
 	default: // "camera"
-		image, contentType, _ = p.captureCameraOrThumbnail(ctx, id)
+		image, contentType, _ = p.captureCameraOrThumbnail(ctx, id, thumbnailURLOverride)
 	}
 
 	msg := notify.Message{
@@ -953,17 +962,17 @@ func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.
 		"percent": fmt.Sprintf("%.0f", status.Job.Progress),
 	}
 	if fire1 {
-		p.sendNotification(ctx, id, "checkpoint1", "Print checkpoint", defaultMessage, placeholders)
+		p.sendNotification(ctx, id, "checkpoint1", "Print checkpoint", defaultMessage, placeholders, "")
 	}
 	if fire2 {
-		p.sendNotification(ctx, id, "checkpoint2", "Print checkpoint", defaultMessage, placeholders)
+		p.sendNotification(ctx, id, "checkpoint2", "Print checkpoint", defaultMessage, placeholders, "")
 	}
 }
 
 // notifyPrintResult sends the Print Complete/Failed notification. A
 // cancelled print (user-initiated) sends nothing - not a "failure" in the
 // alarming sense a Pushover alert implies.
-func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.PrintHistory) {
+func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.PrintHistory, thumbnailURL string) {
 	var enabled bool
 	var eventType, title string
 	switch h.Result {
@@ -998,7 +1007,7 @@ func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.Prin
 		"filament_g": fmt.Sprintf("%.0f", h.FilamentUsedG),
 		"duration":   formatDuration(h.DurationSecs),
 	}
-	p.sendNotification(ctx, id, eventType, title, message, placeholders)
+	p.sendNotification(ctx, id, eventType, title, message, placeholders, thumbnailURL)
 }
 
 func formatDuration(secs int) string {
@@ -1029,7 +1038,7 @@ func (p *Poller) checkErrorNotify(ctx context.Context, id int64, prevState model
 		message = string(status.State)
 	}
 	placeholders := map[string]string{"printer": printerName, "message": message}
-	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders)
+	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders, "")
 }
 
 // checkPrintStartNotify fires the Print Started notification on the
@@ -1051,7 +1060,7 @@ func (p *Poller) checkPrintStartNotify(ctx context.Context, id int64, prevState 
 	fileName := status.Job.FileName
 	message := fmt.Sprintf("%s: %s", printerName, fileName)
 	placeholders := map[string]string{"printer": printerName, "file": fileName}
-	p.sendNotification(ctx, id, "start", "Print started", message, placeholders)
+	p.sendNotification(ctx, id, "start", "Print started", message, placeholders, "")
 }
 
 // checkAutoOff powers off a printer's assigned smart plug(s) after it's
@@ -1255,6 +1264,13 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 	if fileName == "" {
 		return
 	}
+	// Grabbed from prev, not the live cache - by the time the completion
+	// notification sends, this poll's status has already cleared Job (and
+	// with it ThumbnailURL), so a live lookup would always come back empty.
+	thumbnailURL := ""
+	if prev != nil {
+		thumbnailURL = prev.ThumbnailURL
+	}
 
 	result := "completed"
 	if status.State == models.StateError {
@@ -1283,7 +1299,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 	// tick for every other printer.
 	downloader, ok := pl.(plugin.MetadataDownloader)
 	if !ok || filePath == "" {
-		p.insertPrintHistory(ctx, id, h)
+		p.insertPrintHistory(ctx, id, h, thumbnailURL)
 		return
 	}
 	go func() {
@@ -1311,17 +1327,17 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 				}
 			}
 		}
-		p.insertPrintHistory(ctx, id, h)
+		p.insertPrintHistory(ctx, id, h, thumbnailURL)
 	}()
 }
 
-func (p *Poller) insertPrintHistory(ctx context.Context, id int64, h *models.PrintHistory) {
+func (p *Poller) insertPrintHistory(ctx context.Context, id int64, h *models.PrintHistory, thumbnailURL string) {
 	if err := p.db.InsertPrintHistory(h); err != nil {
 		log.Printf("[printer:%d] failed to record print history: %v", id, err)
 		return
 	}
 	log.Printf("[printer:%d] recorded print history: %s (%s, %ds)", id, h.FileName, h.Result, h.DurationSecs)
-	p.notifyPrintResult(ctx, id, h)
+	p.notifyPrintResult(ctx, id, h, thumbnailURL)
 
 	if days := p.historyRetentionDays(); days > 0 {
 		if err := p.db.PrunePrintHistory(days); err != nil {
