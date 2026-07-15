@@ -192,6 +192,12 @@ func (db *DB) migrate() error {
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tool_changes INTEGER NOT NULL DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tools_json TEXT NOT NULL DEFAULT ''`)
 
+	// Migration: real thumbnails in History - path/uploaded_at match
+	// file_meta_cache's key for the same file, so a History row can look up
+	// its cached thumbnail without ever touching the printer.
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN path TEXT NOT NULL DEFAULT ''`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN uploaded_at INTEGER NOT NULL DEFAULT 0`)
+
 	return nil
 }
 
@@ -574,12 +580,12 @@ func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {
 		INSERT INTO print_history (
 			printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
 			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
-			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json
+			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, path, uploaded_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM,
 		h.FilamentUsedG, h.LayerHeightMM, h.FillDensity, h.PrinterModel, h.Material, h.ToolIndex, h.FilamentCost,
-		h.EstimatedSecs, h.MaxLayerZ, h.ObjectNames, h.ToolChanges, string(h.Tools))
+		h.EstimatedSecs, h.MaxLayerZ, h.ObjectNames, h.ToolChanges, string(h.Tools), h.Path, h.UploadedAt)
 	return err
 }
 
@@ -591,7 +597,7 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 	rows, err := db.conn.Query(`
 		SELECT id, printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
 			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
-			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json
+			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, path, uploaded_at
 		FROM print_history WHERE printer_id = ? ORDER BY id DESC LIMIT ? OFFSET ?
 	`, printerID, limit+1, offset)
 	if err != nil {
@@ -605,7 +611,7 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 		var toolsJSON string
 		if err := rows.Scan(&h.ID, &h.PrinterID, &h.FileName, &h.StartedAt, &h.CompletedAt, &h.DurationSecs, &h.Result, &h.FilamentUsedMM,
 			&h.FilamentUsedG, &h.LayerHeightMM, &h.FillDensity, &h.PrinterModel, &h.Material, &h.ToolIndex, &h.FilamentCost,
-			&h.EstimatedSecs, &h.MaxLayerZ, &h.ObjectNames, &h.ToolChanges, &toolsJSON); err != nil {
+			&h.EstimatedSecs, &h.MaxLayerZ, &h.ObjectNames, &h.ToolChanges, &toolsJSON, &h.Path, &h.UploadedAt); err != nil {
 			return nil, false, err
 		}
 		if toolsJSON != "" {

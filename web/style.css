@@ -1024,9 +1024,9 @@ header .printer-count {
     min-height: 1.1em;
 }
 
-/* Print history - same row shape as the File Manager list (.recent-item),
-   read-only so no thumb/buttons. Reuses .filemanager-list for the
-   scrolling container. */
+/* Print history - same row shape as the File Manager list (.recent-item,
+   including .recent-thumb), read-only so no action buttons. Reuses
+   .filemanager-list for the scrolling container. */
 .history-est {
     color: var(--text-tertiary);
     font-size: 0.7rem;

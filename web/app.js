@@ -172,28 +172,35 @@ async function loadFileManagerFiles(printerId) {
                 <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
             </div>`;
         }).join('');
-        observeLazyThumbs(list);
+        observeLazyThumbs(list, fileManagerThumbObserver);
     } catch (e) {
         list.innerHTML = '<div class="settings-empty">Failed to load files.</div>';
     }
 }
 
-// Loads File Manager thumbnails only as they scroll into view, instead of
-// firing every file's thumbnail request the instant the modal opens -
-// matters once a printer's storage has more than a handful of files.
-// root is the list's own scroll container (not the viewport/null) since
-// .filemanager-list scrolls internally within a fixed-height modal.
-const lazyThumbObserver = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        const img = entry.target;
-        img.src = img.dataset.src;
-        lazyThumbObserver.unobserve(img);
-    }
-}, {root: document.getElementById('filemanager-list'), rootMargin: '200px'});
+// Loads thumbnails only as they scroll into view, instead of firing every
+// row's thumbnail request the instant a modal opens - matters once a list
+// has more than a handful of entries. root is the list's own scroll
+// container (not the viewport/null), since both File Manager and History
+// scroll internally within a fixed-height modal - each needs its own
+// observer instance since IntersectionObserver's root is fixed at
+// construction time.
+function makeLazyThumbObserver(rootId) {
+    const observer = new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const img = entry.target;
+            img.src = img.dataset.src;
+            observer.unobserve(img);
+        }
+    }, {root: document.getElementById(rootId), rootMargin: '200px'});
+    return observer;
+}
+const fileManagerThumbObserver = makeLazyThumbObserver('filemanager-list');
+const historyThumbObserver = makeLazyThumbObserver('history-list');
 
-function observeLazyThumbs(container) {
-    container.querySelectorAll('.lazy-thumb').forEach(img => lazyThumbObserver.observe(img));
+function observeLazyThumbs(container, observer) {
+    container.querySelectorAll('.lazy-thumb').forEach(img => observer.observe(img));
 }
 
 // Print history - separate from the file manager (that's what's on the
@@ -253,6 +260,7 @@ async function loadHistoryPage() {
             list.innerHTML = `<div class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</div>`;
         } else {
             list.innerHTML = entries.map(historyRowHTML).join('');
+            observeLazyThumbs(list, historyThumbObserver);
         }
         historyHasMore = !!data.has_more;
         label.textContent = `Page ${historyPage + 1}`;
@@ -301,7 +309,15 @@ function historyRowHTML(h) {
         h.tool_changes ? `${h.tool_changes} tool changes` : '',
     ].filter(Boolean).join(' - ');
 
+    // Cache-only lookup (no live-proxy fallback like File Manager has) -
+    // History has no printer-side thumbnail ref to fall back to, only
+    // whatever trackPrintHistory cached at completion time. Omitted
+    // entirely when path's empty (no MetadataDownloader support, or this
+    // row predates the path/uploaded_at columns).
+    const thumb = h.path ? `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${historyPrinterId}?path=${encodeURIComponent(h.path)}&uploaded_at=${h.uploaded_at}" alt="" onerror="this.style.display='none'">` : '';
+
     return `<div class="recent-item history-item">
+        ${thumb}
         <div class="recent-item-info">
             <span class="recent-name" title="${esc(h.filename)}">${esc(h.filename)}</span>
             <span class="recent-meta"><span class="${statusClass}">${status}</span> - ${formatHistoryDate(h.completed_at)} - Duration: ${durationStr}${estStr}</span>

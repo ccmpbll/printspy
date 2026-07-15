@@ -335,7 +335,13 @@ func (p *Poller) backfillFileMeta(id int64, pl plugin.PrinterPlugin, files []mod
 		// handler returns, which is before this goroutine even starts.
 		ctx := context.Background()
 		for _, f := range stale {
-			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			// Generous on purpose - this is fully backgrounded (File Manager
+			// already opens instantly regardless, see backfillFileMeta's own
+			// doc comment), so there's no UI cost to waiting longer. 15s was
+			// too tight for real production networks - even a Range-capped
+			// 2MB .bgcode fetch was timing out on most files, not just the
+			// occasional outsized one seen in local testing.
+			fetchCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 			lock := p.uploadLock(id)
 			lock.Lock()
 			data, err := downloader.DownloadFileForMetadata(fetchCtx, "/"+f.Origin+"/"+f.Path, f.FileName)
@@ -1463,8 +1469,13 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			// (RecentFile.Path convention, e.g. "COREON~1.BGCODE") - filePath
 			// here is a full "/origin/path" ref (Refs.Download), so strip the
 			// leading "/origin/" segment to match what File Manager looks up.
+			// h.Path/h.UploadedAt use the same key/timestamp so History can
+			// look up this same cache row later without touching the printer.
+			now := time.Now().Unix()
+			h.Path = cacheFilePath(filePath)
+			h.UploadedAt = now
 			if toolsJSON != nil || len(info.Thumbnail) > 0 {
-				p.db.SetFileMetaCache(id, cacheFilePath(filePath), time.Now().Unix(), toolsJSON, info.Thumbnail, info.ThumbnailContentType)
+				p.db.SetFileMetaCache(id, h.Path, now, toolsJSON, info.Thumbnail, info.ThumbnailContentType)
 			}
 		}
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)
