@@ -24,10 +24,10 @@ Plugin architecture — new platforms are straightforward to add.
 
 - Real-time dashboard updates via SSE, no manual refresh
 - Print control — pause, resume, cancel
-- File Manager per printer — browse every file on its storage, one-click reprint, download, or delete, thumbnail previews (success/failure badges per file: native on OctoPrint, backfilled from print history on PrusaLink)
-- Print history per printer, with configurable retention (days, 0 = keep forever)
+- File Manager per printer — browse every file on its storage, one-click reprint, download, or delete, thumbnail and material/tool previews for every file (native on OctoPrint, cached from the file's own metadata on PrusaLink)
+- Print history per printer, with configurable retention (days, 0 = keep forever) and real thumbnails per entry
 - Pushover notifications — print started/checkpoints/complete/failed/error, each independently configurable: priority, sound, image source (camera/thumbnail/none), and custom title/message templates
-- Smart plug power control via a directly-configured Tasmota device, independent of any platform plugin, assignable to any printer
+- Smart plug power control via a directly-configured Tasmota device, independent of any platform plugin, assignable to any printer — HTTP-direct (default) or MQTT (push-based, opt-in per plug)
 - Auto-off after idle timeout and thermal runaway protection (second layer on top of firmware protection) for printers with an assigned smart plug
 - Camera feed via [printspy-cam](https://github.com/ccmpbll/printspy-cam) (ESP32-CAM firmware), assignable to any printer — snapshot/live/plate-thumbnail toggle buttons under each card's image, with an optional global setting to hide the whole section for a printer while it's unreachable
 - Multi-user login with per-account passwords, no roles/tiers
@@ -89,6 +89,12 @@ First run redirects to a setup page to create the first account. Add or remove a
 ### Smart plugs
 
 OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink, Klipper, or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
+
+Each plug can use either connection mode:
+- **Direct HTTP** (default) — polled over the network on each printer's own poll interval, no extra setup
+- **MQTT** — push-based via a broker instead of polling; configure the broker under Settings → MQTT Broker (host:port, optional TLS/username/password), then set the plug's mode to MQTT and enter its Tasmota topic
+
+Both modes can be mixed freely across plugs.
 
 ### Cameras
 
