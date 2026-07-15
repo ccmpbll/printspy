@@ -1564,6 +1564,13 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 
 	thumbRef := r.URL.Query().Get("thumb")
 	if thumbRef == "" {
+		// Explicitly uncacheable - unlike the 200 response above (whose URL
+		// is only ever reused once the same uploaded_at value is truly
+		// immutable), a 404 here just means "not cached yet" and can flip to
+		// a real thumbnail the moment backfill catches up. Browsers will
+		// happily cache a 404 with no header telling them not to, which
+		// then hides a real thumbnail indefinitely once it does land.
+		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "no thumbnail available", http.StatusNotFound)
 		return
 	}
