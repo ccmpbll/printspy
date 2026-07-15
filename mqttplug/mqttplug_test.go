@@ -87,6 +87,23 @@ func TestSyncDedupesByTopic(t *testing.T) {
 	}
 }
 
+func TestSetCachedOnWinsOverStaleRead(t *testing.T) {
+	// Regression: a poll cycle already in flight when SetState is called
+	// reads whatever's cached - if that's the pre-command device echo
+	// (device hasn't caught up yet), it must not win over the command we
+	// just successfully published.
+	c := New()
+	c.subs = map[string]topicSubs{"testplug": {relays: map[string]relayMeta{"1": {Label: "Light"}}}}
+	c.applyPower("testplug", "POWER", true) // device was last seen ON
+
+	c.setCachedOn("testplug", "1", false) // we just commanded OFF
+
+	ps, ok := c.GetState("testplug", "1")
+	if !ok || ps.On {
+		t.Fatalf("GetState after setCachedOn = %+v, ok=%v, want On=false", ps, ok)
+	}
+}
+
 func TestGetStateUnknown(t *testing.T) {
 	c := New()
 	if _, ok := c.GetState("nope", "1"); ok {

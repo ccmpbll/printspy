@@ -290,11 +290,14 @@ func onOffPayload(on bool) string {
 }
 
 // SetState publishes the command topic and returns once the broker has
-// acknowledged the publish (QoS 1) - it does not wait for Tasmota's own
-// stat/.../POWER echo, which updates the cache asynchronously via the
-// existing subscription, same as how poller.go's patchPowerState already
-// treats a successful command as authoritative before the next reconciling
-// poll.
+// acknowledged the publish (QoS 1). It also stamps the cache with the
+// commanded value immediately on success - without this, a poll cycle
+// already in flight when SetState is called reads the pre-command cached
+// value (the device's own echo hasn't arrived yet) and clobbers the
+// optimistic UI update with the stale one, so the toggle appears to revert
+// for up to a full poll interval before self-correcting. The device's own
+// stat/.../POWER echo still arrives shortly after and confirms (or, rarely,
+// corrects) this.
 func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error {
 	c.mu.RLock()
 	cli := c.cli
@@ -309,5 +312,19 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return token.Error()
+	if err := token.Error(); err != nil {
+		return err
+	}
+	c.setCachedOn(topic, idx, on)
+	return nil
+}
+
+func (c *Client) setCachedOn(topic, idx string, on bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := stateKey(topic, idx)
+	ps := c.state[key]
+	stampMeta(&ps, topic, idx, c.relayMetaLocked(topic, idx))
+	ps.On = on
+	c.state[key] = ps
 }
