@@ -281,7 +281,87 @@ func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]mod
 		return nil, err
 	}
 	p.backfillFileStats(id, files)
+	p.backfillFileMeta(id, pl, files)
+
+	// Only an unlimited listing is the printer's complete, authoritative
+	// file set - a truncated one would wrongly look like "everything else
+	// is gone" and prune cache rows for files just outside the cutoff.
+	if limit <= 0 {
+		paths := make([]string, len(files))
+		for i, f := range files {
+			paths[i] = f.Path
+		}
+		p.db.PruneFileMetaCache(id, paths)
+	}
 	return files, nil
+}
+
+// backfillFileMeta fills in tools/thumbnail data (see file_meta_cache) for
+// files PrintSpy never personally uploaded - USB, direct slicer connection.
+// PrusaLink-only (MetadataDownloader) - files uploaded through PrintSpy are
+// already cached at upload time (see cacheFileMetaFromBytes), and print
+// completions cache themselves too (see trackPrintHistory), so this only
+// ever does real work for files that reached the printer some other way.
+//
+// The cache-hit check is cheap (DB only) and applied synchronously, so a
+// fresh cache still shows tools/thumbnails on this exact response. Actual
+// downloads for cache misses are real network cost - one full-file fetch
+// per miss - so those run in a background goroutine instead of blocking
+// this call: File Manager opens instantly with whatever's already cached,
+// and the newly-backfilled data shows up the next time this listing loads.
+func (p *Poller) backfillFileMeta(id int64, pl plugin.PrinterPlugin, files []models.RecentFile) {
+	downloader, ok := pl.(plugin.MetadataDownloader)
+	if !ok {
+		return
+	}
+	var stale []models.RecentFile
+	for i := range files {
+		f := &files[i]
+		row, hit, _ := p.db.GetFileMetaCache(id, f.Path)
+		if hit && row.UploadedAt == f.UploadedAt {
+			if len(row.ToolsJSON) > 0 {
+				f.Tools = row.ToolsJSON
+			}
+			continue
+		}
+		stale = append(stale, *f)
+	}
+	if len(stale) == 0 {
+		return
+	}
+
+	go func() {
+		// Not the request's context - that's cancelled the moment the HTTP
+		// handler returns, which is before this goroutine even starts.
+		ctx := context.Background()
+		for _, f := range stale {
+			fetchCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			lock := p.uploadLock(id)
+			lock.Lock()
+			data, err := downloader.DownloadFileForMetadata(fetchCtx, "/"+f.Origin+"/"+f.Path, f.FileName)
+			lock.Unlock()
+			cancel()
+			if err != nil {
+				log.Printf("[printer:%d] backfill: failed to download %s for metadata: %v", id, f.FileName, err)
+				continue
+			}
+
+			p.parseAndCacheFileMeta(id, f.FileName, f.Path, f.UploadedAt, data)
+		}
+	}()
+}
+
+// cacheFilePath strips a "/origin/path" ref (e.g. PrusaLink's
+// Refs.Download, "/usb/COREON~1.BGCODE") down to the bare path
+// ("COREON~1.BGCODE") that file_meta_cache keys on elsewhere
+// (RecentFile.Path convention) - a no-op for values that are already bare.
+func cacheFilePath(ref string) string {
+	if rest, ok := strings.CutPrefix(ref, "/"); ok {
+		if _, path, ok := strings.Cut(rest, "/"); ok {
+			return path
+		}
+	}
+	return ref
 }
 
 // backfillFileStats fills success/failure stats from print_history for
@@ -325,8 +405,49 @@ func (p *Poller) UploadFile(ctx context.Context, id int64, storage, path string,
 	}
 	lock := p.uploadLock(id)
 	lock.Lock()
-	defer lock.Unlock()
-	return pl.UploadFile(ctx, storage, path, data, printAfter)
+	realPath, uploadedAt, err := pl.UploadFile(ctx, storage, path, data, printAfter)
+	lock.Unlock()
+	if err == nil {
+		// PrusaLink-only (see MetadataDownloader) - OctoPrint already has its
+		// own richer thumbnail/job API and isn't part of this cache.
+		if _, ok := pl.(plugin.MetadataDownloader); ok {
+			p.parseAndCacheFileMeta(id, path, realPath, uploadedAt, data)
+		}
+	}
+	return err
+}
+
+// parseAndCacheFileMeta parses data already in hand - either just relayed
+// via upload, or freshly downloaded by backfillFileMeta - and writes
+// whatever it finds into file_meta_cache. filename drives format detection
+// (.bgcode vs .gcode - needs the real extension); cachePath is the
+// printer's own resolved storage path, the cache key every other read path
+// uses - the two differ for PrusaLink, which mangles an uploaded name into
+// an 8.3 short name on write (e.g. "verify.bgcode" -> "VERIFY~1.BGC").
+func (p *Poller) parseAndCacheFileMeta(id int64, filename, cachePath string, uploadedAt int64, data []byte) {
+	if cachePath == "" {
+		return // plugin couldn't tell us its real storage path - nothing to cache under
+	}
+	info, err := printmeta.Parse(filename, data)
+	if err != nil {
+		return
+	}
+	toolsJSON := toolsJSONFor(info)
+	if toolsJSON == nil && len(info.Thumbnail) == 0 {
+		return
+	}
+	if uploadedAt == 0 {
+		uploadedAt = time.Now().Unix()
+	}
+	p.db.SetFileMetaCache(id, cachePath, uploadedAt, toolsJSON, info.Thumbnail, info.ThumbnailContentType)
+}
+
+func toolsJSONFor(info *printmeta.Info) []byte {
+	if len(info.Tools) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(info.Tools)
+	return b
 }
 
 func (p *Poller) DeleteFile(ctx context.Context, id int64, storage, path string) error {
@@ -1323,10 +1444,27 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			h.MaxLayerZ = info.MaxLayerZ
 			h.ObjectNames = strings.Join(info.ObjectNames, ", ")
 			h.ToolChanges = info.ToolChanges
+			// History's own Tools column stays multi-tool-only (its
+			// established, existing meaning - a single-tool print already
+			// shows its material via h.Material/h.ToolIndex instead).
+			// file_meta_cache's tools_json is broader - File Manager wants
+			// every file's material/tool shown, not just multi-tool ones.
+			toolsJSON := toolsJSONFor(info)
 			if len(info.Tools) > 1 {
-				if b, err := json.Marshal(info.Tools); err == nil {
-					h.Tools = b
-				}
+				h.Tools = toolsJSON
+			}
+			// Same bytes already downloaded for the history metadata above -
+			// persist into the shared cache too, so a later File
+			// Manager/History view for this file doesn't need to touch the
+			// printer either. time.Now() isn't this file's real listing
+			// timestamp (not available here without an extra lookup) - rare
+			// mismatch, self-corrects next time backfillFileMeta sees this
+			// file with the real timestamp. Cache key is the bare path
+			// (RecentFile.Path convention, e.g. "COREON~1.BGCODE") - filePath
+			// here is a full "/origin/path" ref (Refs.Download), so strip the
+			// leading "/origin/" segment to match what File Manager looks up.
+			if toolsJSON != nil || len(info.Thumbnail) > 0 {
+				p.db.SetFileMetaCache(id, cacheFilePath(filePath), time.Now().Unix(), toolsJSON, info.Thumbnail, info.ThumbnailContentType)
 			}
 		}
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)

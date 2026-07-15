@@ -7,6 +7,7 @@ package printmeta
 import (
 	"bytes"
 	"compress/zlib"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -39,6 +40,9 @@ type Info struct {
 	ObjectNames    []string
 	Tools          []ToolUsage // every tool with non-zero usage; len 1 for single-tool prints
 	ToolChanges    int         // "total toolchanges"; 0 when absent (single-material prints)
+
+	Thumbnail            []byte // largest PNG/JPG preview embedded in the file, if any
+	ThumbnailContentType string // "image/png" or "image/jpeg"; empty when Thumbnail is empty
 }
 
 func Parse(filename string, data []byte) (*Info, error) {
@@ -58,6 +62,24 @@ const (
 	blockThumbnail       = 5
 )
 
+// EThumbnailFormat per prusa3d/libbgcode's core.hpp - PNG=0, JPG=1, QOI=2.
+// QOI isn't browser-renderable without a JS decoder, so it's never picked.
+const (
+	thumbFormatPNG = 0
+	thumbFormatJPG = 1
+)
+
+func thumbnailContentType(format uint16) (string, bool) {
+	switch format {
+	case thumbFormatPNG:
+		return "image/png", true
+	case thumbFormatJPG:
+		return "image/jpeg", true
+	default:
+		return "", false
+	}
+}
+
 func parseBgcode(data []byte) (*Info, error) {
 	if len(data) < 10 || string(data[0:4]) != "GCDE" {
 		return nil, fmt.Errorf("not a bgcode file (bad magic)")
@@ -69,6 +91,10 @@ func parseBgcode(data []byte) (*Info, error) {
 	}
 
 	kv := map[string]string{}
+	var bestThumb []byte
+	var bestThumbCT string
+	bestThumbArea := 0
+
 	off := 10
 	for off+8 <= len(data) {
 		blockType := binary.LittleEndian.Uint16(data[off : off+2])
@@ -98,10 +124,22 @@ func parseBgcode(data []byte) (*Info, error) {
 			break // truncated (e.g. a Range request that cut off mid-block)
 		}
 
-		if blockType == blockFileMetadata || blockType == blockPrinterMetadata || blockType == blockPrintMetadata {
+		switch {
+		case blockType == blockFileMetadata || blockType == blockPrinterMetadata || blockType == blockPrintMetadata:
 			blockData := data[off+paramsSize : int(blockEnd)]
-			if text, err := decodeText(blockData, compression); err == nil {
-				parseINILines(text, kv)
+			if text, err := decodeBytes(blockData, compression); err == nil {
+				parseINILines(string(text), kv)
+			}
+		case blockType == blockThumbnail && off+6 <= len(data):
+			format := binary.LittleEndian.Uint16(data[off : off+2])
+			width := binary.LittleEndian.Uint16(data[off+2 : off+4])
+			height := binary.LittleEndian.Uint16(data[off+4 : off+6])
+			if ct, ok := thumbnailContentType(format); ok {
+				if raw, err := decodeBytes(data[off+paramsSize:int(blockEnd)], compression); err == nil {
+					if area := int(width) * int(height); area > bestThumbArea {
+						bestThumb, bestThumbCT, bestThumbArea = raw, ct, area
+					}
+				}
 			}
 		}
 
@@ -115,28 +153,27 @@ func parseBgcode(data []byte) (*Info, error) {
 		}
 	}
 
-	return infoFromKV(kv), nil
+	info := infoFromKV(kv)
+	info.Thumbnail = bestThumb
+	info.ThumbnailContentType = bestThumbCT
+	return info, nil
 }
 
-func decodeText(b []byte, compression uint16) (string, error) {
+func decodeBytes(b []byte, compression uint16) ([]byte, error) {
 	switch compression {
 	case 0:
-		return string(b), nil
+		return b, nil
 	case 1:
 		r, err := zlib.NewReader(bytes.NewReader(b))
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		defer r.Close()
-		out, err := io.ReadAll(r)
-		if err != nil {
-			return "", err
-		}
-		return string(out), nil
+		return io.ReadAll(r)
 	default:
 		// Heatshrink (2, 3) is only ever used for gcode blocks in practice -
-		// metadata blocks we care about are always 0 or 1.
-		return "", fmt.Errorf("unsupported metadata block compression %d", compression)
+		// metadata/thumbnail blocks we care about are always 0 or 1.
+		return nil, fmt.Errorf("unsupported block compression %d", compression)
 	}
 }
 
@@ -156,8 +193,10 @@ func parseINILines(text string, kv map[string]string) {
 var gcodeCommentRe = regexp.MustCompile(`^;\s*([^=]+?)\s*=\s*(.*)$`)
 
 func parseGcode(data []byte) *Info {
+	lines := strings.Split(string(data), "\n")
+
 	kv := map[string]string{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for _, line := range lines {
 		line = strings.TrimRight(line, "\r")
 		if !strings.HasPrefix(line, ";") {
 			continue
@@ -168,7 +207,61 @@ func parseGcode(data []byte) *Info {
 		}
 		kv[strings.TrimSpace(m[1])] = strings.TrimSpace(m[2])
 	}
-	return infoFromKV(kv)
+
+	info := infoFromKV(kv)
+	info.Thumbnail, info.ThumbnailContentType = extractGcodeThumbnail(lines)
+	return info
+}
+
+// PrusaSlicer/OrcaSlicer embed one or more preview images as base64 in
+// header comment blocks:
+//
+//	; thumbnail begin 220x124 26986
+//	; iVBORw0KGgo...
+//	; thumbnail end
+//
+// Multiple sizes are typical - keep the largest. "thumbnail_QOI"/
+// "thumbnail_JPG" marker variants are intentionally not matched here: QOI
+// isn't browser-renderable without a JS decoder, and JPG isn't what either
+// slicer emits under the plain "thumbnail" marker in practice. Documented
+// gap, not a silent bug - add if a real file ever needs it.
+var gcodeThumbBeginRe = regexp.MustCompile(`^;\s*thumbnail begin (\d+)x(\d+)\s+\d+$`)
+
+func extractGcodeThumbnail(lines []string) ([]byte, string) {
+	var bestData []byte
+	bestArea := 0
+
+	var cur strings.Builder
+	inBlock := false
+	area := 0
+	for _, line := range lines {
+		line = strings.TrimRight(line, "\r")
+		if !inBlock {
+			if m := gcodeThumbBeginRe.FindStringSubmatch(line); m != nil {
+				w, _ := strconv.Atoi(m[1])
+				h, _ := strconv.Atoi(m[2])
+				area = w * h
+				inBlock = true
+				cur.Reset()
+			}
+			continue
+		}
+		if strings.TrimSpace(strings.TrimPrefix(line, ";")) == "thumbnail end" {
+			inBlock = false
+			if area > bestArea {
+				if decoded, err := base64.StdEncoding.DecodeString(cur.String()); err == nil {
+					bestData, bestArea = decoded, area
+				}
+			}
+			continue
+		}
+		cur.WriteString(strings.TrimSpace(strings.TrimPrefix(line, ";")))
+	}
+
+	if bestData == nil {
+		return nil, ""
+	}
+	return bestData, "image/png"
 }
 
 // Shared key -> Info resolution for both formats.

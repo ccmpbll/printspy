@@ -1,6 +1,7 @@
 package printmeta
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
@@ -131,6 +132,35 @@ func TestParseBgcodeMultiToolBenchy(t *testing.T) {
 	}
 	if info.ToolIndex != 0 {
 		t.Errorf("ToolIndex = %d, want 0 (primary/first tool)", info.ToolIndex)
+	}
+}
+
+func TestParseThumbnails(t *testing.T) {
+	cases := []struct {
+		file, name string
+	}{
+		{"testdata/mk4s_spool.bgcode", "spool.bgcode"},
+		{"testdata/multi_benchy.bgcode", "benchy.bgcode"},
+		{"testdata/benchy.gcode", "benchy.gcode"},
+	}
+	for _, c := range cases {
+		data, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := Parse(c.name, data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(info.Thumbnail) == 0 {
+			t.Fatalf("%s: no thumbnail extracted", c.file)
+		}
+		if info.ThumbnailContentType != "image/png" {
+			t.Errorf("%s: ThumbnailContentType = %q, want image/png", c.file, info.ThumbnailContentType)
+		}
+		if !bytes.HasPrefix(info.Thumbnail, []byte("\x89PNG\r\n\x1a\n")) {
+			t.Errorf("%s: extracted thumbnail is not a valid PNG", c.file)
+		}
 	}
 }
 

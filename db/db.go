@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -126,6 +127,16 @@ func (db *DB) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_ingest_jobs_target ON ingest_jobs(ingest_target_id);
 
 		CREATE INDEX IF NOT EXISTS idx_history_printer ON print_history(printer_id);
+
+		CREATE TABLE IF NOT EXISTS file_meta_cache (
+			printer_id INTEGER NOT NULL,
+			path TEXT NOT NULL,
+			uploaded_at INTEGER NOT NULL,
+			tools_json TEXT NOT NULL DEFAULT '',
+			thumbnail BLOB,
+			thumbnail_content_type TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (printer_id, path)
+		);
 	`)
 	if err != nil {
 		return err
@@ -620,6 +631,88 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 // codebase.
 func (db *DB) PrunePrintHistory(days int) error {
 	_, err := db.conn.Exec(`DELETE FROM print_history WHERE completed_at < datetime('now', ?)`, fmt.Sprintf("-%d days", days))
+	return err
+}
+
+// File metadata cache - tools/thumbnail data parsed from a file's own bytes
+// (upload-time or a one-off backfill download), keyed by (printer_id, path)
+// so File Manager/notifications never have to ask the printer for the same
+// thing twice.
+
+type FileMetaCacheRow struct {
+	ToolsJSON            json.RawMessage
+	Thumbnail            []byte
+	ThumbnailContentType string
+	UploadedAt           int64
+}
+
+// GetFileMetaCache returns the cached row for a file, if one exists. ok is
+// just row-exists - callers compare UploadedAt against the timestamp they
+// have on hand to decide whether the cached data is still fresh (PrusaLink
+// reuses 8.3 short filenames after a file's deleted, so path alone doesn't
+// guarantee the cached bytes describe today's file at that path).
+func (db *DB) GetFileMetaCache(printerID int64, path string) (FileMetaCacheRow, bool, error) {
+	var row FileMetaCacheRow
+	var toolsJSON string
+	err := db.conn.QueryRow(`
+		SELECT uploaded_at, tools_json, thumbnail, thumbnail_content_type
+		FROM file_meta_cache WHERE printer_id = ? AND path = ?
+	`, printerID, path).Scan(&row.UploadedAt, &toolsJSON, &row.Thumbnail, &row.ThumbnailContentType)
+	if err == sql.ErrNoRows {
+		return row, false, nil
+	}
+	if err != nil {
+		return row, false, err
+	}
+	if toolsJSON != "" {
+		row.ToolsJSON = json.RawMessage(toolsJSON)
+	}
+	return row, true, nil
+}
+
+// SetFileMetaCache upserts a file's cached tools/thumbnail data. A nil (or
+// empty) toolsJSON or a nil thumbnail means "caller has no new data for
+// this field" - preserves whatever's already cached rather than blanking it
+// out (the read-through fallback in handleFileThumbnailProxy only ever has
+// thumbnail bytes in hand, never tools_json, and shouldn't clobber tools
+// data a prior backfill already wrote for the same file).
+func (db *DB) SetFileMetaCache(printerID int64, path string, uploadedAt int64, toolsJSON []byte, thumbnail []byte, thumbnailContentType string) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO file_meta_cache (printer_id, path, uploaded_at, tools_json, thumbnail, thumbnail_content_type)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(printer_id, path) DO UPDATE SET
+			uploaded_at = excluded.uploaded_at,
+			tools_json = CASE WHEN excluded.tools_json != '' THEN excluded.tools_json ELSE file_meta_cache.tools_json END,
+			thumbnail = CASE WHEN excluded.thumbnail IS NOT NULL THEN excluded.thumbnail ELSE file_meta_cache.thumbnail END,
+			thumbnail_content_type = CASE WHEN excluded.thumbnail IS NOT NULL THEN excluded.thumbnail_content_type ELSE file_meta_cache.thumbnail_content_type END
+	`, printerID, path, uploadedAt, string(toolsJSON), thumbnail, thumbnailContentType)
+	return err
+}
+
+func (db *DB) DeleteFileMetaCache(printerID int64, path string) error {
+	_, err := db.conn.Exec(`DELETE FROM file_meta_cache WHERE printer_id = ? AND path = ?`, printerID, path)
+	return err
+}
+
+// PruneFileMetaCache removes cached rows for files no longer present in a
+// printer's current, complete file listing - catches deletions PrintSpy
+// doesn't see directly (touchscreen, USB). Only call this with a genuinely
+// unlimited listing; a truncated one would wrongly look like everything
+// else is gone.
+func (db *DB) PruneFileMetaCache(printerID int64, currentPaths []string) error {
+	if len(currentPaths) == 0 {
+		_, err := db.conn.Exec(`DELETE FROM file_meta_cache WHERE printer_id = ?`, printerID)
+		return err
+	}
+	placeholders := make([]string, len(currentPaths))
+	args := make([]interface{}, 0, len(currentPaths)+1)
+	args = append(args, printerID)
+	for i, p := range currentPaths {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	query := fmt.Sprintf(`DELETE FROM file_meta_cache WHERE printer_id = ? AND path NOT IN (%s)`, strings.Join(placeholders, ","))
+	_, err := db.conn.Exec(query, args...)
 	return err
 }
 

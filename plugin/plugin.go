@@ -22,7 +22,13 @@ type PrinterPlugin interface {
 	// GetRecentFiles returns files newest-first, capped at limit - limit <= 0
 	// means unlimited (the file manager's "all files" view).
 	GetRecentFiles(ctx context.Context, limit int) ([]models.RecentFile, error)
-	UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error
+	// UploadFile returns the printer's own resolved storage path and
+	// timestamp for the uploaded file - PrusaLink renames on write to an
+	// 8.3-mangled short name (e.g. "COREON~1.BGC"), different from path,
+	// and every other read path (listings, thumbnails, deletes) keys on
+	// that real name, not the one this was called with. Empty/zero when a
+	// plugin doesn't rename on write (OctoPrint - path is already correct).
+	UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) (realPath string, uploadedAt int64, err error)
 	DeleteFile(ctx context.Context, storage, path string) error
 	// DownloadFile returns a file's raw bytes for the user to save locally -
 	// same storage/path convention as DeleteFile/StartPrint.

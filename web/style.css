@@ -1008,6 +1008,7 @@ header .printer-count {
     color: var(--text-tertiary);
     font-size: 0.7rem;
 }
+.recent-tools { color: var(--text-tertiary); }
 .recent-status-success { color: var(--success); }
 .recent-status-failed { color: var(--error); }
 .recent-status-new { color: var(--accent); }
