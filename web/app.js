@@ -1999,6 +1999,14 @@ fetch('/api/settings').then(r => r.json()).then(settings => {
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     hideWebcamWhenUnreachable = settings.hide_webcam_when_unreachable === '1';
     restartSnapshotTimer();
+    // This races connectSSE() below, which triggers its own fetchPrinters()
+    // as soon as the connection opens - real network, that often resolves
+    // before this fetch does, rendering cards with hideWebcamWhenUnreachable
+    // still at its default (false). Force a re-render now that the real
+    // value is in, so a card built with the wrong default doesn't just sit
+    // there until some unrelated state change happens to rebuild it.
+    prevPrinterIDs = [];
+    updateDashboard();
 }).catch(() => {
     restartSnapshotTimer();
 });
