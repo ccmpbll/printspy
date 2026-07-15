@@ -108,17 +108,22 @@ func statWildcard(topic string) string {
 	return "stat/" + topic + "/+"
 }
 
-// subscribeAndQuery subscribes to a topic's state/telemetry, then publishes
-// an empty-payload Power query for each of its relays. Some real Tasmota
-// devices only ever publish on their own schedule (periodic tele/STATE) or
-// on an actual state change - if neither has happened since the device
-// booted, waiting passively leaves the cache empty indefinitely (silently,
-// no error - it just never shows up on the dashboard). Tasmota treats
-// cmnd/<topic>/Power with an empty payload as a query: it answers with the
-// current state on stat/<topic>/POWER<N> without toggling anything.
+// subscribeAndQuery subscribes to a topic's state/telemetry/LWT, then
+// publishes an empty-payload Power query for each of its relays. Some real
+// Tasmota devices only ever publish on their own schedule (periodic
+// tele/STATE) or on an actual state change - if neither has happened since
+// the device booted, waiting passively leaves the cache empty indefinitely
+// (silently, no error - it just never shows up on the dashboard). Tasmota
+// treats cmnd/<topic>/Power with an empty payload as a query: it answers
+// with the current state on stat/<topic>/POWER<N> without toggling anything.
 func subscribeAndQuery(cli mqtt.Client, topic string, ts topicSubs, handler mqtt.MessageHandler) {
 	cli.Subscribe(statWildcard(topic), 1, handler)
 	cli.Subscribe("tele/"+topic+"/SENSOR", 1, handler)
+	cli.Subscribe("tele/"+topic+"/LWT", 1, handler)
+	queryState(cli, topic, ts)
+}
+
+func queryState(cli mqtt.Client, topic string, ts topicSubs) {
 	for idx := range ts.relays {
 		cli.Publish(commandTopic(topic, idx), 0, false, "")
 	}
@@ -157,7 +162,7 @@ func (c *Client) Sync(plugs []models.SmartPlug) {
 	}
 	for topic := range oldSubs {
 		if _, ok := newSubs[topic]; !ok {
-			cli.Unsubscribe(statWildcard(topic), "tele/"+topic+"/SENSOR")
+			cli.Unsubscribe(statWildcard(topic), "tele/"+topic+"/SENSOR", "tele/"+topic+"/LWT")
 		}
 	}
 	for topic, ts := range newSubs {
@@ -167,16 +172,27 @@ func (c *Client) Sync(plugs []models.SmartPlug) {
 	}
 }
 
-func (c *Client) handleMessage(_ mqtt.Client, msg mqtt.Message) {
+func (c *Client) handleMessage(cli mqtt.Client, msg mqtt.Message) {
 	topic, kind, suffix, ok := parseTopic(msg.Topic())
 	if !ok {
 		return
 	}
-	switch kind {
-	case "stat":
+	switch {
+	case kind == "stat":
 		c.applyPower(topic, suffix, string(msg.Payload()) == "ON")
-	case "tele":
+	case kind == "tele" && suffix == "SENSOR":
 		c.applyEnergy(topic, msg.Payload())
+	case kind == "tele" && suffix == "LWT" && string(msg.Payload()) == "Online":
+		// The device just (re)connected to the broker - could be a reboot
+		// or power-cycle that left it in a different state than we last
+		// knew (Tasmota's own power-on-state behavior), with nothing else
+		// telling us. Query fresh instead of trusting the stale cache.
+		c.mu.RLock()
+		ts, ok := c.subs[topic]
+		c.mu.RUnlock()
+		if ok {
+			queryState(cli, topic, ts)
+		}
 	}
 }
 
