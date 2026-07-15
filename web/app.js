@@ -1017,7 +1017,9 @@ function openSettings() {
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
         document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
         document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
-        document.getElementById('setting-mqtt-broker-url').value = settings.mqtt_broker_url || '';
+        const mqttURL = settings.mqtt_broker_url || '';
+        document.getElementById('setting-mqtt-tls').checked = mqttURL.startsWith('ssl://');
+        document.getElementById('setting-mqtt-broker-url').value = mqttURL.replace(/^(tcp|ssl):\/\//, '');
         document.getElementById('setting-mqtt-username').value = settings.mqtt_username || '';
         document.getElementById('setting-mqtt-password').value = settings.mqtt_password || '';
         document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
@@ -1896,8 +1898,10 @@ async function sendTestNotification() {
 
 async function saveMQTTSettings(e) {
     e.preventDefault();
+    const hostPort = document.getElementById('setting-mqtt-broker-url').value;
+    const tls = document.getElementById('setting-mqtt-tls').checked;
     const settings = {
-        mqtt_broker_url: document.getElementById('setting-mqtt-broker-url').value,
+        mqtt_broker_url: hostPort ? (tls ? 'ssl://' : 'tcp://') + hostPort : '',
         mqtt_username: document.getElementById('setting-mqtt-username').value,
         mqtt_password: document.getElementById('setting-mqtt-password').value,
     };

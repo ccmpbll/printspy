@@ -456,9 +456,15 @@
                 <h3>MQTT Broker</h3>
                 <form onsubmit="saveMQTTSettings(event)">
                     <div class="form-group">
-                        <label for="setting-mqtt-broker-url">Broker URL</label>
-                        <input type="text" id="setting-mqtt-broker-url" placeholder="tcp://192.168.1.10:1883">
-                        <div class="form-hint">Use ssl:// instead of tcp:// for a TLS connection. Only needed if you assign a smart plug to MQTT mode below.</div>
+                        <label for="setting-mqtt-broker-url">Broker host:port</label>
+                        <input type="text" id="setting-mqtt-broker-url" placeholder="192.168.1.10:1883">
+                        <div class="form-hint">Only needed if you assign a smart plug to MQTT mode below.</div>
+                    </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-mqtt-tls" style="width:auto">
+                            Use TLS
+                        </label>
                     </div>
                     <div class="form-group">
                         <label for="setting-mqtt-username">Username</label>
