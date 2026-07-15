@@ -3,6 +3,8 @@ package mqttplug
 import (
 	"testing"
 
+	mqtt "github.com/eclipse/paho.mqtt.golang"
+
 	"github.com/ccmpbll/printspy/models"
 )
 
@@ -108,5 +110,59 @@ func TestGetStateUnknown(t *testing.T) {
 	c := New()
 	if _, ok := c.GetState("nope", "1"); ok {
 		t.Error("GetState on unknown topic:idx should return ok=false")
+	}
+}
+
+// fakePublishClient embeds the mqtt.Client interface (nil for every method
+// but Publish) so it satisfies the interface without stubbing methods
+// handleMessage never calls.
+type fakePublishClient struct {
+	mqtt.Client
+	published []string
+}
+
+func (f *fakePublishClient) Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token {
+	f.published = append(f.published, topic)
+	return nil
+}
+
+type fakeMessage struct {
+	topic   string
+	payload []byte
+}
+
+func (m *fakeMessage) Duplicate() bool   { return false }
+func (m *fakeMessage) Qos() byte         { return 0 }
+func (m *fakeMessage) Retained() bool    { return false }
+func (m *fakeMessage) Topic() string     { return m.topic }
+func (m *fakeMessage) MessageID() uint16 { return 0 }
+func (m *fakeMessage) Payload() []byte   { return m.payload }
+func (m *fakeMessage) Ack()              {}
+
+func TestLWTOnlineTriggersRequery(t *testing.T) {
+	// Regression: a device that reconnects to the broker (reboot, power
+	// blip, wifi drop) may come back in a different state than we last
+	// knew, with nothing else telling us - LWT flipping to Online is the
+	// signal to ask again instead of trusting the stale cache.
+	c := New()
+	c.subs = map[string]topicSubs{"testplug": {relays: map[string]relayMeta{"1": {}}}}
+	fc := &fakePublishClient{}
+
+	c.handleMessage(fc, &fakeMessage{topic: "tele/testplug/LWT", payload: []byte("Online")})
+
+	if len(fc.published) != 1 || fc.published[0] != "cmnd/testplug/Power" {
+		t.Fatalf("expected one Power query publish, got %v", fc.published)
+	}
+}
+
+func TestLWTOfflineDoesNotRequery(t *testing.T) {
+	c := New()
+	c.subs = map[string]topicSubs{"testplug": {relays: map[string]relayMeta{"1": {}}}}
+	fc := &fakePublishClient{}
+
+	c.handleMessage(fc, &fakeMessage{topic: "tele/testplug/LWT", payload: []byte("Offline")})
+
+	if len(fc.published) != 0 {
+		t.Fatalf("expected no publish for an Offline LWT, got %v", fc.published)
 	}
 }
