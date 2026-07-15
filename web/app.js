@@ -1930,7 +1930,14 @@ async function sendMQTTTest() {
 }
 
 async function saveAndTestMQTT() {
-    await putMQTTSettings();
+    const result = document.getElementById('mqtt-test-result');
+    result.textContent = 'Saving...';
+    try {
+        await putMQTTSettings();
+    } catch (e) {
+        result.textContent = `Failed to save: ${e.message}`;
+        return;
+    }
     await sendMQTTTest();
 }
 
