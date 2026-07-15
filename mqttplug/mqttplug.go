@@ -191,15 +191,20 @@ func (c *Client) applyPower(topic, suffix string, on bool) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	meta := c.relayMetaLocked(topic, idx)
 	key := stateKey(topic, idx)
 	ps := c.state[key]
+	stampMeta(&ps, topic, idx, c.relayMetaLocked(topic, idx))
+	ps.On = on
+	c.state[key] = ps
+}
+
+// stampMeta fills the identity fields shared by every update path
+// (applyPower, applyEnergy) - only the payload-specific fields differ.
+func stampMeta(ps *models.PowerState, topic, idx string, meta relayMeta) {
 	ps.ID = "mqtt:" + topic + ":" + idx
 	ps.Label = meta.Label
 	ps.HideLabel = meta.HideLabel
 	ps.Source = "tasmota-mqtt"
-	ps.On = on
-	c.state[key] = ps
 }
 
 // applyEnergy updates every relay cached under topic - energy is
@@ -227,10 +232,7 @@ func (c *Client) applyEnergy(topic string, payload []byte) {
 	for idx, meta := range ts.relays {
 		key := stateKey(topic, idx)
 		ps := c.state[key]
-		ps.ID = "mqtt:" + topic + ":" + idx
-		ps.Label = meta.Label
-		ps.HideLabel = meta.HideLabel
-		ps.Source = "tasmota-mqtt"
+		stampMeta(&ps, topic, idx, meta)
 		ps.Watts = body.ENERGY.Power
 		ps.Voltage = body.ENERGY.Voltage
 		ps.Current = body.ENERGY.Current
@@ -303,18 +305,9 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 
 	token := cli.Publish(commandTopic(topic, idx), 1, false, onOffPayload(on))
 	select {
-	case <-tokenDone(token):
+	case <-token.Done():
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	return token.Error()
-}
-
-func tokenDone(t mqtt.Token) <-chan struct{} {
-	done := make(chan struct{})
-	go func() {
-		t.Wait()
-		close(done)
-	}()
-	return done
 }
