@@ -611,7 +611,7 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	var setErr error
 	direct := false
 	for _, sp := range plugs {
-		if plugIDFor(sp) != plugID {
+		if PlugIDFor(sp) != plugID {
 			continue
 		}
 		if sp.MQTTTopic != "" {
@@ -1309,7 +1309,7 @@ func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
 		return
 	}
 	for _, sp := range plugs {
-		plugID := plugIDFor(sp)
+		plugID := PlugIDFor(sp)
 		if !p.isPlugOn(id, plugID) {
 			continue
 		}
@@ -1325,7 +1325,7 @@ func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
 // plugIDFor returns the dashboard/cache identifier for a smart plug -
 // "mqtt:<topic>:<idx>" for MQTT-mode plugs, "<ip>:<idx>" for HTTP-direct
 // plugs, matching SetPowerState's own matching convention.
-func plugIDFor(sp models.SmartPlug) string {
+func PlugIDFor(sp models.SmartPlug) string {
 	if sp.MQTTTopic != "" {
 		return "mqtt:" + sp.MQTTTopic + ":" + sp.Idx
 	}
