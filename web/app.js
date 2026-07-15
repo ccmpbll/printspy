@@ -1896,8 +1896,7 @@ async function sendTestNotification() {
     }
 }
 
-async function saveMQTTSettings(e) {
-    e.preventDefault();
+async function putMQTTSettings() {
     const hostPort = document.getElementById('setting-mqtt-broker-url').value;
     const tls = document.getElementById('setting-mqtt-tls').checked;
     const settings = {
@@ -1910,6 +1909,11 @@ async function saveMQTTSettings(e) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(settings),
     });
+}
+
+async function saveMQTTSettings(e) {
+    e.preventDefault();
+    await putMQTTSettings();
     closeModal();
 }
 
@@ -1923,6 +1927,11 @@ async function sendMQTTTest() {
     } catch (e) {
         result.textContent = `Failed: ${e.message}`;
     }
+}
+
+async function saveAndTestMQTT() {
+    await putMQTTSettings();
+    await sendMQTTTest();
 }
 
 let snapshotTimer = null;
