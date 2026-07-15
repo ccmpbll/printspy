@@ -2049,7 +2049,7 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 			return
 		}
 		for _, plug := range plugs {
-			plugID := plug.IP + ":" + plug.Idx
+			plugID := poller.PlugIDFor(plug)
 			if plugIsOn(status, plugID) {
 				continue
 			}
