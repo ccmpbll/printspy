@@ -53,6 +53,9 @@ func main() {
 	if err := p.Start(ctx); err != nil {
 		log.Fatalf("failed to start poller: %v", err)
 	}
+	if err := p.ConfigureMQTT(); err != nil {
+		log.Printf("mqtt: initial connect failed (will retry via settings save): %v", err)
+	}
 
 	handler := api.New(ctx, database, p)
 	mux := http.NewServeMux()

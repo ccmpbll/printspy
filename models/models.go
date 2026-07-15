@@ -50,6 +50,7 @@ type SmartPlug struct {
 	Idx         string `json:"idx"`
 	Label       string `json:"label"`
 	HideLabel   bool   `json:"hide_label"`
+	MQTTTopic   string `json:"mqtt_topic,omitempty"`
 }
 
 // Camera is a directly-configured printspy-cam device, managed independently

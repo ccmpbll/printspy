@@ -16,6 +16,7 @@ import (
 
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
+	"github.com/ccmpbll/printspy/mqttplug"
 	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/printmeta"
@@ -68,6 +69,11 @@ type Poller struct {
 	// print thumbnails) - separate from other per-purpose clients in this
 	// codebase (e.g. prusalink.Plugin's client/uploadClient split).
 	notifyClient *http.Client
+
+	// mqtt is the persistent broker connection for MQTT-mode smart plugs -
+	// nil-safe (Configure with an empty broker URL is a no-op), coexists
+	// with the existing per-tick HTTP path for plugs still in direct mode.
+	mqtt *mqttplug.Client
 }
 
 func (p *Poller) uploadLock(id int64) *sync.Mutex {
@@ -82,7 +88,36 @@ func New(database *db.DB) *Poller {
 		db:           database,
 		subscribers:  make(map[*subscriber]struct{}),
 		notifyClient: &http.Client{Timeout: 15 * time.Second},
+		mqtt:         mqttplug.New(),
 	}
+}
+
+// ConfigureMQTT (re)connects the MQTT client from the mqtt_broker_url/
+// mqtt_username/mqtt_password settings, then syncs it against every
+// MQTT-mode smart plug currently configured. Safe to call repeatedly -
+// called once at startup and again whenever any mqtt_* setting is saved.
+func (p *Poller) ConfigureMQTT() error {
+	brokerURL, _ := p.db.GetSetting("mqtt_broker_url")
+	username, _ := p.db.GetSetting("mqtt_username")
+	password, _ := p.db.GetSetting("mqtt_password")
+	if err := p.mqtt.Configure(brokerURL, username, password); err != nil {
+		return err
+	}
+	return p.SyncMQTTSubscriptions()
+}
+
+// SyncMQTTSubscriptions resyncs the MQTT client against every smart plug
+// across all printers - called after any smart-plug CRUD, mirroring the
+// existing Repoll trigger for HTTP-mode plugs. Cheap in-memory operation
+// (only wakes the network for topics that actually changed), safe to call
+// unconditionally rather than filtering to MQTT-mode rows first.
+func (p *Poller) SyncMQTTSubscriptions() error {
+	plugs, err := p.db.ListAllSmartPlugs()
+	if err != nil {
+		return err
+	}
+	p.mqtt.Sync(plugs)
+	return nil
 }
 
 func (p *Poller) Wait() {
@@ -576,11 +611,16 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 	var setErr error
 	direct := false
 	for _, sp := range plugs {
-		if sp.IP+":"+sp.Idx == plugID {
-			setErr = smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
-			direct = true
-			break
+		if plugIDFor(sp) != plugID {
+			continue
 		}
+		if sp.MQTTTopic != "" {
+			setErr = p.mqtt.SetState(ctx, sp.MQTTTopic, sp.Idx, on)
+		} else {
+			setErr = smartplug.New().SetState(ctx, sp.IP, sp.Idx, on)
+		}
+		direct = true
+		break
 	}
 	if !direct {
 		setErr = pl.SetPowerState(ctx, plugID, on)
@@ -1268,19 +1308,38 @@ func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
 	if err != nil || len(plugs) == 0 {
 		return
 	}
-	client := smartplug.New()
 	for _, sp := range plugs {
-		plugID := sp.IP + ":" + sp.Idx
+		plugID := plugIDFor(sp)
 		if !p.isPlugOn(id, plugID) {
 			continue
 		}
-		if err := client.SetState(ctx, sp.IP, sp.Idx, false); err != nil {
+		if err := p.forcePlugOff(ctx, sp); err != nil {
 			log.Printf("[printer:%d] auto power-off (%s) failed for %s: %v", id, source, plugID, err)
 			continue
 		}
 		log.Printf("[printer:%d] auto power-off (%s): %s", id, source, plugID)
 		p.patchPowerState(id, plugID, source, false)
 	}
+}
+
+// plugIDFor returns the dashboard/cache identifier for a smart plug -
+// "mqtt:<topic>:<idx>" for MQTT-mode plugs, "<ip>:<idx>" for HTTP-direct
+// plugs, matching SetPowerState's own matching convention.
+func plugIDFor(sp models.SmartPlug) string {
+	if sp.MQTTTopic != "" {
+		return "mqtt:" + sp.MQTTTopic + ":" + sp.Idx
+	}
+	return sp.IP + ":" + sp.Idx
+}
+
+// forcePlugOff branches HTTP/MQTT internally - shared by every call site
+// that needs to force a plug off (currently just autoPowerOff, for both the
+// idle-timeout and thermal-runaway triggers).
+func (p *Poller) forcePlugOff(ctx context.Context, sp models.SmartPlug) error {
+	if sp.MQTTTopic != "" {
+		return p.mqtt.SetState(ctx, sp.MQTTTopic, sp.Idx, false)
+	}
+	return smartplug.New().SetState(ctx, sp.IP, sp.Idx, false)
 }
 
 func (p *Poller) isPlugOn(id int64, plugID string) bool {
@@ -1362,6 +1421,15 @@ func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.
 	client := smartplug.New()
 	var states []models.PowerState
 	for _, sp := range plugs {
+		if sp.MQTTTopic != "" {
+			// Cache-only read, no I/O - state arrives via subscribed MQTT
+			// messages. Skip this tick if nothing's arrived yet; self-heals
+			// once the broker delivers a message.
+			if ps, ok := p.mqtt.GetState(sp.MQTTTopic, sp.Idx); ok {
+				states = append(states, ps)
+			}
+			continue
+		}
 		ps, err := client.GetState(ctx, sp.IP, sp.Idx, sp.Label, sp.HideLabel)
 		if err != nil {
 			log.Printf("[printer:%d] smart plug %s:%s unreachable: %v", id, sp.IP, sp.Idx, err)

@@ -143,8 +143,20 @@
             <form id="smartplug-form" onsubmit="saveSmartPlug(event)">
                 <input type="hidden" id="plug-id" value="">
                 <div class="form-group">
+                    <label for="plug-mode">Connection</label>
+                    <select id="plug-mode" onchange="togglePlugMode()">
+                        <option value="http">Direct HTTP</option>
+                        <option value="mqtt">MQTT</option>
+                    </select>
+                </div>
+                <div class="form-group" id="plug-ip-group">
                     <label for="plug-ip">IP</label>
-                    <input type="text" id="plug-ip" placeholder="192.168.1.60" required>
+                    <input type="text" id="plug-ip" placeholder="192.168.1.60">
+                </div>
+                <div class="form-group" id="plug-mqtt-topic-group" style="display:none">
+                    <label for="plug-mqtt-topic">MQTT topic</label>
+                    <input type="text" id="plug-mqtt-topic" placeholder="tasmota_ABC123">
+                    <div class="form-hint">The device's Topic, as configured in its own Tasmota console (Configuration → MQTT).</div>
                 </div>
                 <div class="form-group">
                     <label for="plug-idx">Relay index</label>
@@ -437,6 +449,30 @@
                         <button type="button" class="btn" onclick="sendTestNotification()">Send test notification</button>
                     </div>
                     <div id="notify-test-result" class="form-hint"></div>
+                </form>
+            </div>
+
+            <div class="settings-section">
+                <h3>MQTT Broker</h3>
+                <form onsubmit="saveMQTTSettings(event)">
+                    <div class="form-group">
+                        <label for="setting-mqtt-broker-url">Broker URL</label>
+                        <input type="text" id="setting-mqtt-broker-url" placeholder="tcp://192.168.1.10:1883">
+                        <div class="form-hint">Use ssl:// instead of tcp:// for a TLS connection. Only needed if you assign a smart plug to MQTT mode below.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-mqtt-username">Username</label>
+                        <input type="text" id="setting-mqtt-username" placeholder="optional">
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-mqtt-password">Password</label>
+                        <input type="password" id="setting-mqtt-password" placeholder="optional">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                        <button type="button" class="btn" onclick="sendMQTTTest()">Test connection</button>
+                    </div>
+                    <div id="mqtt-test-result" class="form-hint"></div>
                 </form>
             </div>
 

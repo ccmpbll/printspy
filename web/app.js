@@ -1017,6 +1017,9 @@ function openSettings() {
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
         document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
         document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
+        document.getElementById('setting-mqtt-broker-url').value = settings.mqtt_broker_url || '';
+        document.getElementById('setting-mqtt-username').value = settings.mqtt_username || '';
+        document.getElementById('setting-mqtt-password').value = settings.mqtt_password || '';
         document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
         document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
         document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
@@ -1059,17 +1062,27 @@ function renderSettingsSmartPlugList(plugs) {
         list.innerHTML = '<div class="settings-empty">No smart plugs configured yet.</div>';
         return;
     }
-    list.innerHTML = plugs.map(p => `
+    list.innerHTML = plugs.map(p => {
+        const conn = p.mqtt_topic ? `MQTT: ${esc(p.mqtt_topic)}:${esc(p.idx)}` : `${esc(p.ip)}:${esc(p.idx)}`;
+        return `
         <div class="settings-printer-row">
             <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(p.label || p.ip)}</span>
-                <span class="settings-printer-url">${esc(p.ip)}:${esc(p.idx)} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}${p.hide_label ? ' — label hidden' : ''}</span>
+                <span class="settings-printer-name">${esc(p.label || p.ip || p.mqtt_topic)}</span>
+                <span class="settings-printer-url">${conn} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}${p.hide_label ? ' — label hidden' : ''}</span>
             </div>
             <div class="settings-printer-actions">
                 <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
                 <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteSmartPlug(${p.id}))">Delete</button>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
+}
+
+function togglePlugMode() {
+    const mqtt = document.getElementById('plug-mode').value === 'mqtt';
+    document.getElementById('plug-ip-group').style.display = mqtt ? 'none' : '';
+    document.getElementById('plug-mqtt-topic-group').style.display = mqtt ? '' : 'none';
+    document.getElementById('plug-ip').required = !mqtt;
 }
 
 function populatePlugPrinterOptions(selectedId) {
@@ -1082,10 +1095,13 @@ function populatePlugPrinterOptions(selectedId) {
 function openAddSmartPlugModal() {
     document.getElementById('smartplug-modal-title').textContent = 'Add smart plug';
     document.getElementById('plug-id').value = '';
+    document.getElementById('plug-mode').value = 'http';
     document.getElementById('plug-ip').value = '';
+    document.getElementById('plug-mqtt-topic').value = '';
     document.getElementById('plug-idx').value = '1';
     document.getElementById('plug-label').value = '';
     document.getElementById('plug-hide-label').checked = false;
+    togglePlugMode();
     populatePlugPrinterOptions(null);
     document.getElementById('smartplug-modal').classList.add('active');
 }
@@ -1095,10 +1111,13 @@ function openEditSmartPlugModal(id) {
     if (!plug) return;
     document.getElementById('smartplug-modal-title').textContent = 'Edit smart plug';
     document.getElementById('plug-id').value = plug.id;
+    document.getElementById('plug-mode').value = plug.mqtt_topic ? 'mqtt' : 'http';
     document.getElementById('plug-ip').value = plug.ip;
+    document.getElementById('plug-mqtt-topic').value = plug.mqtt_topic || '';
     document.getElementById('plug-idx').value = plug.idx;
     document.getElementById('plug-label').value = plug.label;
     document.getElementById('plug-hide-label').checked = !!plug.hide_label;
+    togglePlugMode();
     populatePlugPrinterOptions(plug.printer_id);
     document.getElementById('smartplug-modal').classList.add('active');
 }
@@ -1107,8 +1126,10 @@ async function saveSmartPlug(e) {
     e.preventDefault();
     const id = document.getElementById('plug-id').value;
     const printerIdStr = document.getElementById('plug-printer').value;
+    const mqtt = document.getElementById('plug-mode').value === 'mqtt';
     const data = {
-        ip: document.getElementById('plug-ip').value,
+        ip: mqtt ? '' : document.getElementById('plug-ip').value,
+        mqtt_topic: mqtt ? document.getElementById('plug-mqtt-topic').value : '',
         idx: document.getElementById('plug-idx').value || '1',
         label: document.getElementById('plug-label').value,
         hide_label: document.getElementById('plug-hide-label').checked,
@@ -1868,6 +1889,33 @@ async function sendTestNotification() {
         const resp = await fetch('/api/notify-test', {method: 'POST'});
         const data = await resp.json();
         result.textContent = data.success ? 'Test notification sent - check your device.' : `Failed: ${data.error}`;
+    } catch (e) {
+        result.textContent = `Failed: ${e.message}`;
+    }
+}
+
+async function saveMQTTSettings(e) {
+    e.preventDefault();
+    const settings = {
+        mqtt_broker_url: document.getElementById('setting-mqtt-broker-url').value,
+        mqtt_username: document.getElementById('setting-mqtt-username').value,
+        mqtt_password: document.getElementById('setting-mqtt-password').value,
+    };
+    await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(settings),
+    });
+    closeModal();
+}
+
+async function sendMQTTTest() {
+    const result = document.getElementById('mqtt-test-result');
+    result.textContent = 'Connecting...';
+    try {
+        const resp = await fetch('/api/mqtt-test', {method: 'POST'});
+        const data = await resp.json();
+        result.textContent = data.success ? 'Connected to broker successfully.' : `Failed: ${data.error}`;
     } catch (e) {
         result.textContent = `Failed: ${e.message}`;
     }
