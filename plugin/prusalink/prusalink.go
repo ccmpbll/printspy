@@ -54,6 +54,24 @@ func New(config models.PrinterConfig) *Plugin {
 func (p *Plugin) Type() string        { return "prusalink" }
 func (p *Plugin) DisplayName() string { return "PrusaLink" }
 
+// buildURL joins the printer's base URL with a request path that may itself
+// contain characters needing escaping - notably a literal "%" in a file's
+// 8.3-mangled short name (e.g. a file named "apple%20TV..." mangles to
+// "APPLE%~7.BGC"). Raw string concatenation breaks here: "%~7" isn't valid
+// percent-encoding (must be followed by two hex digits), and
+// http.NewRequestWithContext parses the URL and rejects it outright.
+// Setting url.URL.Path (the decoded form) and letting String() re-encode it
+// escapes a literal "%" to "%25" correctly, same as any other reserved
+// character.
+func buildURL(base, path string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base + path // fall back to the old behavior rather than fail outright
+	}
+	u.Path += path
+	return u.String()
+}
+
 // AuthenticatedDo tries HTTP Basic first (fast path for callers that don't
 // care which scheme wins) and falls back to Digest if the printer demands
 // it via a 401 challenge - the same dance doGetRaw/doMutate do internally,
@@ -338,7 +356,7 @@ func (p *Plugin) DownloadFileForMetadata(ctx context.Context, path, displayName 
 }
 
 func (p *Plugin) downloadFile(ctx context.Context, path string, rangeBytes int) ([]byte, error) {
-	url := strings.TrimRight(p.config.URL, "/") + path
+	url := buildURL(strings.TrimRight(p.config.URL, "/"), path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -360,7 +378,7 @@ func (p *Plugin) downloadFile(ctx context.Context, path string, rangeBytes int) 
 	return io.ReadAll(resp.Body)
 }
 
-func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error {
+func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) (string, int64, error) {
 	return p.doUpload(ctx, "/api/v1/files/"+storage+"/"+path, data, printAfter)
 }
 
@@ -425,7 +443,7 @@ func (p *Plugin) doGet(ctx context.Context, path string) ([]byte, error) {
 }
 
 func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error) {
-	url := strings.TrimRight(p.config.URL, "/") + path
+	url := buildURL(strings.TrimRight(p.config.URL, "/"), path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, 0, err
@@ -484,7 +502,7 @@ func (p *Plugin) doDelete(ctx context.Context, path string) error {
 }
 
 func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([]byte, error) {
-	url := strings.TrimRight(p.config.URL, "/") + path
+	url := buildURL(strings.TrimRight(p.config.URL, "/"), path)
 
 	var bodyReader io.Reader
 	if body != nil {
@@ -567,9 +585,17 @@ func uploadContentType(path string) string {
 	return "text/x.gcode"
 }
 
-func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAfter bool) error {
+// doUpload returns the printer's own resolved short name and timestamp for
+// the uploaded file, parsed from the PUT response body (same shape as a
+// listing entry - {"name":"COREON~1.BGC","m_timestamp":...,...}) - PrusaLink
+// renames on write to an 8.3-mangled short name, different from the path
+// this was called with, and every other read path (listings, thumbnails,
+// deletes) keys on that real name. Empty/zero on parse failure - the upload
+// itself still succeeded, callers just can't cache metadata under a name
+// that's guaranteed to match a later listing.
+func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAfter bool) (string, int64, error) {
 	base := strings.TrimRight(p.config.URL, "/")
-	url := base + path
+	url := buildURL(base, path)
 
 	setHeaders := func(req *http.Request) {
 		req.Header.Set("Content-Type", uploadContentType(path))
@@ -584,13 +610,13 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return "", 0, err
 	}
 	setHeaders(req)
 
 	resp, err := p.uploadClient.Do(req)
 	if err != nil {
-		return err
+		return "", 0, err
 	}
 	defer resp.Body.Close()
 
@@ -601,7 +627,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 
 		req2, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
 		if err != nil {
-			return err
+			return "", 0, err
 		}
 		setHeaders(req2)
 		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, req2.URL.RequestURI(), authHeader)
@@ -609,25 +635,35 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 
 		resp2, err := p.uploadClient.Do(req2)
 		if err != nil {
-			return err
+			return "", 0, err
 		}
 		defer resp2.Body.Close()
 
 		body, err := io.ReadAll(resp2.Body)
 		if err != nil {
-			return err
+			return "", 0, err
 		}
 		if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
-			return fmt.Errorf("prusalink API returned %d: %s", resp2.StatusCode, string(body))
+			return "", 0, fmt.Errorf("prusalink API returned %d: %s", resp2.StatusCode, string(body))
 		}
-		return nil
+		name, mtime := parseUploadResponse(body)
+		return name, mtime, nil
 	}
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(body))
+		return "", 0, fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(body))
 	}
-	return nil
+	name, mtime := parseUploadResponse(body)
+	return name, mtime, nil
+}
+
+func parseUploadResponse(body []byte) (string, int64) {
+	var pf prusalinkFile
+	if err := json.Unmarshal(body, &pf); err != nil {
+		return "", 0
+	}
+	return pf.Name, pf.MTimestamp
 }
 
 // State mapping

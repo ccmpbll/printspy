@@ -585,8 +585,8 @@ func collectFiles(files []octoprintFile, out *[]models.RecentFile) {
 	}
 }
 
-func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) error {
-	return fmt.Errorf("file upload not supported for OctoPrint yet")
+func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) (string, int64, error) {
+	return "", 0, fmt.Errorf("file upload not supported for OctoPrint yet")
 }
 
 func (p *Plugin) DeleteFile(ctx context.Context, storage, path string) error {

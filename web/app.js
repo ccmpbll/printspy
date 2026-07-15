@@ -144,7 +144,13 @@ async function loadFileManagerFiles(printerId) {
             return;
         }
         list.innerHTML = files.map(f => {
-            const thumb = f.thumbnail_path ? `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.thumbnail_path)}" alt="" onerror="this.style.display='none'">` : '';
+            // Every file gets a thumbnail attempt now, not just ones PrusaLink
+            // already renders a live thumb for (f.thumbnail_path) - cached
+            // .gcode thumbnails have nothing to show there but still resolve
+            // via the cache. Files with genuinely nothing still 404 and hide
+            // via onerror, same as before.
+            const thumb = `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.path)}&uploaded_at=${f.uploaded_at}${f.thumbnail_path ? '&thumb=' + encodeURIComponent(f.thumbnail_path) : ''}" alt="" onerror="this.style.display='none'">`;
+            const toolsHTML = f.tools && f.tools.length > 0 ? ` &middot; <span class="recent-tools">${toolsJoin(f.tools)}</span>` : '';
             let status = 'New';
             let statusClass = 'recent-status-new';
             if (f.success_count > 0 && f.last_success !== false) {
@@ -159,7 +165,7 @@ async function loadFileManagerFiles(printerId) {
                 ${thumb}
                 <div class="recent-item-info">
                     <span class="recent-name" title="${esc(f.file_name)}">${esc(f.file_name)}</span>
-                    <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}</span>
+                    <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}${toolsHTML}</span>
                 </div>
                 <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
                 <a class="btn btn-sm" href="/api/printers/${printerId}/download?origin=${encodeURIComponent(f.origin)}&path=${encodeURIComponent(f.path)}&filename=${encodeURIComponent(f.file_name)}" title="Download">&#8595; Download</a>
@@ -257,6 +263,13 @@ async function loadHistoryPage() {
     }
 }
 
+// toolsJoin renders "{material} (T{n})" pairs, comma-separated - shared by
+// History (always shown, even for a single tool) and File Manager (only
+// shown for 2+ tools, gated by the caller).
+function toolsJoin(tools) {
+    return tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ');
+}
+
 function historyRowHTML(h) {
     let status = 'Completed';
     let statusClass = 'recent-status-success';
@@ -278,7 +291,7 @@ function historyRowHTML(h) {
     // or multi-tool print - h.tools (only present for 2+ tools) just adds
     // more of the same pairing, not a different format.
     const tools = (h.tools && h.tools.length) ? h.tools : (h.material ? [{material: h.material, tool_index: h.tool_index}] : []);
-    const materialStr = tools.length ? tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ') : '';
+    const materialStr = tools.length ? toolsJoin(tools) : '';
 
     const details = [
         materialStr ? `Material: ${materialStr}` : '',

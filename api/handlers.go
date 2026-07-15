@@ -984,6 +984,7 @@ func (h *Handler) deleteRecentFile(w http.ResponseWriter, r *http.Request, id in
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	h.db.DeleteFileMetaCache(id, path)
 	jsonResponse(w, map[string]any{"success": true})
 }
 
@@ -1527,6 +1528,14 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, resp.Body)
 }
 
+// handleFileThumbnailProxy serves a File Manager row's thumbnail. Checks
+// file_meta_cache first (populated at upload time, backfilled from a
+// download, or written when a print completes - see poller.go) so most
+// PrusaLink views never touch the printer at all. Falls through to a live
+// proxy fetch only when there's no cached data yet - in practice that's
+// OctoPrint (no backfill mechanism at all, this is its only path, unchanged
+// from before) or a genuine local-parse miss - and opportunistically caches
+// whatever it fetches, so it's a one-time cost per file, not per view.
 func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/file-thumbnail/")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -1535,14 +1544,27 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	thumbPath := r.URL.Query().Get("path")
-	if thumbPath == "" {
+	path := r.URL.Query().Get("path")
+	if path == "" {
 		http.Error(w, "path parameter required", http.StatusBadRequest)
 		return
 	}
-
-	if strings.Contains(thumbPath, "..") {
+	if strings.Contains(path, "..") {
 		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	uploadedAt, _ := strconv.ParseInt(r.URL.Query().Get("uploaded_at"), 10, 64)
+
+	if row, hit, _ := h.db.GetFileMetaCache(id, path); hit && row.UploadedAt == uploadedAt && len(row.Thumbnail) > 0 {
+		w.Header().Set("Content-Type", row.ThumbnailContentType)
+		w.Header().Set("Cache-Control", "max-age=3600")
+		w.Write(row.Thumbnail)
+		return
+	}
+
+	thumbRef := r.URL.Query().Get("thumb")
+	if thumbRef == "" {
+		http.Error(w, "no thumbnail available", http.StatusNotFound)
 		return
 	}
 
@@ -1552,7 +1574,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	thumbURL := strings.TrimRight(printer.URL, "/") + "/" + strings.TrimLeft(thumbPath, "/")
+	thumbURL := strings.TrimRight(printer.URL, "/") + "/" + strings.TrimLeft(thumbRef, "/")
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
@@ -1566,10 +1588,20 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 	defer resp.Body.Close()
 
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "failed to read thumbnail", http.StatusBadGateway)
+		return
+	}
+	if resp.StatusCode == http.StatusOK {
+		// nil tools_json - don't clobber tools data a prior backfill wrote.
+		h.db.SetFileMetaCache(id, path, uploadedAt, nil, data, resp.Header.Get("Content-Type"))
+	}
+
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "max-age=3600")
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	w.Write(data)
 }
 
 func validateSetting(key, value string) (string, error) {
