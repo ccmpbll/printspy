@@ -78,6 +78,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.HandleFunc("/api/settings", h.handleSettings)
 	mux.HandleFunc("/api/notify-test", h.handleNotifyTest)
+	mux.HandleFunc("/api/mqtt-test", h.handleMQTTTest)
 	mux.HandleFunc("/api/config/export", h.handleConfigExport)
 	mux.HandleFunc("/api/config/import", h.handleConfigImport)
 	mux.HandleFunc("/api/webcam/", h.handleWebcamProxy)
@@ -519,6 +520,12 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		if _, ok := settings["auto_off_idle_minutes"]; ok {
 			h.poller.ResetAllIdleClocks()
 		}
+		_, brokerChanged := settings["mqtt_broker_url"]
+		_, userChanged := settings["mqtt_username"]
+		_, passChanged := settings["mqtt_password"]
+		if brokerChanged || userChanged || passChanged {
+			go h.poller.ConfigureMQTT()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -544,6 +551,29 @@ func (h *Handler) handleNotifyTest(w http.ResponseWriter, r *http.Request) {
 
 	msg := notify.Message{Title: "PrintSpy test", Text: "This is a test notification from PrintSpy."}
 	if err := notify.Send(token, userKey, msg); err != nil {
+		jsonResponse(w, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, map[string]any{"success": true})
+}
+
+// handleMQTTTest attempts a fresh connect using whatever broker settings
+// are currently saved, so the user can confirm reachability without waiting
+// for a real smart plug to report in. On success this also leaves the
+// client connected and resubscribed - not just a throwaway probe.
+func (h *Handler) handleMQTTTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	brokerURL, _ := h.db.GetSetting("mqtt_broker_url")
+	if brokerURL == "" {
+		jsonResponse(w, map[string]any{"success": false, "error": "MQTT broker URL must be saved first"})
+		return
+	}
+
+	if err := h.poller.ConfigureMQTT(); err != nil {
 		jsonResponse(w, map[string]any{"success": false, "error": err.Error()})
 		return
 	}
@@ -708,11 +738,11 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.IP == "" {
-			jsonError(w, "ip is required", http.StatusBadRequest)
+		if req.IP == "" && req.MQTTTopic == "" {
+			jsonError(w, "ip or mqtt_topic is required", http.StatusBadRequest)
 			return
 		}
-		id, err := h.db.CreateSmartPlug(req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID)
+		id, err := h.db.CreateSmartPlug(req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID, req.MQTTTopic)
 		if err != nil {
 			jsonError(w, "failed to create smart plug", http.StatusInternalServerError)
 			return
@@ -720,6 +750,7 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil {
 			go h.poller.Repoll(h.ctx, *req.PrinterID)
 		}
+		go h.poller.SyncMQTTSubscriptions()
 		jsonResponse(w, map[string]int64{"id": id})
 
 	default:
@@ -733,6 +764,7 @@ type smartPlugRequest struct {
 	Label     string `json:"label"`
 	HideLabel bool   `json:"hide_label"`
 	PrinterID *int64 `json:"printer_id"`
+	MQTTTopic string `json:"mqtt_topic"`
 }
 
 func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
@@ -749,12 +781,12 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.IP == "" {
-			jsonError(w, "ip is required", http.StatusBadRequest)
+		if req.IP == "" && req.MQTTTopic == "" {
+			jsonError(w, "ip or mqtt_topic is required", http.StatusBadRequest)
 			return
 		}
 		existing, _ := h.db.GetSmartPlug(id)
-		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID); err != nil {
+		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID, req.MQTTTopic); err != nil {
 			jsonError(w, "failed to update smart plug", http.StatusInternalServerError)
 			return
 		}
@@ -764,6 +796,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
 			go h.poller.Repoll(h.ctx, *req.PrinterID)
 		}
+		go h.poller.SyncMQTTSubscriptions()
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
@@ -775,6 +808,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		if existing != nil && existing.PrinterID != nil {
 			go h.poller.Repoll(h.ctx, *existing.PrinterID)
 		}
+		go h.poller.SyncMQTTSubscriptions()
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -1172,6 +1206,7 @@ type configExportSmartPlug struct {
 	Idx          string `yaml:"idx,omitempty"`
 	Label        string `yaml:"label,omitempty"`
 	HideLabel    bool   `yaml:"hide_label,omitempty"`
+	MQTTTopic    string `yaml:"mqtt_topic,omitempty"`
 }
 
 type configExportCamera struct {
@@ -1249,6 +1284,7 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 				Idx:          sp.Idx,
 				Label:        sp.Label,
 				HideLabel:    sp.HideLabel,
+				MQTTTopic:    sp.MQTTTopic,
 			}
 		}
 	}
@@ -1344,10 +1380,10 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 
 	plugsAdded := 0
 	for _, sp := range export.SmartPlugs {
-		if sp.IP == "" {
+		if sp.IP == "" && sp.MQTTTopic == "" {
 			continue
 		}
-		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex)); err == nil {
+		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex), sp.MQTTTopic); err == nil {
 			plugsAdded++
 		}
 	}
@@ -1736,6 +1772,8 @@ func validateSetting(key, value string) (string, error) {
 		}
 		return value, nil
 	case "pushover_user_key", "pushover_app_token":
+		return value, nil
+	case "mqtt_broker_url", "mqtt_username", "mqtt_password":
 		return value, nil
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)

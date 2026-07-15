@@ -55,6 +55,7 @@ func (db *DB) migrate() error {
 			idx TEXT NOT NULL DEFAULT '1',
 			label TEXT NOT NULL DEFAULT '',
 			hide_label INTEGER NOT NULL DEFAULT 0,
+			mqtt_topic TEXT NOT NULL DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (printer_id) REFERENCES printers(id) ON DELETE SET NULL
 		);
@@ -198,6 +199,10 @@ func (db *DB) migrate() error {
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN path TEXT NOT NULL DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN uploaded_at INTEGER NOT NULL DEFAULT 0`)
 
+	// Migration: MQTT mode for smart plugs - non-empty means this plug is
+	// controlled via MQTT topic instead of direct HTTP to ip/idx.
+	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN mqtt_topic TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 
@@ -250,7 +255,7 @@ func (db *DB) SetMaintenance(id int64, maintenance bool) error {
 // Smart plugs — managed independently of printers, optionally assigned to one.
 
 const smartPlugSelect = `
-	SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, COALESCE(p.name, '')
+	SELECT sp.id, sp.printer_id, sp.ip, sp.idx, sp.label, sp.hide_label, sp.mqtt_topic, COALESCE(p.name, '')
 	FROM smart_plugs sp LEFT JOIN printers p ON p.id = sp.printer_id
 `
 
@@ -294,7 +299,7 @@ func scanSmartPlugs(rows *sql.Rows) ([]models.SmartPlug, error) {
 		var sp models.SmartPlug
 		var printerID sql.NullInt64
 		var hideLabel int
-		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &hideLabel, &sp.PrinterName); err != nil {
+		if err := rows.Scan(&sp.ID, &printerID, &sp.IP, &sp.Idx, &sp.Label, &hideLabel, &sp.MQTTTopic, &sp.PrinterName); err != nil {
 			return nil, err
 		}
 		if printerID.Valid {
@@ -306,24 +311,24 @@ func scanSmartPlugs(rows *sql.Rows) ([]models.SmartPlug, error) {
 	return plugs, rows.Err()
 }
 
-func (db *DB) CreateSmartPlug(ip, idx, label string, hideLabel bool, printerID *int64) (int64, error) {
+func (db *DB) CreateSmartPlug(ip, idx, label string, hideLabel bool, printerID *int64, mqttTopic string) (int64, error) {
 	if idx == "" {
 		idx = "1"
 	}
-	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label, hide_label) VALUES (?, ?, ?, ?, ?)`,
-		printerID, ip, idx, label, hideLabel)
+	result, err := db.conn.Exec(`INSERT INTO smart_plugs (printer_id, ip, idx, label, hide_label, mqtt_topic) VALUES (?, ?, ?, ?, ?, ?)`,
+		printerID, ip, idx, label, hideLabel, mqttTopic)
 	if err != nil {
 		return 0, err
 	}
 	return result.LastInsertId()
 }
 
-func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, printerID *int64) error {
+func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, printerID *int64, mqttTopic string) error {
 	if idx == "" {
 		idx = "1"
 	}
-	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=? WHERE id=?`,
-		ip, idx, label, hideLabel, printerID, id)
+	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=?, mqtt_topic=? WHERE id=?`,
+		ip, idx, label, hideLabel, printerID, mqttTopic, id)
 	return err
 }
 
