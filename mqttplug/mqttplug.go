@@ -89,13 +89,13 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 // resubscribe path needed after a network blip.
 func (c *Client) onConnect(cli mqtt.Client) {
 	c.mu.RLock()
-	topics := make([]string, 0, len(c.subs))
-	for t := range c.subs {
-		topics = append(topics, t)
+	subs := make(map[string]topicSubs, len(c.subs))
+	for t, ts := range c.subs {
+		subs[t] = ts
 	}
 	c.mu.RUnlock()
-	for _, t := range topics {
-		subscribeTopic(cli, t, c.handleMessage)
+	for t, ts := range subs {
+		subscribeAndQuery(cli, t, ts, c.handleMessage)
 	}
 }
 
@@ -108,9 +108,20 @@ func statWildcard(topic string) string {
 	return "stat/" + topic + "/+"
 }
 
-func subscribeTopic(cli mqtt.Client, topic string, handler mqtt.MessageHandler) {
+// subscribeAndQuery subscribes to a topic's state/telemetry, then publishes
+// an empty-payload Power query for each of its relays. Some real Tasmota
+// devices only ever publish on their own schedule (periodic tele/STATE) or
+// on an actual state change - if neither has happened since the device
+// booted, waiting passively leaves the cache empty indefinitely (silently,
+// no error - it just never shows up on the dashboard). Tasmota treats
+// cmnd/<topic>/Power with an empty payload as a query: it answers with the
+// current state on stat/<topic>/POWER<N> without toggling anything.
+func subscribeAndQuery(cli mqtt.Client, topic string, ts topicSubs, handler mqtt.MessageHandler) {
 	cli.Subscribe(statWildcard(topic), 1, handler)
 	cli.Subscribe("tele/"+topic+"/SENSOR", 1, handler)
+	for idx := range ts.relays {
+		cli.Publish(commandTopic(topic, idx), 0, false, "")
+	}
 }
 
 // Sync replaces the full set of subscribed plugs - call after any
@@ -149,9 +160,9 @@ func (c *Client) Sync(plugs []models.SmartPlug) {
 			cli.Unsubscribe(statWildcard(topic), "tele/"+topic+"/SENSOR")
 		}
 	}
-	for topic := range newSubs {
+	for topic, ts := range newSubs {
 		if _, ok := oldSubs[topic]; !ok {
-			subscribeTopic(cli, topic, c.handleMessage)
+			subscribeAndQuery(cli, topic, ts, c.handleMessage)
 		}
 	}
 }
