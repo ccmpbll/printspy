@@ -1192,10 +1192,11 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 // Config export/import
 
 type configExport struct {
-	Settings   map[string]string       `yaml:"settings,omitempty"`
-	Printers   []configExportPrinter   `yaml:"printers"`
-	SmartPlugs []configExportSmartPlug `yaml:"smart_plugs,omitempty"`
-	Cameras    []configExportCamera    `yaml:"cameras,omitempty"`
+	Settings      map[string]string          `yaml:"settings,omitempty"`
+	Printers      []configExportPrinter      `yaml:"printers"`
+	SmartPlugs    []configExportSmartPlug    `yaml:"smart_plugs,omitempty"`
+	Cameras       []configExportCamera       `yaml:"cameras,omitempty"`
+	IngestTargets []configExportIngestTarget `yaml:"ingest_targets,omitempty"`
 }
 
 // PrinterIndex references configExport.Printers by position, since printer
@@ -1215,6 +1216,17 @@ type configExportCamera struct {
 	Name         string `yaml:"name,omitempty"`
 }
 
+// configExportIngestTarget is a slicer print-host target - see
+// models.IngestTarget. PrinterIndex is always set in practice (the feature
+// has no model-bucket matching left), but kept optional/nil-safe to match
+// the SmartPlugs/Cameras pattern.
+type configExportIngestTarget struct {
+	PrinterIndex *int   `yaml:"printer_index,omitempty"`
+	Model        string `yaml:"model,omitempty"`
+	Label        string `yaml:"label"`
+	APIKey       string `yaml:"api_key"`
+}
+
 type configExportPrinter struct {
 	Name               string  `yaml:"name"`
 	Type               string  `yaml:"type"`
@@ -1225,6 +1237,7 @@ type configExportPrinter struct {
 	Username           string  `yaml:"username,omitempty"`
 	PollInterval       int     `yaml:"poll_interval"`
 	Enabled            bool    `yaml:"enabled"`
+	Maintenance        bool    `yaml:"maintenance,omitempty"`
 	IdleTimeoutMinutes int     `yaml:"idle_timeout_minutes,omitempty"`
 	MaxBedTemp         float64 `yaml:"max_bed_temp,omitempty"`
 	MaxExtruderTemp    float64 `yaml:"max_extruder_temp,omitempty"`
@@ -1269,6 +1282,7 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 			Username:           full.Username,
 			PollInterval:       full.PollInterval,
 			Enabled:            full.Enabled,
+			Maintenance:        full.Maintenance,
 			IdleTimeoutMinutes: full.IdleTimeoutMinutes,
 			MaxBedTemp:         full.MaxBedTemp,
 			MaxExtruderTemp:    full.MaxExtruderTemp,
@@ -1296,6 +1310,18 @@ func (h *Handler) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 				PrinterIndex: printerIndexPtr(c.PrinterID, printerIndex),
 				URL:          c.URL,
 				Name:         c.Name,
+			}
+		}
+	}
+
+	if targets, err := h.db.ListIngestTargets(); err == nil {
+		export.IngestTargets = make([]configExportIngestTarget, len(targets))
+		for i, t := range targets {
+			export.IngestTargets[i] = configExportIngestTarget{
+				PrinterIndex: printerIndexPtr(t.PrinterID, printerIndex),
+				Model:        t.Model,
+				Label:        t.Label,
+				APIKey:       t.APIKey,
 			}
 		}
 	}
@@ -1364,8 +1390,12 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		if err := h.db.CreatePrinter(&p); err != nil {
 			continue
 		}
+		if ep.Maintenance {
+			h.db.SetMaintenance(p.ID, true)
+			p.Maintenance = true
+		}
 		newPrinterIDs[i] = &p.ID
-		if p.Enabled {
+		if p.Enabled && !p.Maintenance {
 			h.poller.AddPrinter(h.ctx, p)
 		}
 		added++
@@ -1398,12 +1428,23 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	targetsAdded := 0
+	for _, t := range export.IngestTargets {
+		if t.Label == "" || t.APIKey == "" {
+			continue
+		}
+		if _, err := h.db.CreateIngestTarget(t.Model, resolvePrinterID(t.PrinterIndex), t.Label, t.APIKey); err == nil {
+			targetsAdded++
+		}
+	}
+
 	h.poller.BroadcastRefresh()
 	jsonResponse(w, map[string]any{
-		"success":        true,
-		"printers_added": added,
-		"plugs_added":    plugsAdded,
-		"cameras_added":  camerasAdded,
+		"success":           true,
+		"printers_added":    added,
+		"plugs_added":       plugsAdded,
+		"cameras_added":     camerasAdded,
+		"ingest_keys_added": targetsAdded,
 	})
 }
 
