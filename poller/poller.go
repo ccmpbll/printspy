@@ -221,11 +221,51 @@ func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string,
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if p.allAssignedPlugsOff(id) {
+				slog.Debug("keepalive: skipping ping, all assigned plugs off", "printer", id, "host", host)
+				continue
+			}
 			if err := pingHost(host, 3*time.Second); err != nil {
 				log.Printf("[printer:%d] keepalive ping to %s failed: %v", id, host, err)
 			}
 		}
 	}
+}
+
+// allAssignedPlugsOff reports whether every smart plug assigned to this
+// printer has a confirmed-off reading in the latest cached poll. Returns
+// false (i.e. "keep pinging") if no plugs are assigned, the cache has no
+// status yet, or any plug's reading is missing this tick - only a positive
+// off confirmation on every assigned plug skips the ping.
+func (p *Poller) allAssignedPlugsOff(id int64) bool {
+	plugs, err := p.db.ListSmartPlugs(id)
+	if err != nil || len(plugs) == 0 {
+		return false
+	}
+	status := p.GetStatus(id)
+	if status == nil {
+		return false
+	}
+	for _, sp := range plugs {
+		wantID := sp.IP + ":" + sp.Idx
+		if sp.MQTTTopic != "" {
+			wantID = "mqtt:" + sp.MQTTTopic + ":" + sp.Idx
+		}
+		found := false
+		for _, ps := range status.Power {
+			if ps.ID == wantID {
+				found = true
+				if ps.On {
+					return false
+				}
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Poller) RemovePrinter(id int64) {
@@ -1470,11 +1510,13 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 	filePath := ""
 	elapsed := 0
 	filament := 0.0
+	fileMTimestamp := int64(0)
 	if prev != nil && prev.Job != nil {
 		fileName = prev.Job.FileName
 		filePath = prev.Job.FilePath
 		elapsed = prev.Job.ElapsedSecs
 		filament = prev.Job.FilamentUsedMM
+		fileMTimestamp = prev.Job.FileMTimestamp
 	}
 	if fileName == "" {
 		return
@@ -1571,15 +1613,20 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			// key is the bare path (RecentFile.Path convention, e.g.
 			// "COREON~1.BGCODE") - filePath here is a full "/origin/path"
 			// ref (Refs.Download), so strip the leading "/origin/" segment
-			// to match what File Manager looks up. Reuses this file's
-			// existing cache timestamp if one's already there instead of
-			// always stamping a fresh time.Now() (the real upload timestamp
-			// isn't known here) - keeps File Manager's own exact-match
-			// lookup working across repeated prints of the same file.
+			// to match what File Manager looks up. Prefers the printer's own
+			// real m_timestamp (confirmed identical to the file-listing
+			// endpoint's value for the same file) so the next listing's
+			// exact-match check hits immediately instead of treating this
+			// row as stale and re-downloading it - falls back to reusing an
+			// existing row, then a guessed time.Now(), only for plugins with
+			// no such field (OctoPrint).
 			cachePath := cacheFilePath(filePath)
-			cacheTimestamp := time.Now().Unix()
-			if existing, hit, err := p.db.GetFileMetaCache(id, cachePath); err == nil && hit {
-				cacheTimestamp = existing.UploadedAt
+			cacheTimestamp := fileMTimestamp
+			if cacheTimestamp == 0 {
+				cacheTimestamp = time.Now().Unix()
+				if existing, hit, err := p.db.GetFileMetaCache(id, cachePath); err == nil && hit {
+					cacheTimestamp = existing.UploadedAt
+				}
 			}
 			if toolsJSON != nil || len(info.Thumbnail) > 0 {
 				p.db.SetFileMetaCache(id, cachePath, cacheTimestamp, toolsJSON, info.Thumbnail, info.ThumbnailContentType)

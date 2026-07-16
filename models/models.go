@@ -97,6 +97,12 @@ type JobInfo struct {
 	// guess when available. Empty for plugins with no such field
 	// (OctoPrint) - falls back to the guess there.
 	JobState string `json:"-"`
+	// FileMTimestamp is the printer's own real modification timestamp for
+	// FilePath (PrusaLink's job.file.m_timestamp - confirmed byte-identical
+	// to the same file's timestamp from the file-listing endpoint), used by
+	// trackPrintHistory to seed file_meta_cache accurately instead of
+	// guessing time.Now(). Zero for plugins with no such field (OctoPrint).
+	FileMTimestamp int64 `json:"-"`
 }
 
 type PowerState struct {
