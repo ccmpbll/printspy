@@ -311,12 +311,12 @@ function historyRowHTML(h) {
         h.tool_changes ? `${h.tool_changes} tool changes` : '',
     ].filter(Boolean).join(' - ');
 
-    // Cache-only lookup (no live-proxy fallback like File Manager has) -
-    // History has no printer-side thumbnail ref to fall back to, only
-    // whatever trackPrintHistory cached at completion time. Omitted
-    // entirely when path's empty (no MetadataDownloader support, or this
-    // row predates the path/uploaded_at columns).
-    const thumb = h.path ? `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${historyPrinterId}?path=${encodeURIComponent(h.path)}&uploaded_at=${h.uploaded_at}" alt="" onerror="this.style.display='none'">` : '';
+    // Own copy, stored directly on this history row - looked up by the
+    // row's own id alone, independent of whatever's still on the printer.
+    // Omitted entirely when has_thumbnail is false (no MetadataDownloader
+    // support, the file had no embedded thumbnail, or this row predates
+    // the thumbnail column).
+    const thumb = h.has_thumbnail ? `<img class="recent-thumb lazy-thumb" data-src="/api/history-thumbnail/${h.id}" alt="" onerror="this.style.display='none'">` : '';
 
     return `<div class="recent-item history-item">
         ${thumb}

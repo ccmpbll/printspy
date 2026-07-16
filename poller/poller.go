@@ -1541,23 +1541,31 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			if len(info.Tools) > 1 {
 				h.Tools = toolsJSON
 			}
+			// History's own copy - a completed print is a permanent record
+			// and shouldn't depend on whether the source file still exists
+			// on the printer (see GetPrintHistoryThumbnail).
+			h.Thumbnail = info.Thumbnail
+			h.ThumbnailContentType = info.ThumbnailContentType
+
 			// Same bytes already downloaded for the history metadata above -
-			// persist into the shared cache too, so a later File
-			// Manager/History view for this file doesn't need to touch the
-			// printer either. time.Now() isn't this file's real listing
-			// timestamp (not available here without an extra lookup) - rare
-			// mismatch, self-corrects next time backfillFileMeta sees this
-			// file with the real timestamp. Cache key is the bare path
-			// (RecentFile.Path convention, e.g. "COREON~1.BGCODE") - filePath
-			// here is a full "/origin/path" ref (Refs.Download), so strip the
-			// leading "/origin/" segment to match what File Manager looks up.
-			// h.Path/h.UploadedAt use the same key/timestamp so History can
-			// look up this same cache row later without touching the printer.
-			now := time.Now().Unix()
-			h.Path = cacheFilePath(filePath)
-			h.UploadedAt = now
+			// also persist into the shared file_meta_cache, so File Manager
+			// (a *live* view of what's currently on the printer, unlike
+			// History) doesn't need its own network round-trip either. Cache
+			// key is the bare path (RecentFile.Path convention, e.g.
+			// "COREON~1.BGCODE") - filePath here is a full "/origin/path"
+			// ref (Refs.Download), so strip the leading "/origin/" segment
+			// to match what File Manager looks up. Reuses this file's
+			// existing cache timestamp if one's already there instead of
+			// always stamping a fresh time.Now() (the real upload timestamp
+			// isn't known here) - keeps File Manager's own exact-match
+			// lookup working across repeated prints of the same file.
+			cachePath := cacheFilePath(filePath)
+			cacheTimestamp := time.Now().Unix()
+			if existing, hit, err := p.db.GetFileMetaCache(id, cachePath); err == nil && hit {
+				cacheTimestamp = existing.UploadedAt
+			}
 			if toolsJSON != nil || len(info.Thumbnail) > 0 {
-				p.db.SetFileMetaCache(id, h.Path, now, toolsJSON, info.Thumbnail, info.ThumbnailContentType)
+				p.db.SetFileMetaCache(id, cachePath, cacheTimestamp, toolsJSON, info.Thumbnail, info.ThumbnailContentType)
 			}
 		}
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)

@@ -86,6 +86,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/snapshot/", h.handleSnapshotProxy)
 	mux.HandleFunc("/api/thumbnail/", h.handleThumbnailProxy)
 	mux.HandleFunc("/api/file-thumbnail/", h.handleFileThumbnailProxy)
+	mux.HandleFunc("/api/history-thumbnail/", h.handleHistoryThumbnailProxy)
 	mux.HandleFunc("/setup", h.handleSetup)
 	mux.HandleFunc("/login", h.handleLogin)
 	mux.HandleFunc("/logout", h.handleLogout)
@@ -1617,6 +1618,33 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 // OctoPrint (no backfill mechanism at all, this is its only path, unchanged
 // from before) or a genuine local-parse miss - and opportunistically caches
 // whatever it fetches, so it's a one-time cost per file, not per view.
+// handleHistoryThumbnailProxy serves a print_history row's own stored
+// thumbnail, looked up by the row's id alone - no printer, path, or
+// timestamp involved, so a History thumbnail can never be orphaned by
+// anything happening on the printer's live file listing (unlike
+// handleFileThumbnailProxy below, which is inherently tied to what the
+// printer currently reports). Cache-Control is a full year: a completed
+// print's thumbnail is immutable, unlike a File Manager entry's.
+func (h *Handler) handleHistoryThumbnailProxy(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/history-thumbnail/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid history id", http.StatusBadRequest)
+		return
+	}
+
+	thumbnail, contentType, err := h.db.GetPrintHistoryThumbnail(id)
+	if err != nil || len(thumbnail) == 0 {
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "no thumbnail available", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "max-age=31536000, immutable")
+	w.Write(thumbnail)
+}
+
 func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	idStr := strings.TrimPrefix(r.URL.Path, "/api/file-thumbnail/")
 	id, err := strconv.ParseInt(idStr, 10, 64)
