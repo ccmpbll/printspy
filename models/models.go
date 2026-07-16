@@ -162,13 +162,15 @@ type PrintHistory struct {
 	// to re-parse client-side).
 	ToolChanges int             `json:"tool_changes,omitempty"`
 	Tools       json.RawMessage `json:"tools,omitempty"`
-	// Path/UploadedAt match file_meta_cache's key for this same file (see
-	// poller.go's cacheFilePath) - lets the History view look up a cached
-	// thumbnail without ever touching the printer. Empty/zero when the
-	// completion goroutine never ran (no MetadataDownloader support, or no
-	// filePath - see trackPrintHistory).
-	Path       string `json:"path,omitempty"`
-	UploadedAt int64  `json:"uploaded_at,omitempty"`
+	// Thumbnail/ThumbnailContentType are stored directly on this row (own
+	// copy, not borrowed from file_meta_cache) - a completed print is a
+	// permanent record, its thumbnail shouldn't depend on whether the
+	// source file still exists on the printer. Never serialized directly
+	// (fetched via GET /api/history-thumbnail/{id} instead) - HasThumbnail
+	// tells the frontend whether that request is worth making.
+	Thumbnail            []byte `json:"-"`
+	ThumbnailContentType string `json:"-"`
+	HasThumbnail         bool   `json:"has_thumbnail,omitempty"`
 }
 
 type User struct {

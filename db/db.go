@@ -193,11 +193,39 @@ func (db *DB) migrate() error {
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tool_changes INTEGER NOT NULL DEFAULT 0`)
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tools_json TEXT NOT NULL DEFAULT ''`)
 
-	// Migration: real thumbnails in History - path/uploaded_at match
-	// file_meta_cache's key for the same file, so a History row can look up
-	// its cached thumbnail without ever touching the printer.
+	// Migration: real thumbnails in History - path/uploaded_at matched
+	// file_meta_cache's key for the same file, so a History row could look
+	// up its cached thumbnail without touching the printer. Superseded
+	// below (History now stores its own copy) - columns left in place,
+	// unused, rather than risk a DROP COLUMN migration for no real gain.
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN path TEXT NOT NULL DEFAULT ''`)
 	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN uploaded_at INTEGER NOT NULL DEFAULT 0`)
+
+	// Migration: History gets its own thumbnail, independent of whatever's
+	// still on the printer. The path/uploaded_at cross-reference above
+	// broke permanently the moment file_meta_cache re-synced to a file's
+	// real timestamp (or the file got deleted from the printer) - History
+	// is a permanent record and shouldn't depend on the printer's live
+	// state at all. Looked up directly by the history row's own id.
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN thumbnail BLOB`)
+	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN thumbnail_content_type TEXT NOT NULL DEFAULT ''`)
+
+	// One-time backfill for existing rows from before the above: pull
+	// whatever's still sitting in file_meta_cache under this row's old
+	// path (ignoring the old uploaded_at - it's exactly the mismatch that
+	// broke these in the first place) into the row's own copy. Only
+	// touches rows with no thumbnail of their own yet and a real match to
+	// copy, so safe to run on every startup - a no-op once it's done.
+	db.conn.Exec(`
+		UPDATE print_history SET
+			thumbnail = (SELECT thumbnail FROM file_meta_cache WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path),
+			thumbnail_content_type = (SELECT thumbnail_content_type FROM file_meta_cache WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path)
+		WHERE thumbnail IS NULL AND path != '' AND EXISTS (
+			SELECT 1 FROM file_meta_cache
+			WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path
+				AND length(file_meta_cache.thumbnail) > 0
+		)
+	`)
 
 	// Migration: MQTT mode for smart plugs - non-empty means this plug is
 	// controlled via MQTT topic instead of direct HTTP to ip/idx.
@@ -585,13 +613,27 @@ func (db *DB) InsertPrintHistory(h *models.PrintHistory) error {
 		INSERT INTO print_history (
 			printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
 			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
-			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, path, uploaded_at
+			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, thumbnail, thumbnail_content_type
 		)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, h.PrinterID, h.FileName, h.StartedAt, h.CompletedAt, h.DurationSecs, h.Result, h.FilamentUsedMM,
 		h.FilamentUsedG, h.LayerHeightMM, h.FillDensity, h.PrinterModel, h.Material, h.ToolIndex, h.FilamentCost,
-		h.EstimatedSecs, h.MaxLayerZ, h.ObjectNames, h.ToolChanges, string(h.Tools), h.Path, h.UploadedAt)
+		h.EstimatedSecs, h.MaxLayerZ, h.ObjectNames, h.ToolChanges, string(h.Tools), h.Thumbnail, h.ThumbnailContentType)
 	return err
+}
+
+// GetPrintHistoryThumbnail is a direct lookup by the history row's own id -
+// no printer, path, or timestamp involved, so it can never go stale or get
+// orphaned by anything happening on the printer's own storage.
+func (db *DB) GetPrintHistoryThumbnail(id int64) ([]byte, string, error) {
+	var thumbnail []byte
+	var contentType string
+	err := db.conn.QueryRow(`SELECT thumbnail, thumbnail_content_type FROM print_history WHERE id = ?`, id).
+		Scan(&thumbnail, &contentType)
+	if err == sql.ErrNoRows {
+		return nil, "", nil
+	}
+	return thumbnail, contentType, err
 }
 
 // ListPrintHistory returns a page of print_history rows, newest first, plus
@@ -602,7 +644,7 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 	rows, err := db.conn.Query(`
 		SELECT id, printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
 			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
-			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, path, uploaded_at
+			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, COALESCE(length(thumbnail), 0) > 0
 		FROM print_history WHERE printer_id = ? ORDER BY id DESC LIMIT ? OFFSET ?
 	`, printerID, limit+1, offset)
 	if err != nil {
@@ -616,7 +658,7 @@ func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.Pri
 		var toolsJSON string
 		if err := rows.Scan(&h.ID, &h.PrinterID, &h.FileName, &h.StartedAt, &h.CompletedAt, &h.DurationSecs, &h.Result, &h.FilamentUsedMM,
 			&h.FilamentUsedG, &h.LayerHeightMM, &h.FillDensity, &h.PrinterModel, &h.Material, &h.ToolIndex, &h.FilamentCost,
-			&h.EstimatedSecs, &h.MaxLayerZ, &h.ObjectNames, &h.ToolChanges, &toolsJSON, &h.Path, &h.UploadedAt); err != nil {
+			&h.EstimatedSecs, &h.MaxLayerZ, &h.ObjectNames, &h.ToolChanges, &toolsJSON, &h.HasThumbnail); err != nil {
 			return nil, false, err
 		}
 		if toolsJSON != "" {
