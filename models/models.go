@@ -89,6 +89,14 @@ type JobInfo struct {
 	// printer's own filesystem uses an 8.3-mangled short name instead).
 	// Empty for plugins with no such capability (OctoPrint).
 	FilePath string `json:"-"`
+	// JobState is the plugin's own job-lifecycle state, when it has one
+	// distinct from the printer's IDLE/PRINTING enum - PrusaLink's
+	// /api/v1/job reports PRINTING/PAUSED/FINISHED/STOPPED/ERROR per its
+	// OpenAPI spec, an authoritative completed-vs-cancelled signal.
+	// trackPrintHistory prefers this over its own progress-percentage
+	// guess when available. Empty for plugins with no such field
+	// (OctoPrint) - falls back to the guess there.
+	JobState string `json:"-"`
 }
 
 type PowerState struct {
