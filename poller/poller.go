@@ -842,7 +842,11 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 			LastUpdated: time.Now(),
 		}
 	}
-	slog.Debug("poll: status fetched", "printer", id, "state", status.State, "duration", time.Since(start))
+	if status.Job != nil {
+		slog.Debug("poll: status fetched", "printer", id, "state", status.State, "job_state", status.Job.JobState, "progress", status.Job.Progress, "duration", time.Since(start))
+	} else {
+		slog.Debug("poll: status fetched", "printer", id, "state", status.State, "duration", time.Since(start))
+	}
 
 	if plugs, err := p.db.ListSmartPlugs(id); err == nil && len(plugs) > 0 {
 		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, plugs)...)
