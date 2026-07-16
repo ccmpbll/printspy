@@ -2016,7 +2016,7 @@ async function importConfig(input) {
         });
         if (resp.ok) {
             const data = await resp.json();
-            alert(`Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s) added.`);
+            alert(`Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`);
             await fetchPrinters();
             openSettings();
         }
