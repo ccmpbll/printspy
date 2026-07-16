@@ -103,3 +103,34 @@ func TestSeedPrintingStateNoJobIsNoop(t *testing.T) {
 		t.Errorf("no Job on status should leave both checkpoints unmarked")
 	}
 }
+
+func TestPrintResult(t *testing.T) {
+	// Regression: a short print completing between poll ticks could have
+	// its last sampled progress sit well under 100% despite finishing
+	// cleanly - PrusaLink's own job.state (when available) is authoritative
+	// and must win over that guess.
+	cases := []struct {
+		name             string
+		jobState         string
+		printerErrored   bool
+		haveLastProgress bool
+		lastProgress     float64
+		want             string
+	}{
+		{"FINISHED wins even with low last progress", "FINISHED", false, true, 40, "completed"},
+		{"STOPPED wins even with high last progress", "STOPPED", false, true, 98, "cancelled"},
+		{"job ERROR", "ERROR", false, false, 0, "failed"},
+		{"printer errored with no job state", "", true, false, 0, "failed"},
+		{"no job state, low progress falls back to cancelled", "", false, true, 40, "cancelled"},
+		{"no job state, high progress falls back to completed", "", false, true, 99.5, "completed"},
+		{"no job state, no progress sample at all", "", false, false, 0, "completed"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := printResult(c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress); got != c.want {
+				t.Errorf("printResult(%q, %v, %v, %v) = %q, want %q",
+					c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress, got, c.want)
+			}
+		})
+	}
+}

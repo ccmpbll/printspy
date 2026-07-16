@@ -185,6 +185,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 				ElapsedSecs:    jr.TimePrinting,
 				RemainingSecs:  jr.TimeRemaining,
 				EstimatedTotal: jr.TimePrinting + jr.TimeRemaining,
+				JobState:       jr.State,
 			}
 
 			p.mu.Lock()

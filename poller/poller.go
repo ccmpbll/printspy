@@ -1483,12 +1483,25 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 		thumbnailURL = prev.ThumbnailURL
 	}
 
-	result := "completed"
-	if status.State == models.StateError {
-		result = "failed"
-	} else if prev != nil && prev.Job != nil && prev.Job.Progress < 99 {
-		result = "cancelled"
+	// Prefers the plugin's own job-lifecycle state when it has one over
+	// guessing from the last polled progress percentage - checks the
+	// current tick's Job first (freshest - PrusaLink can still report it
+	// with the terminal state on the very tick printer.state flips to
+	// Idle), falling back to prev's if the current tick already cleared
+	// Job.
+	jobState := ""
+	lastProgress := 0.0
+	haveLastProgress := false
+	if status.Job != nil {
+		jobState = status.Job.JobState
+	} else if prev != nil && prev.Job != nil {
+		jobState = prev.Job.JobState
 	}
+	if prev != nil && prev.Job != nil {
+		lastProgress = prev.Job.Progress
+		haveLastProgress = true
+	}
+	result := printResult(jobState, status.State == models.StateError, haveLastProgress, lastProgress)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	h := &models.PrintHistory{
@@ -1570,6 +1583,29 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 		}
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)
 	}()
+}
+
+// printResult decides a completed print's outcome. jobState is the plugin's
+// own job-lifecycle field when it has one (PrusaLink's /api/v1/job:
+// PRINTING/PAUSED/FINISHED/STOPPED/ERROR, straight from its OpenAPI spec) -
+// an authoritative completed-vs-cancelled signal, preferred whenever
+// present. Falls back to the last polled progress percentage only when no
+// plugin JobState is available (OctoPrint) - that guess is wrong for a
+// print that finishes between poll ticks, since a short print can easily
+// have its last sample sitting well under 100% despite completing cleanly.
+func printResult(jobState string, printerErrored bool, haveLastProgress bool, lastProgress float64) string {
+	switch {
+	case jobState == "STOPPED":
+		return "cancelled"
+	case jobState == "ERROR" || printerErrored:
+		return "failed"
+	case jobState == "FINISHED":
+		return "completed"
+	case jobState == "" && haveLastProgress && lastProgress < 99:
+		return "cancelled"
+	default:
+		return "completed"
+	}
 }
 
 func (p *Poller) insertPrintHistory(ctx context.Context, id int64, h *models.PrintHistory, thumbnailURL string) {
