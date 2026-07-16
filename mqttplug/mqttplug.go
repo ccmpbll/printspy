@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +68,10 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectTimeout(10 * time.Second).
-		SetOnConnectHandler(c.onConnect)
+		SetOnConnectHandler(c.onConnect).
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			log.Printf("mqtt: connection lost, reconnecting: %v", err)
+		})
 
 	cli := mqtt.NewClient(opts)
 	token := cli.Connect()
@@ -88,6 +92,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 // connect and every paho auto-reconnect, so there's no separate manual
 // resubscribe path needed after a network blip.
 func (c *Client) onConnect(cli mqtt.Client) {
+	log.Print("mqtt: connected")
 	c.mu.RLock()
 	subs := make(map[string]topicSubs, len(c.subs))
 	for t, ts := range c.subs {
@@ -325,6 +330,17 @@ func onOffPayload(on bool) string {
 // for up to a full poll interval before self-correcting. The device's own
 // stat/.../POWER echo still arrives shortly after and confirms (or, rarely,
 // corrects) this.
+//
+// Fails fast if the broker connection isn't actually open, rather than
+// letting paho accept the call. paho.mqtt.golang's IsConnected() reports
+// true during its own auto-reconnect retry loop, not just once truly
+// connected - a QoS-1 Publish() made during that window is silently queued
+// client-side and its token never completes until the broker comes back
+// (see paho's client.go Publish, the "reconnecting" case). Without this
+// check, every click during a broker outage became a request that hung
+// until reconnect and a message that queued up behind it - a backlog that,
+// observed live, flushed in a burst once the broker returned and left the
+// client in a state where nothing published again without a restart.
 func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error {
 	c.mu.RLock()
 	cli := c.cli
@@ -332,12 +348,18 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 	if cli == nil {
 		return fmt.Errorf("mqtt: not configured")
 	}
+	if !cli.IsConnectionOpen() {
+		return fmt.Errorf("mqtt: broker not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	token := cli.Publish(commandTopic(topic, idx), 1, false, onOffPayload(on))
 	select {
 	case <-token.Done():
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("mqtt: publish timed out: %w", ctx.Err())
 	}
 	if err := token.Error(); err != nil {
 		return err
