@@ -124,6 +124,19 @@ type statusWriter struct {
 	status int
 }
 
+// Flush forwards to the underlying ResponseWriter's Flusher, if it has one.
+// Without this, wrapping breaks SSE - handleSSE type-asserts w.(http.Flusher)
+// and, finding a *statusWriter that doesn't implement it, bails out with
+// "streaming not supported" on every connection attempt. The dashboard's
+// printer list is populated from the SSE init event, not a REST fetch on
+// page load, so this alone made every printer disappear from the UI - the
+// data was never touched, the live connection just never came up.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
