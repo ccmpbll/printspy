@@ -186,6 +186,7 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 				RemainingSecs:  jr.TimeRemaining,
 				EstimatedTotal: jr.TimePrinting + jr.TimeRemaining,
 				JobState:       jr.State,
+				FileMTimestamp: jr.File.MTimestamp,
 			}
 
 			p.mu.Lock()
@@ -324,6 +325,7 @@ func collectFiles(files []prusalinkFile, origin string, out *[]models.RecentFile
 		if name == "" {
 			name = f.Name
 		}
+
 		rf := models.RecentFile{
 			FileName:      name,
 			Path:          f.Name,
@@ -717,6 +719,7 @@ type jobResponse struct {
 		DisplayName string `json:"display_name"`
 		Name        string `json:"name"`
 		Size        int64  `json:"size"`
+		MTimestamp  int64  `json:"m_timestamp"`
 		Refs        struct {
 			Thumbnail string `json:"thumbnail"`
 			Download  string `json:"download"`

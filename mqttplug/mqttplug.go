@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,18 @@ func New() *Client {
 	}
 }
 
+// clientIDSuffix identifies this process to the broker so two printspy
+// instances never collide on the same MQTT ClientID (the broker evicts the
+// older session on a collision - see backlog). In Docker, hostname defaults
+// to the container ID: unique per container, stable across that container's
+// restarts.
+func clientIDSuffix() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "unknown"
+}
+
 // Configure (re)connects to brokerURL, disconnecting any existing connection
 // first - safe to call repeatedly (settings changed, or a manual retry from
 // /api/mqtt-test). An empty brokerURL just disconnects, leaving MQTT mode
@@ -63,7 +76,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("printspy-smartplugs").
+		SetClientID("printspy-smartplugs-" + clientIDSuffix()).
 		SetUsername(username).
 		SetPassword(password).
 		SetAutoReconnect(true).
