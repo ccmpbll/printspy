@@ -1989,6 +1989,7 @@ function plugLabel(ps) {
 function autoOffTooltip(source) {
     if (source === 'auto-idle') return 'Turned off automatically after sitting idle';
     if (source === 'auto-thermal') return 'Turned off automatically: thermal runaway protection';
+    if (source === 'mqtt-offline') return 'Device unreachable (MQTT offline) - showing as off, last known state unconfirmed';
     return '';
 }
 

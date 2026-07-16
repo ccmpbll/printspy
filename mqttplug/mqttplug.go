@@ -198,6 +198,15 @@ func (c *Client) handleMessage(cli mqtt.Client, msg mqtt.Message) {
 		if ok {
 			queryState(cli, topic, ts)
 		}
+	case kind == "tele" && suffix == "LWT" && string(msg.Payload()) == "Offline":
+		// The broker's own last-will fired - the device dropped off (most
+		// commonly it lost power, being an inline relay). Without this, the
+		// cache keeps showing whatever the last confirmed on/off read was
+		// indefinitely - a plug that's actually been dead for an hour still
+		// shows "On" on the dashboard forever, since nothing else ever
+		// updates it. Mark every relay under this topic off and unreachable
+		// instead of trusting a stale reading.
+		c.markOffline(topic)
 	}
 }
 
@@ -228,6 +237,30 @@ func (c *Client) applyPower(topic, suffix string, on bool) {
 	stampMeta(&ps, topic, idx, c.relayMetaLocked(topic, idx))
 	ps.On = on
 	c.state[key] = ps
+}
+
+// markOffline flags every relay under topic as off, called on the device's
+// own LWT going Offline. "Off" (rather than leaving On untouched, or adding
+// a separate unreachable flag models.PowerState doesn't have) is the safer
+// assumption for an inline relay that's stopped responding - the dominant
+// real-world cause is the device itself lost power, which makes Off
+// correct, not just a guess; the alternative (silently trusting a stale On)
+// is actively misleading on the dashboard.
+func (c *Client) markOffline(topic string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ts, ok := c.subs[topic]
+	if !ok {
+		return
+	}
+	for idx, meta := range ts.relays {
+		key := stateKey(topic, idx)
+		ps := c.state[key]
+		stampMeta(&ps, topic, idx, meta)
+		ps.On = false
+		ps.Source = "mqtt-offline"
+		c.state[key] = ps
+	}
 }
 
 // stampMeta fills the identity fields shared by every update path
