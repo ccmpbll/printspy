@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -130,7 +131,9 @@ func subscribeAndQuery(cli mqtt.Client, topic string, ts topicSubs, handler mqtt
 
 func queryState(cli mqtt.Client, topic string, ts topicSubs) {
 	for idx := range ts.relays {
-		cli.Publish(commandTopic(topic, idx), 0, false, "")
+		cmdTopic := commandTopic(topic, idx)
+		slog.Debug("mqtt query publish", "topic", cmdTopic)
+		cli.Publish(cmdTopic, 0, false, "")
 	}
 }
 
@@ -167,17 +170,20 @@ func (c *Client) Sync(plugs []models.SmartPlug) {
 	}
 	for topic := range oldSubs {
 		if _, ok := newSubs[topic]; !ok {
+			slog.Debug("mqtt unsubscribe", "topic", topic)
 			cli.Unsubscribe(statWildcard(topic), "tele/"+topic+"/SENSOR", "tele/"+topic+"/LWT")
 		}
 	}
 	for topic, ts := range newSubs {
 		if _, ok := oldSubs[topic]; !ok {
+			slog.Debug("mqtt subscribe", "topic", topic, "relays", len(ts.relays))
 			subscribeAndQuery(cli, topic, ts, c.handleMessage)
 		}
 	}
 }
 
 func (c *Client) handleMessage(cli mqtt.Client, msg mqtt.Message) {
+	slog.Debug("mqtt message received", "topic", msg.Topic(), "payload", string(msg.Payload()))
 	topic, kind, suffix, ok := parseTopic(msg.Topic())
 	if !ok {
 		return
@@ -388,7 +394,10 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	token := cli.Publish(commandTopic(topic, idx), 1, false, onOffPayload(on))
+	cmdTopic := commandTopic(topic, idx)
+	payload := onOffPayload(on)
+	slog.Debug("mqtt command publish", "topic", cmdTopic, "payload", payload)
+	token := cli.Publish(cmdTopic, 1, false, payload)
 	select {
 	case <-token.Done():
 	case <-ctx.Done():

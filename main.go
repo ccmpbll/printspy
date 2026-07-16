@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/ccmpbll/printspy/api"
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/ingest"
+	"github.com/ccmpbll/printspy/logging"
 	"github.com/ccmpbll/printspy/poller"
 
 	_ "github.com/ccmpbll/printspy/plugin/octoprint"
@@ -45,6 +48,11 @@ func main() {
 		log.Fatalf("failed to open database: %v", err)
 	}
 	defer database.Close()
+
+	if v, _ := database.GetSetting("debug_logging"); v == "1" {
+		logging.SetDebug(true)
+		log.Print("debug logging enabled")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -79,7 +87,7 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr, Handler: nosniff(handler.RequireAuth(mux))}
+	server := &http.Server{Addr: addr, Handler: logRequests(nosniff(handler.RequireAuth(mux)))}
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
@@ -95,6 +103,30 @@ func main() {
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+// logRequests logs every request at debug level (method, path, status,
+// duration) - a no-op cost when debug logging is off (slog drops it before
+// formatting), the cheapest way to get visibility into "pretty much
+// everything" hitting the API without threading logging through every
+// handler individually.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		slog.Debug("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "duration", time.Since(start))
+	})
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
 }
 
 func nosniff(next http.Handler) http.Handler {

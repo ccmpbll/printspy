@@ -380,6 +380,13 @@
                         <input type="number" id="setting-thermal-max-extruder" value="" min="0" max="350" placeholder="0 = disabled, per-printer default">
                         <div class="form-hint">Same as above, for the hotend.</div>
                     </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-debug-logging" style="width:auto">
+                            Enable debug logging
+                        </label>
+                        <div class="form-hint">Verbose tracing for polling, MQTT, smart plugs, and API requests - view with <code>docker logs -f printspy</code>. Takes effect immediately, no restart needed. Leave off unless actively troubleshooting.</div>
+                    </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Save</button>
                     </div>

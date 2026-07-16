@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"time"
@@ -84,14 +85,18 @@ func (c *Client) SetState(ctx context.Context, ip, idx string, on bool) error {
 
 func (c *Client) command(ctx context.Context, ip, cmnd string) ([]byte, error) {
 	reqURL := fmt.Sprintf("http://%s/cm?cmnd=%s", ip, url.QueryEscape(cmnd))
+	slog.Debug("smartplug command", "url", reqURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		slog.Debug("smartplug command failed", "url", reqURL, "error", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	slog.Debug("smartplug command response", "url", reqURL, "status", resp.StatusCode, "body", string(body))
+	return body, err
 }
