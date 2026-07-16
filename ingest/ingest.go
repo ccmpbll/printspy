@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -141,6 +142,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 	}
 
 	printAfter := r.Header.Get("Print-After-Upload") == "?1"
+	slog.Debug("ingest upload received", "target", target.ID, "filename", filename, "size", len(data), "print_after", printAfter)
 
 	jobID, err := h.db.CreateIngestJob(target.ID, filename, printAfter, int64(len(data)))
 	if err != nil {
@@ -173,8 +175,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 
 	if target.PrinterID != nil {
 		if printAfter && h.dispatch != nil {
+			slog.Debug("ingest job dispatching (print after upload)", "job", jobID, "printer", *target.PrinterID)
 			h.dispatch(jobID, *target.PrinterID)
 		} else if !printAfter && h.relay != nil {
+			slog.Debug("ingest job relaying (upload only)", "job", jobID, "printer", *target.PrinterID)
 			h.relay(jobID, *target.PrinterID)
 		}
 	}

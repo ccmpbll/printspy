@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/logging"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/notify"
@@ -525,6 +526,9 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		_, passChanged := settings["mqtt_password"]
 		if brokerChanged || userChanged || passChanged {
 			go h.poller.ConfigureMQTT()
+		}
+		if v, ok := settings["debug_logging"]; ok {
+			logging.SetDebug(v == "1")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -1815,6 +1819,11 @@ func validateSetting(key, value string) (string, error) {
 	case "pushover_user_key", "pushover_app_token":
 		return value, nil
 	case "mqtt_broker_url", "mqtt_username", "mqtt_password":
+		return value, nil
+	case "debug_logging":
+		if value != "0" && value != "1" {
+			return "", fmt.Errorf("debug_logging must be 0 or 1")
+		}
 		return value, nil
 	default:
 		return "", fmt.Errorf("unknown setting: %s", key)

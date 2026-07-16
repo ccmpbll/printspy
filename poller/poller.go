@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -626,7 +627,10 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 		setErr = pl.SetPowerState(ctx, plugID, on)
 	}
 
-	if setErr == nil {
+	if setErr != nil {
+		log.Printf("[printer:%d] manual power toggle failed for %s (on=%v): %v", id, plugID, on, setErr)
+	} else {
+		slog.Debug("power toggle succeeded", "printer", id, "plug", plugID, "on", on)
 		p.patchPowerState(id, plugID, "", on)
 	}
 	go p.poll(context.Background(), id, pl)
@@ -829,6 +833,7 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.
 }
 
 func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
+	start := time.Now()
 	status, err := pl.GetStatus(ctx)
 	if err != nil {
 		log.Printf("[printer:%d] poll error: %v", id, err)
@@ -837,9 +842,13 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 			LastUpdated: time.Now(),
 		}
 	}
+	slog.Debug("poll: status fetched", "printer", id, "state", status.State, "duration", time.Since(start))
 
 	if plugs, err := p.db.ListSmartPlugs(id); err == nil && len(plugs) > 0 {
 		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, plugs)...)
+	}
+	for _, ps := range status.Power {
+		slog.Debug("poll: plug state", "printer", id, "plug", ps.ID, "on", ps.On, "source", ps.Source)
 	}
 
 	p.mu.Lock()
@@ -1264,9 +1273,11 @@ func (p *Poller) checkAutoOff(ctx context.Context, id int64, status *models.Prin
 
 	cooldown := p.autoOffCooldownTemp()
 	if status.Temps.HotendActual > cooldown || status.Temps.BedActual > cooldown {
+		slog.Debug("auto-off: cooldown gate blocking", "printer", id, "hotend", status.Temps.HotendActual, "bed", status.Temps.BedActual, "cooldown", cooldown)
 		return // still cooling down, check again next tick
 	}
 
+	slog.Debug("auto-off: idle timeout reached, powering off", "printer", id, "idle_for", time.Since(idleSince), "timeout_minutes", timeoutMinutes)
 	p.autoPowerOff(ctx, id, "auto-idle")
 
 	// One-shot per idle streak - won't refire until the printer leaves and
@@ -1311,6 +1322,7 @@ func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
 	for _, sp := range plugs {
 		plugID := PlugIDFor(sp)
 		if !p.isPlugOn(id, plugID) {
+			slog.Debug("auto-off: plug already off, skipping", "printer", id, "plug", plugID)
 			continue
 		}
 		if err := p.forcePlugOff(ctx, sp); err != nil {
@@ -1427,6 +1439,8 @@ func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.
 			// once the broker delivers a message.
 			if ps, ok := p.mqtt.GetState(sp.MQTTTopic, sp.Idx); ok {
 				states = append(states, ps)
+			} else {
+				slog.Debug("mqtt plug cache miss, skipping this tick", "printer", id, "topic", sp.MQTTTopic, "idx", sp.Idx)
 			}
 			continue
 		}

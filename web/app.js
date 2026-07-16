@@ -1023,6 +1023,7 @@ function openSettings() {
         document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
         document.getElementById('setting-thermal-max-bed').value = settings.thermal_max_bed_temp || '';
         document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
+        document.getElementById('setting-debug-logging').checked = settings.debug_logging === '1';
         document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
         document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
         const mqttURL = settings.mqtt_broker_url || '';
@@ -1847,6 +1848,7 @@ async function saveSettings(e) {
         auto_off_cooldown_temp: document.getElementById('setting-auto-off-cooldown').value || '40',
         thermal_max_bed_temp: document.getElementById('setting-thermal-max-bed').value || '0',
         thermal_max_extruder_temp: document.getElementById('setting-thermal-max-extruder').value || '0',
+        debug_logging: document.getElementById('setting-debug-logging').checked ? '1' : '0',
     };
     const pollVal = document.getElementById('setting-poll-interval').value;
     if (pollVal) settings.poll_interval = pollVal;

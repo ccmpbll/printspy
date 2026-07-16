@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -37,6 +38,7 @@ type Message struct {
 
 // Send posts msg to Pushover.
 func Send(token, userKey string, msg Message) error {
+	slog.Debug("pushover send", "title", msg.Title, "priority", msg.Priority, "sound", msg.Sound, "has_image", len(msg.Image) > 0)
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -93,5 +95,6 @@ func Send(token, userKey string, msg Message) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("pushover http %d: %s", resp.StatusCode, body)
 	}
+	slog.Debug("pushover send succeeded", "title", msg.Title)
 	return nil
 }
