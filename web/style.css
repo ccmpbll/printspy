@@ -441,8 +441,12 @@ header .printer-count {
     text-overflow: clip;
 }
 
-.webcam-mode-btn:hover:not(:disabled) {
-    background: var(--bg-tertiary);
+/* hover:hover excludes touch - without it, tapping a mode button on mobile
+   leaves it stuck in the hover state until the user taps elsewhere. */
+@media (hover: hover) and (pointer: fine) {
+    .webcam-mode-btn:hover:not(:disabled) {
+        background: var(--bg-tertiary);
+    }
 }
 
 .webcam-mode-btn.active {
@@ -971,6 +975,16 @@ header .printer-count {
     .modal-wide, .modal-files {
         max-width: 100%;
     }
+
+    .recent-item {
+        flex-wrap: wrap;
+    }
+
+    .recent-actions {
+        width: 100%;
+        justify-content: flex-end;
+        margin-top: 0.25rem;
+    }
 }
 
 /* File manager rows (also used inline, no dropdown wrapper anymore) */
@@ -998,6 +1012,11 @@ header .printer-count {
     display: flex;
     flex-direction: column;
     gap: 0.1rem;
+}
+.recent-actions {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
 }
 .recent-name {
     word-break: break-word;

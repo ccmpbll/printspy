@@ -167,9 +167,11 @@ async function loadFileManagerFiles(printerId) {
                     <span class="recent-name" title="${esc(f.file_name)}">${esc(f.file_name)}</span>
                     <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}${toolsHTML}</span>
                 </div>
-                <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
-                <a class="btn btn-sm" href="/api/printers/${printerId}/download?origin=${encodeURIComponent(f.origin)}&path=${encodeURIComponent(f.path)}&filename=${encodeURIComponent(f.file_name)}" title="Download">&#8595; Download</a>
-                <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
+                <div class="recent-actions">
+                    <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
+                    <a class="btn btn-sm" href="/api/printers/${printerId}/download?origin=${encodeURIComponent(f.origin)}&path=${encodeURIComponent(f.path)}&filename=${encodeURIComponent(f.file_name)}" title="Download">&#8595; Download</a>
+                    <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
+                </div>
             </div>`;
         }).join('');
         observeLazyThumbs(list, fileManagerThumbObserver);
@@ -394,12 +396,18 @@ async function controlPrint(printerId, action) {
 
 async function setPower(printerId, action, plugId) {
     try {
-        await fetch(`/api/printers/${printerId}/power`, {
+        const resp = await fetch(`/api/printers/${printerId}/power`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action, plug_id: plugId}),
         });
-    } catch (e) {}
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.error || 'Failed to change power state.');
+        }
+    } catch (e) {
+        alert('Failed to change power state.');
+    }
 }
 
 async function bulkPower(action) {
@@ -1981,6 +1989,7 @@ function plugLabel(ps) {
 function autoOffTooltip(source) {
     if (source === 'auto-idle') return 'Turned off automatically after sitting idle';
     if (source === 'auto-thermal') return 'Turned off automatically: thermal runaway protection';
+    if (source === 'mqtt-offline') return 'Device unreachable (MQTT offline) - showing as off, last known state unconfirmed';
     return '';
 }
 

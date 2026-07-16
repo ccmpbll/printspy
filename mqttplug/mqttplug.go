@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -67,7 +68,10 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectTimeout(10 * time.Second).
-		SetOnConnectHandler(c.onConnect)
+		SetOnConnectHandler(c.onConnect).
+		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			log.Printf("mqtt: connection lost, reconnecting: %v", err)
+		})
 
 	cli := mqtt.NewClient(opts)
 	token := cli.Connect()
@@ -88,6 +92,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 // connect and every paho auto-reconnect, so there's no separate manual
 // resubscribe path needed after a network blip.
 func (c *Client) onConnect(cli mqtt.Client) {
+	log.Print("mqtt: connected")
 	c.mu.RLock()
 	subs := make(map[string]topicSubs, len(c.subs))
 	for t, ts := range c.subs {
@@ -193,6 +198,15 @@ func (c *Client) handleMessage(cli mqtt.Client, msg mqtt.Message) {
 		if ok {
 			queryState(cli, topic, ts)
 		}
+	case kind == "tele" && suffix == "LWT" && string(msg.Payload()) == "Offline":
+		// The broker's own last-will fired - the device dropped off (most
+		// commonly it lost power, being an inline relay). Without this, the
+		// cache keeps showing whatever the last confirmed on/off read was
+		// indefinitely - a plug that's actually been dead for an hour still
+		// shows "On" on the dashboard forever, since nothing else ever
+		// updates it. Mark every relay under this topic off and unreachable
+		// instead of trusting a stale reading.
+		c.markOffline(topic)
 	}
 }
 
@@ -223,6 +237,30 @@ func (c *Client) applyPower(topic, suffix string, on bool) {
 	stampMeta(&ps, topic, idx, c.relayMetaLocked(topic, idx))
 	ps.On = on
 	c.state[key] = ps
+}
+
+// markOffline flags every relay under topic as off, called on the device's
+// own LWT going Offline. "Off" (rather than leaving On untouched, or adding
+// a separate unreachable flag models.PowerState doesn't have) is the safer
+// assumption for an inline relay that's stopped responding - the dominant
+// real-world cause is the device itself lost power, which makes Off
+// correct, not just a guess; the alternative (silently trusting a stale On)
+// is actively misleading on the dashboard.
+func (c *Client) markOffline(topic string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ts, ok := c.subs[topic]
+	if !ok {
+		return
+	}
+	for idx, meta := range ts.relays {
+		key := stateKey(topic, idx)
+		ps := c.state[key]
+		stampMeta(&ps, topic, idx, meta)
+		ps.On = false
+		ps.Source = "mqtt-offline"
+		c.state[key] = ps
+	}
 }
 
 // stampMeta fills the identity fields shared by every update path
@@ -325,6 +363,17 @@ func onOffPayload(on bool) string {
 // for up to a full poll interval before self-correcting. The device's own
 // stat/.../POWER echo still arrives shortly after and confirms (or, rarely,
 // corrects) this.
+//
+// Fails fast if the broker connection isn't actually open, rather than
+// letting paho accept the call. paho.mqtt.golang's IsConnected() reports
+// true during its own auto-reconnect retry loop, not just once truly
+// connected - a QoS-1 Publish() made during that window is silently queued
+// client-side and its token never completes until the broker comes back
+// (see paho's client.go Publish, the "reconnecting" case). Without this
+// check, every click during a broker outage became a request that hung
+// until reconnect and a message that queued up behind it - a backlog that,
+// observed live, flushed in a burst once the broker returned and left the
+// client in a state where nothing published again without a restart.
 func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error {
 	c.mu.RLock()
 	cli := c.cli
@@ -332,12 +381,18 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 	if cli == nil {
 		return fmt.Errorf("mqtt: not configured")
 	}
+	if !cli.IsConnectionOpen() {
+		return fmt.Errorf("mqtt: broker not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 
 	token := cli.Publish(commandTopic(topic, idx), 1, false, onOffPayload(on))
 	select {
 	case <-token.Done():
 	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("mqtt: publish timed out: %w", ctx.Err())
 	}
 	if err := token.Error(); err != nil {
 		return err

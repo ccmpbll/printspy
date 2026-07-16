@@ -166,3 +166,21 @@ func TestLWTOfflineDoesNotRequery(t *testing.T) {
 		t.Fatalf("expected no publish for an Offline LWT, got %v", fc.published)
 	}
 }
+
+func TestLWTOfflineMarksCacheOff(t *testing.T) {
+	// Regression: a device that drops off the broker (most commonly lost
+	// power, being an inline relay) must not leave the dashboard showing
+	// its last confirmed reading forever - the cache has to reflect "off,
+	// unconfirmed" instead of silently staying stuck on a stale "On".
+	c := New()
+	c.subs = map[string]topicSubs{"testplug": {relays: map[string]relayMeta{"1": {Label: "Printer"}}}}
+	c.applyPower("testplug", "POWER", true) // device was last seen ON
+	fc := &fakePublishClient{}
+
+	c.handleMessage(fc, &fakeMessage{topic: "tele/testplug/LWT", payload: []byte("Offline")})
+
+	ps, ok := c.GetState("testplug", "1")
+	if !ok || ps.On || ps.Source != "mqtt-offline" {
+		t.Fatalf("GetState after Offline LWT = %+v, ok=%v, want On=false, Source=mqtt-offline", ps, ok)
+	}
+}
