@@ -20,6 +20,7 @@ import (
 	"github.com/ccmpbll/printspy/mqttplug"
 	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
+	"github.com/ccmpbll/printspy/plugin/prusalink"
 	"github.com/ccmpbll/printspy/printmeta"
 	"github.com/ccmpbll/printspy/smartplug"
 )
@@ -345,6 +346,21 @@ func (p *Poller) AuthenticatedDo(id int64, client *http.Client, req *http.Reques
 		return nil, err
 	}
 	return pl.AuthenticatedDo(client, req)
+}
+
+// PrusalinkDebugDump returns every raw PrusaLink API response for printer id,
+// for the Settings raw-API debug view. Errors if the printer's plugin isn't
+// PrusaLink.
+func (p *Poller) PrusalinkDebugDump(ctx context.Context, id int64) (map[string]json.RawMessage, error) {
+	pl, err := p.plugin(id)
+	if err != nil {
+		return nil, err
+	}
+	pd, ok := pl.(*prusalink.Plugin)
+	if !ok {
+		return nil, fmt.Errorf("printer %d is not a PrusaLink printer", id)
+	}
+	return pd.DebugDump(ctx), nil
 }
 
 func (p *Poller) GetRecentFiles(ctx context.Context, id int64, limit int) ([]models.RecentFile, error) {

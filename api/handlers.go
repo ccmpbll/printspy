@@ -230,6 +230,8 @@ func (h *Handler) handlePrinterByID(w http.ResponseWriter, r *http.Request) {
 			h.controlPrint(w, r, id)
 		case "maintenance":
 			h.handleMaintenance(w, r, id)
+		case "debug":
+			h.getPrusalinkDebug(w, r, id)
 		default:
 			http.NotFound(w, r)
 		}
@@ -978,6 +980,32 @@ func (h *Handler) handleCameraSettings(w http.ResponseWriter, r *http.Request, i
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
+}
+
+// getPrusalinkDebug returns every raw PrusaLink API response for one
+// printer, for the Settings raw-API debug view. PrusaLink only - the view's
+// own entry point is hidden for OctoPrint printers, but the type is
+// re-checked here since this is a real network call to real hardware.
+func (h *Handler) getPrusalinkDebug(w http.ResponseWriter, r *http.Request, id int64) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p, err := h.db.GetPrinter(id)
+	if err != nil {
+		jsonError(w, "printer not found", http.StatusNotFound)
+		return
+	}
+	if p.Type != "prusalink" {
+		jsonError(w, "debug view is PrusaLink only", http.StatusBadRequest)
+		return
+	}
+	dump, err := h.poller.PrusalinkDebugDump(r.Context(), id)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, dump)
 }
 
 // Print history and control
