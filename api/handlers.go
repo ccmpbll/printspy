@@ -617,7 +617,7 @@ func (h *Handler) handlePower(w http.ResponseWriter, r *http.Request, id int64) 
 
 	if !turnOn {
 		status := h.poller.GetStatus(id)
-		if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+		if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused || status.State == models.StateBusy) {
 			singlePlug := len(status.Power) <= 1
 			isPrinterPlug := singlePlug
 			if !singlePlug {
@@ -710,7 +710,7 @@ func (h *Handler) handleBulkPower(w http.ResponseWriter, r *http.Request) {
 		if status == nil || len(status.Power) == 0 {
 			continue
 		}
-		if !turnOn && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+		if !turnOn && (status.State == models.StatePrinting || status.State == models.StatePaused || status.State == models.StateBusy) {
 			results = append(results, map[string]any{"id": p.ID, "name": p.Name, "success": false, "error": "printing"})
 			continue
 		}
@@ -1108,7 +1108,7 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 
 	status := h.poller.GetStatus(id)
-	if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused) {
+	if status != nil && (status.State == models.StatePrinting || status.State == models.StatePaused || status.State == models.StateBusy) {
 		jsonError(w, "printer is busy", http.StatusConflict)
 		return
 	}
