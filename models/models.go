@@ -8,9 +8,14 @@ import (
 type PrinterState string
 
 const (
-	StateIdle         PrinterState = "idle"
-	StatePrinting     PrinterState = "printing"
-	StatePaused       PrinterState = "paused"
+	StateIdle     PrinterState = "idle"
+	StatePrinting PrinterState = "printing"
+	StatePaused   PrinterState = "paused"
+	// StateBusy is non-idle activity that isn't a print job - PrusaLink's
+	// BUSY (filament load/unload, preheat, homing, self-test). Distinct
+	// from StatePrinting so Pause/Cancel controls and print notifications
+	// don't fire for it.
+	StateBusy         PrinterState = "busy"
 	StateError        PrinterState = "error"
 	StateAttention    PrinterState = "attention"
 	StateOffline      PrinterState = "offline"

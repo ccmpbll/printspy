@@ -741,7 +741,9 @@ func mapState(state string) models.PrinterState {
 	case strings.Contains(s, "ERROR"):
 		return models.StateError
 	case s == "BUSY":
-		return models.StatePrinting
+		// Filament load/unload, preheat, homing, self-test - not a print
+		// job, must stay distinct from StatePrinting (see models.StateBusy).
+		return models.StateBusy
 	default:
 		return models.StateIdle
 	}

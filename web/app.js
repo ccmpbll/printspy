@@ -11,6 +11,7 @@ const STATE_META = {
     attention:    {cardClass: 'card-attention', msgClass: 'msg-attention', defaultMsg: 'Printer needs attention'},
     offline:      {cardClass: 'card-offline', msgClass: 'msg-offline', defaultMsg: 'Unable to reach printer'},
     disconnected: {cardClass: 'card-disconnected', msgClass: 'msg-disconnected', defaultMsg: 'Printer disconnected', ignoreDetail: true},
+    busy:         {cardClass: 'card-busy', msgClass: 'msg-busy', defaultMsg: 'Printer busy', ignoreDetail: true},
 };
 
 function stateCardClass(state) {
@@ -692,7 +693,7 @@ function renderPrinterCard(printer) {
 
     let powerHTML = '';
     if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused';
+        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
         const singlePlug = status.power.length === 1;
         powerHTML = status.power.map(ps => {
             const onClass = ps.on ? 'power-btn-active power-on' : '';
@@ -909,7 +910,7 @@ function updateCard(card, printer) {
 
     // Update power buttons
     if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused';
+        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
         const singlePlug = status.power.length === 1;
         status.power.forEach(ps => {
             // Same physical plug can appear more than once (e.g. auto-detected
