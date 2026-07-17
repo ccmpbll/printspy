@@ -13,7 +13,15 @@ Each printer gets a row: webcam/snapshot, progress/ETA, temps, and smart plug po
 
 ## Screenshots
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](docs/screenshots/printspy-dashboard.png)
+
+<details>
+<summary>File Manager &amp; Print History</summary>
+
+![File Manager](docs/screenshots/printspy-files.png)
+![Print History](docs/screenshots/printspy-history.png)
+
+</details>
 
 ## Supported platforms
 
