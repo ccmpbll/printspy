@@ -847,6 +847,23 @@ header .printer-count {
     gap: 0.25rem;
 }
 
+.prusalink-debug-section h3 {
+    font-size: 0.85rem;
+    margin: 0.75rem 0 0.25rem;
+    color: var(--text-secondary);
+}
+
+.prusalink-debug-section pre {
+    font-size: 0.75rem;
+    background: var(--bg-secondary);
+    padding: 0.5rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .container {

@@ -205,6 +205,46 @@ function observeLazyThumbs(container, observer) {
     container.querySelectorAll('.lazy-thumb').forEach(img => observer.observe(img));
 }
 
+// PrusaLink raw API debug view - every raw endpoint response, refreshed by
+// plain polling while the modal's open (no standing state to push via SSE
+// for a view nobody has open most of the time).
+let prusalinkDebugTimer = null;
+const PRUSALINK_DEBUG_POLL_MS = 5000;
+
+async function openPrusalinkDebug(printerId) {
+    document.getElementById('prusalink-debug-modal-title').textContent = `Raw API — ${esc(printerName(printerId))}`;
+    document.getElementById('prusalink-debug-modal').classList.add('active');
+    await loadPrusalinkDebug(printerId);
+    if (prusalinkDebugTimer) clearInterval(prusalinkDebugTimer);
+    prusalinkDebugTimer = setInterval(() => loadPrusalinkDebug(printerId), PRUSALINK_DEBUG_POLL_MS);
+}
+
+function stopPrusalinkDebugPoll() {
+    if (prusalinkDebugTimer) {
+        clearInterval(prusalinkDebugTimer);
+        prusalinkDebugTimer = null;
+    }
+}
+
+async function loadPrusalinkDebug(printerId) {
+    const body = document.getElementById('prusalink-debug-body');
+    try {
+        const resp = await fetch(`/api/printers/${printerId}/debug`);
+        if (!resp.ok) {
+            body.innerHTML = `<div class="settings-empty">${esc((await resp.json().catch(() => ({}))).error || 'Failed to load.')}</div>`;
+            return;
+        }
+        const dump = await resp.json();
+        body.innerHTML = Object.keys(dump).sort().map(key => `
+            <div class="prusalink-debug-section">
+                <h3>${esc(key)}</h3>
+                <pre>${esc(JSON.stringify(dump[key], null, 2))}</pre>
+            </div>`).join('');
+    } catch (e) {
+        body.innerHTML = '<div class="settings-empty">Failed to load.</div>';
+    }
+}
+
 // Print history - separate from the file manager (that's what's on the
 // printer now; this is what's ever been printed, one row per completed job).
 let historyPrinterId = null;
@@ -1493,6 +1533,7 @@ function renderSettingsPrinterList() {
                 </div>
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
+                    ${cfg.type === 'prusalink' ? `<button class="btn btn-sm" onclick="closeModal();openPrusalinkDebug(${cfg.id})" title="Raw API debug view">Raw API</button>` : ''}
                     <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener" title="Open ${esc(p.display_name)}">${esc(p.display_name)} &#8599;</a>
                     <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
@@ -1603,6 +1644,7 @@ async function openEditModal(id) {
 
 function closeModal() {
     document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
+    stopPrusalinkDebugPoll();
 }
 
 // Click once to arm, click again within the window to actually run - avoids

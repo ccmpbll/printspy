@@ -203,6 +203,60 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 	return status, nil
 }
 
+// debugEndpoints is every fixed-path GET endpoint in PrusaLink's OpenAPI
+// spec (prusa3d/Prusa-Link-Web/spec/openapi.yaml) that doesn't need a
+// dynamic ID or return binary - dumped raw and unfiltered by DebugDump for
+// the Settings debug view. /api/v1/job/{id}, pause/resume/continue, and the
+// cameras/{id} sub-resources are mutate-only or need an ID we don't have
+// ahead of time; /api/v1/cameras/snap and /{id}/snap return an image, not
+// JSON. Everything else the spec documents is here, even endpoints known
+// dead on real firmware (cameras, update) - that's the point of a raw dump.
+var debugEndpoints = []struct{ key, path string }{
+	{"version", "/api/version"},
+	{"info", "/api/v1/info"},
+	{"status", "/api/v1/status"},
+	{"job", "/api/v1/job"},
+	{"storage", "/api/v1/storage"},
+	{"transfer", "/api/v1/transfer"},
+	{"files_usb", "/api/v1/files/usb"},
+	{"files_local", "/api/v1/files/local"},
+	{"cameras", "/api/v1/cameras"},
+	{"update_prusalink", "/api/v1/update/prusalink"},
+}
+
+// DebugDump fetches every known PrusaLink endpoint and returns each raw
+// response body keyed by name, for the raw-API debug view. A failed or
+// non-200 call is captured as an error value under its own key rather than
+// aborting the whole dump - e.g. files_local is expected to 404/be empty on
+// USB-only setups, and shouldn't blank out the other endpoints.
+func (p *Plugin) DebugDump(ctx context.Context) map[string]json.RawMessage {
+	out := make(map[string]json.RawMessage, len(debugEndpoints))
+	for _, e := range debugEndpoints {
+		out[e.key] = p.debugFetch(ctx, e.path)
+	}
+	return out
+}
+
+func (p *Plugin) debugFetch(ctx context.Context, path string) json.RawMessage {
+	data, statusCode, err := p.doGetRaw(ctx, path)
+	if err != nil {
+		msg, _ := json.Marshal(map[string]string{"_error": err.Error()})
+		return msg
+	}
+	if statusCode == http.StatusNoContent || len(data) == 0 {
+		return json.RawMessage("null")
+	}
+	if !json.Valid(data) {
+		msg, _ := json.Marshal(map[string]any{"_status": statusCode, "_raw": string(data)})
+		return msg
+	}
+	if statusCode != http.StatusOK {
+		msg, _ := json.Marshal(map[string]any{"_status": statusCode, "body": json.RawMessage(data)})
+		return msg
+	}
+	return json.RawMessage(data)
+}
+
 func (p *Plugin) GetWebcamURL() string {
 	return ""
 }
