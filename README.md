@@ -11,6 +11,10 @@ This has been created mostly for my own use. If someone else finds it useful, al
 
 Each printer gets a row: webcam/snapshot, progress/ETA, temps, and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
+## Screenshots
+
+![Dashboard](docs/screenshots/dashboard.png)
+
 ## Supported platforms
 
 - **OctoPrint** — fully supported
