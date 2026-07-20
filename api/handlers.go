@@ -71,6 +71,7 @@ func (h *Handler) logOnce(key string, interval time.Duration, format string, arg
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/status", h.handleStatus)
 	mux.HandleFunc("/api/printers", h.handlePrinters)
 	mux.HandleFunc("/api/printers/", h.handlePrinterByID)
 	mux.HandleFunc("/api/printers/reorder", h.handleReorder)
@@ -137,6 +138,58 @@ func (h *Handler) buildPrinterWithStatus(p models.PrinterConfig, statuses map[in
 		DisplayName: h.poller.GetDisplayName(p.ID),
 		HasWebcam:   h.poller.GetWebcamURL(p.ID) != "",
 	}
+}
+
+// handleStatus is a read-only, API-key-gated endpoint for external
+// dashboards (e.g. a Homepage customapi widget) - deliberately separate
+// from /api/printers so it can skip session auth without exposing anything
+// beyond name/state/job progress (see models.StatusSummary).
+func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key, err := h.db.GetSetting("status_api_key")
+	if err != nil || key == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Header.Get("X-Api-Key") != key {
+		jsonError(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	printers, err := h.db.ListPrinters()
+	if err != nil {
+		jsonError(w, "failed to list printers", http.StatusInternalServerError)
+		return
+	}
+	statuses := h.poller.GetAllStatuses()
+
+	summary := models.StatusSummary{
+		PrinterCount: len(printers),
+		Printers:     make([]models.PrinterStatusSummary, len(printers)),
+	}
+	for i, p := range printers {
+		ps := models.PrinterStatusSummary{
+			Name:  p.Name,
+			State: string(models.StateOffline),
+		}
+		if st := statuses[p.ID]; st != nil {
+			ps.State = string(st.State)
+			if st.State == models.StatePrinting {
+				summary.Printing++
+			}
+			if st.Job != nil {
+				ps.JobFileName = st.Job.FileName
+				ps.Progress = st.Job.Progress
+				ps.RemainingSecs = st.Job.RemainingSecs
+			}
+		}
+		summary.Printers[i] = ps
+	}
+	jsonResponse(w, summary)
 }
 
 type printerRequest struct {
@@ -1876,6 +1929,8 @@ func validateSetting(key, value string) (string, error) {
 		return value, nil
 	case "mqtt_broker_url", "mqtt_username", "mqtt_password":
 		return value, nil
+	case "status_api_key":
+		return strings.TrimSpace(value), nil
 	case "debug_logging":
 		if value != "0" && value != "1" {
 			return "", fmt.Errorf("debug_logging must be 0 or 1")

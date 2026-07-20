@@ -1072,6 +1072,7 @@ function openSettings() {
         document.getElementById('setting-mqtt-broker-url').value = mqttURL.replace(/^(tcp|ssl):\/\//, '');
         document.getElementById('setting-mqtt-username').value = settings.mqtt_username || '';
         document.getElementById('setting-mqtt-password').value = settings.mqtt_password || '';
+        document.getElementById('setting-status-api-key').value = settings.status_api_key || '';
         document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
         document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
         document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
@@ -1967,6 +1968,20 @@ async function putMQTTSettings() {
 async function saveMQTTSettings(e) {
     e.preventDefault();
     await putMQTTSettings();
+    closeModal();
+}
+
+function generateStatusAPIKey() {
+    document.getElementById('setting-status-api-key').value = crypto.randomUUID().replace(/-/g, '');
+}
+
+async function saveStatusAPISettings(e) {
+    e.preventDefault();
+    await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status_api_key: document.getElementById('setting-status-api-key').value.trim()}),
+    });
     closeModal();
 }
 

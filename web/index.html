@@ -502,6 +502,23 @@
             </div>
 
             <div class="settings-section">
+                <h3>Dashboard status API</h3>
+                <form onsubmit="saveStatusAPISettings(event)">
+                    <div class="form-group">
+                        <label for="setting-status-api-key">API key</label>
+                        <div style="display:flex;gap:0.5rem">
+                            <input type="text" id="setting-status-api-key" placeholder="leave blank to disable" style="flex:1">
+                            <button type="button" class="btn" onclick="generateStatusAPIKey()">Generate</button>
+                        </div>
+                        <div class="form-hint">Used by external dashboards (e.g. Homepage) to read <code>GET /api/status</code>. Send it as the <code>X-Api-Key</code> header.</div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="settings-section">
                 <h3>Your account</h3>
                 <form onsubmit="changePassword(event)">
                     <div class="form-group">

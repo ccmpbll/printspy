@@ -154,6 +154,23 @@ type PrinterWithStatus struct {
 	HasWebcam   bool           `json:"has_webcam"`
 }
 
+// PrinterStatusSummary is the trimmed, dashboard-facing view of a printer -
+// deliberately excludes URL/APIKey/Model/IP so the public status endpoint
+// can't leak anything useful for probing the LAN or printer credentials.
+type PrinterStatusSummary struct {
+	Name          string  `json:"name"`
+	State         string  `json:"state"`
+	JobFileName   string  `json:"job_file_name,omitempty"`
+	Progress      float64 `json:"progress,omitempty"`
+	RemainingSecs int     `json:"remaining_secs,omitempty"`
+}
+
+type StatusSummary struct {
+	PrinterCount int                    `json:"printer_count"`
+	Printing     int                    `json:"printing"`
+	Printers     []PrinterStatusSummary `json:"printers"`
+}
+
 type PrintHistory struct {
 	ID             int64   `json:"id"`
 	PrinterID      int64   `json:"printer_id"`
