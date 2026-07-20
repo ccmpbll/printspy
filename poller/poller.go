@@ -1236,19 +1236,19 @@ func (p *Poller) notifyPrintResult(ctx context.Context, id int64, h *models.Prin
 		}
 		message += ")"
 	}
-	message += fmt.Sprintf(" - %s", formatDuration(h.DurationSecs))
+	message += fmt.Sprintf(" - %s", FormatDuration(h.DurationSecs))
 
 	placeholders := map[string]string{
 		"printer":    printerName,
 		"file":       h.FileName,
 		"material":   h.Material,
 		"filament_g": fmt.Sprintf("%.0f", h.FilamentUsedG),
-		"duration":   formatDuration(h.DurationSecs),
+		"duration":   FormatDuration(h.DurationSecs),
 	}
 	p.sendNotification(ctx, id, eventType, title, message, placeholders, thumbnailURL)
 }
 
-func formatDuration(secs int) string {
+func FormatDuration(secs int) string {
 	d := time.Duration(secs) * time.Second
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60

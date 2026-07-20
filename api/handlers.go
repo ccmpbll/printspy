@@ -187,6 +187,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 				ps.RemainingSecs = st.Job.RemainingSecs
 			}
 		}
+		if ps.State == string(models.StatePrinting) && ps.JobFileName != "" {
+			ps.StatusLine = fmt.Sprintf("Printing %.0f%% - %s left", ps.Progress, poller.FormatDuration(ps.RemainingSecs))
+		} else {
+			ps.StatusLine = strings.ToUpper(ps.State[:1]) + ps.State[1:]
+		}
 		summary.Printers[i] = ps
 	}
 	jsonResponse(w, summary)
