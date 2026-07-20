@@ -52,7 +52,10 @@ func (h *Handler) createUser(username, password string) (int64, error) {
 func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/setup", "/login", "/style.css", "/logo.png":
+		// /api/status carries its own X-Api-Key check (see handleStatus) -
+		// an external dashboard has no session cookie, so it must never
+		// hit this gate.
+		case "/setup", "/login", "/style.css", "/logo.png", "/api/status":
 			next.ServeHTTP(w, r)
 			return
 		}
