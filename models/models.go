@@ -163,6 +163,10 @@ type PrinterStatusSummary struct {
 	JobFileName   string  `json:"job_file_name,omitempty"`
 	Progress      float64 `json:"progress,omitempty"`
 	RemainingSecs int     `json:"remaining_secs,omitempty"`
+	// StatusLine is a single human-readable summary (e.g. "Printing 42% -
+	// 1h23m left") for dashboard widgets that can only render one label per
+	// row (Homepage's customapi dynamic-list mode has no additionalField).
+	StatusLine string `json:"status_line"`
 }
 
 type StatusSummary struct {
