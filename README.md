@@ -28,7 +28,7 @@ Each printer gets a row in the dashboard: webcam/snapshot, progress/ETA, temps, 
 - **OctoPrint** — fully supported (as far as I know)
 - **PrusaLink** — more than experimental at this point, but only tested on MK4S and Core One
 
-Plugin architecture — new platforms are straightforward to add.
+Plugin architecture — new platforms should be straightforward to add.
 
 ## Features
 
