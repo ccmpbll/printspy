@@ -3,13 +3,13 @@
 
 A self-hosted dashboard for monitoring multiple 3D printers — OctoPrint and PrusaLink — from a single web interface.
 
-This has been created mostly for my own use. If someone else finds it useful, all the better. If you would like to contribute, please be my guest. I only have Prusa printers and can only test with those. 
+This was built for my own personal use and the way I want to interact with my printers, as well as an ongoing experiment in agentic coding.
 
 > **Early Development** — expect rough edges, breaking changes, and evolving APIs. Feedback and contributions welcome.
 
 ## What it does
 
-Each printer gets a row: webcam/snapshot, progress/ETA, temps, and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
+Each printer gets a row in the dashboard: webcam/snapshot, progress/ETA, temps, and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
 ## Screenshots
 
@@ -25,8 +25,8 @@ Each printer gets a row: webcam/snapshot, progress/ETA, temps, and smart plug po
 
 ## Supported platforms
 
-- **OctoPrint** — fully supported
-- **PrusaLink** — experimental (only tested on MK4S and Core One)
+- **OctoPrint** — fully supported (as far as I know)
+- **PrusaLink** — more than experimental at this point, but only tested on MK4S and Core One
 
 Plugin architecture — new platforms are straightforward to add.
 
@@ -72,7 +72,7 @@ docker run -d \
   ccmpbll/printspy:latest
 ```
 
-Open `http://localhost:8080` — first run prompts you to create a login. Once in, click the settings gear and add your first printer. You'll need the printer's URL and OctoPrint API key.
+Open `http://<docker host IP>:8080` — first run prompts you to create a login. Once in, click the settings gear and add your first printer. You'll need the printer's URL and OctoPrint API key or Prusalink user/pass.
 
 ### Docker Compose
 
@@ -100,7 +100,7 @@ First run redirects to a setup page to create the first account. Add or remove a
 
 ### Smart plugs
 
-OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink, Klipper, or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
+OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
 
 Each plug can use either connection mode:
 - **Direct HTTP** (default) — polled over the network on each printer's own poll interval, no extra setup
