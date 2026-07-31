@@ -1,6 +1,7 @@
 package mqttplug
 
 import (
+	"context"
 	"testing"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -119,12 +120,27 @@ func TestGetStateUnknown(t *testing.T) {
 type fakePublishClient struct {
 	mqtt.Client
 	published []string
+	retained  []bool
 }
 
 func (f *fakePublishClient) Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token {
 	f.published = append(f.published, topic)
-	return nil
+	f.retained = append(f.retained, retained)
+	return &fakeDoneToken{}
 }
+
+func (f *fakePublishClient) IsConnectionOpen() bool { return true }
+
+// fakeDoneToken is an already-completed mqtt.Token - Publish (mqttplug.go)
+// selects on Done()/ctx.Done(), so a nil token (fine for handleMessage's
+// fire-and-forget query publishes) would panic here. Embeds mqtt.Token (nil)
+// like fakePublishClient embeds mqtt.Client, overriding only what's called.
+type fakeDoneToken struct {
+	mqtt.Token
+}
+
+func (t *fakeDoneToken) Done() <-chan struct{} { ch := make(chan struct{}); close(ch); return ch }
+func (t *fakeDoneToken) Error() error          { return nil }
 
 type fakeMessage struct {
 	topic   string
@@ -182,5 +198,30 @@ func TestLWTOfflineMarksCacheOff(t *testing.T) {
 	ps, ok := c.GetState("testplug", "1")
 	if !ok || ps.On || ps.Source != "mqtt-offline" {
 		t.Fatalf("GetState after Offline LWT = %+v, ok=%v, want On=false, Source=mqtt-offline", ps, ok)
+	}
+}
+
+func TestPublishNotConfigured(t *testing.T) {
+	c := New()
+	if err := c.Publish(context.Background(), "printspy/printer/1/state", []byte("{}")); err == nil {
+		t.Fatal("Publish with no configured client should error")
+	}
+}
+
+func TestPublish(t *testing.T) {
+	c := New()
+	fc := &fakePublishClient{}
+	c.cli = fc
+
+	payload := []byte(`{"id":1,"state":"printing"}`)
+	if err := c.Publish(context.Background(), "printspy/printer/1/state", payload); err != nil {
+		t.Fatalf("Publish returned error: %v", err)
+	}
+
+	if len(fc.published) != 1 || fc.published[0] != "printspy/printer/1/state" {
+		t.Fatalf("expected one publish to printspy/printer/1/state, got %v", fc.published)
+	}
+	if len(fc.retained) != 1 || !fc.retained[0] {
+		t.Fatalf("expected publish to be retained, got %v", fc.retained)
 	}
 }

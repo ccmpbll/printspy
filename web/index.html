@@ -492,6 +492,18 @@
                         <label for="setting-mqtt-password">Password</label>
                         <input type="password" id="setting-mqtt-password" placeholder="optional">
                     </div>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
+                            <input type="checkbox" id="setting-mqtt-publish-enabled" style="width:auto">
+                            Publish printer state
+                        </label>
+                        <div class="form-hint">Publishes each printer's full status (state, progress, temps, job) as a retained MQTT message on every poll tick.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="setting-mqtt-publish-topic">Publish topic</label>
+                        <input type="text" id="setting-mqtt-publish-topic" placeholder="printspy/printer/{id}/state">
+                        <div class="form-hint">Use <code>{id}</code> and <code>{name}</code> as placeholders.</div>
+                    </div>
                     <div class="form-actions">
                         <button type="submit" class="btn btn-primary">Save</button>
                         <button type="button" class="btn" onclick="sendMQTTTest()">Test connection</button>

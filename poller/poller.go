@@ -959,6 +959,52 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.checkErrorNotify(ctx, id, prevState, status)
 
 	p.broadcast(id, status)
+	p.publishMQTTState(ctx, id, prevState, status)
+}
+
+// publishMQTTState publishes the full printer status to MQTT, gated by the
+// mqtt_publish_enabled setting - opt-in even when a broker is already
+// connected for smart plugs, since publishing wasn't the reason some users
+// configured one. Rides the same per-printer poll tick as everything else
+// in poll() rather than its own timer - poll_interval (3-60s) is already
+// configurable and this needs no faster cadence than that.
+//
+// Only fires on a state transition or while actively printing - an idle or
+// offline printer doesn't have anything new to say every tick, and retained
+// delivery already means the last real message stays visible to a fresh
+// subscriber indefinitely. Without this gate, an offline printer sitting
+// untouched for days would still republish an identical payload forever.
+func (p *Poller) publishMQTTState(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus) {
+	if status.State == prevState && status.State != models.StatePrinting {
+		return // nothing new to say - not a transition, not actively printing
+	}
+	if v, _ := p.db.GetSetting("mqtt_publish_enabled"); v != "1" {
+		return
+	}
+	printer, err := p.db.GetPrinter(id)
+	if err != nil {
+		return
+	}
+	payload := models.MQTTPrinterState{
+		ID: id, Name: printer.Name, Model: printer.Model,
+		State: status.State, StateMessage: status.StateMessage,
+		Temps: status.Temps, Job: status.Job, Power: status.Power,
+		ThumbnailURL: status.ThumbnailURL, Timestamp: time.Now(),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	topicTmpl, _ := p.db.GetSetting("mqtt_publish_topic")
+	if topicTmpl == "" {
+		topicTmpl = "printspy/printer/{id}/state"
+	}
+	topic := applyPlaceholders(topicTmpl, map[string]string{
+		"id": strconv.FormatInt(id, 10), "name": printer.Name,
+	})
+	if err := p.mqtt.Publish(ctx, topic, data); err != nil {
+		slog.Debug("mqtt publish failed", "printer", id, "topic", topic, "err", err)
+	}
 }
 
 // checkIngestOnline relays any ingest jobs staged against this printer the

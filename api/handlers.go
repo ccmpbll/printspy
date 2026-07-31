@@ -1932,7 +1932,12 @@ func validateSetting(key, value string) (string, error) {
 		return value, nil
 	case "pushover_user_key", "pushover_app_token":
 		return value, nil
-	case "mqtt_broker_url", "mqtt_username", "mqtt_password":
+	case "mqtt_broker_url", "mqtt_username", "mqtt_password", "mqtt_publish_topic":
+		return value, nil
+	case "mqtt_publish_enabled":
+		if value != "0" && value != "1" {
+			return "", fmt.Errorf("mqtt_publish_enabled must be 0 or 1")
+		}
 		return value, nil
 	case "status_api_key":
 		return strings.TrimSpace(value), nil
