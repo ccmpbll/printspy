@@ -93,7 +93,7 @@ type JobInfo struct {
 	// is the human-readable display name and NOT a valid path segment (the
 	// printer's own filesystem uses an 8.3-mangled short name instead).
 	// Empty for plugins with no such capability (OctoPrint).
-	FilePath string `json:"-"`
+	FilePath string `json:"file_path,omitempty"`
 	// JobState is the plugin's own job-lifecycle state, when it has one
 	// distinct from the printer's IDLE/PRINTING enum - PrusaLink's
 	// /api/v1/job reports PRINTING/PAUSED/FINISHED/STOPPED/ERROR per its
@@ -101,7 +101,7 @@ type JobInfo struct {
 	// trackPrintHistory prefers this over its own progress-percentage
 	// guess when available. Empty for plugins with no such field
 	// (OctoPrint) - falls back to the guess there.
-	JobState string `json:"-"`
+	JobState string `json:"job_state,omitempty"`
 	// FileMTimestamp is the printer's own real modification timestamp for
 	// FilePath (PrusaLink's job.file.m_timestamp - confirmed byte-identical
 	// to the same file's timestamp from the file-listing endpoint), used by
@@ -167,6 +167,25 @@ type PrinterStatusSummary struct {
 	// 1h23m left") for dashboard widgets that can only render one label per
 	// row (Homepage's customapi dynamic-list mode has no additionalField).
 	StatusLine string `json:"status_line"`
+}
+
+// MQTTPrinterState is the payload published to MQTT on every poll tick
+// (see poller.publishMQTTState) - unlike PrinterStatusSummary this is for a
+// self-hosted LAN broker (KaleidoBox et al.), not an unauthenticated public
+// endpoint, so it carries everything PrinterStatus/JobInfo know. Still
+// excludes URL/APIKey/Username - credentials, no reason to publish even on
+// a LAN broker.
+type MQTTPrinterState struct {
+	ID           int64        `json:"id"`
+	Name         string       `json:"name"`
+	Model        string       `json:"model,omitempty"`
+	State        PrinterState `json:"state"`
+	StateMessage string       `json:"state_message,omitempty"`
+	Temps        Temperatures `json:"temps"`
+	Job          *JobInfo     `json:"job,omitempty"`
+	Power        []PowerState `json:"power,omitempty"`
+	ThumbnailURL string       `json:"thumbnail_url,omitempty"`
+	Timestamp    time.Time    `json:"timestamp"`
 }
 
 type StatusSummary struct {

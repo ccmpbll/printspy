@@ -1072,6 +1072,8 @@ function openSettings() {
         document.getElementById('setting-mqtt-broker-url').value = mqttURL.replace(/^(tcp|ssl):\/\//, '');
         document.getElementById('setting-mqtt-username').value = settings.mqtt_username || '';
         document.getElementById('setting-mqtt-password').value = settings.mqtt_password || '';
+        document.getElementById('setting-mqtt-publish-enabled').checked = settings.mqtt_publish_enabled === '1';
+        document.getElementById('setting-mqtt-publish-topic').value = settings.mqtt_publish_topic || '';
         document.getElementById('setting-status-api-key').value = settings.status_api_key || '';
         document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
         document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
@@ -1957,6 +1959,8 @@ async function putMQTTSettings() {
         mqtt_broker_url: hostPort ? (tls ? 'ssl://' : 'tcp://') + hostPort : '',
         mqtt_username: document.getElementById('setting-mqtt-username').value,
         mqtt_password: document.getElementById('setting-mqtt-password').value,
+        mqtt_publish_enabled: document.getElementById('setting-mqtt-publish-enabled').checked ? '1' : '0',
+        mqtt_publish_topic: document.getElementById('setting-mqtt-publish-topic').value,
     };
     await fetch('/api/settings', {
         method: 'PUT',

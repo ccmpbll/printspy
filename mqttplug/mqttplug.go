@@ -423,6 +423,35 @@ func (c *Client) SetState(ctx context.Context, topic, idx string, on bool) error
 	return nil
 }
 
+// Publish sends a retained message to an arbitrary topic - used for
+// publishing printer state (poller.publishMQTTState), distinct from
+// SetState's plug command topics. Retained so a fresh subscriber (or a
+// KaleidoBox reboot) gets the current state immediately instead of waiting
+// for the next tick. Same connection-open guard as SetState - see its
+// comment for why paho's IsConnected() alone isn't enough.
+func (c *Client) Publish(ctx context.Context, topic string, payload []byte) error {
+	c.mu.RLock()
+	cli := c.cli
+	c.mu.RUnlock()
+	if cli == nil {
+		return fmt.Errorf("mqtt: not configured")
+	}
+	if !cli.IsConnectionOpen() {
+		return fmt.Errorf("mqtt: broker not connected")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	token := cli.Publish(topic, 1, true, payload)
+	select {
+	case <-token.Done():
+	case <-ctx.Done():
+		return fmt.Errorf("mqtt: publish timed out: %w", ctx.Err())
+	}
+	return token.Error()
+}
+
 func (c *Client) setCachedOn(topic, idx string, on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
