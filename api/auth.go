@@ -55,7 +55,8 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 		// /api/status carries its own X-Api-Key check (see handleStatus) -
 		// an external dashboard has no session cookie, so it must never
 		// hit this gate.
-		case "/setup", "/login", "/style.css", "/logo.png", "/api/status":
+		case "/setup", "/login", "/style.css", "/logo.png", "/api/status",
+			"/manifest.json", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png":
 			next.ServeHTTP(w, r)
 			return
 		}
