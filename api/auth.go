@@ -56,7 +56,7 @@ func (h *Handler) RequireAuth(next http.Handler) http.Handler {
 		// an external dashboard has no session cookie, so it must never
 		// hit this gate.
 		case "/setup", "/login", "/style.css", "/logo.png", "/api/status",
-			"/manifest.json", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png":
+			"/manifest.json", "/apple-touch-icon-v2.png", "/icon-192.png", "/icon-512.png":
 			next.ServeHTTP(w, r)
 			return
 		}
