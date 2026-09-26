@@ -208,6 +208,23 @@ func TestPublishNotConfigured(t *testing.T) {
 	}
 }
 
+func TestOnConnectPublishesAvailability(t *testing.T) {
+	// Regression: onConnect must announce "online" itself - the broker's LWT
+	// only ever fires "offline" (on connection loss), nothing publishes the
+	// online side automatically.
+	c := New()
+	fc := &fakePublishClient{}
+
+	c.onConnect(fc)
+
+	if len(fc.published) != 1 || fc.published[0] != availabilityTopic {
+		t.Fatalf("expected one publish to %s, got %v", availabilityTopic, fc.published)
+	}
+	if len(fc.retained) != 1 || !fc.retained[0] {
+		t.Fatalf("expected availability publish to be retained, got %v", fc.retained)
+	}
+}
+
 func TestPublish(t *testing.T) {
 	c := New()
 	fc := &fakePublishClient{}

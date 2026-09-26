@@ -29,6 +29,14 @@ type topicSubs struct {
 	relays map[string]relayMeta // idx -> meta
 }
 
+// availabilityTopic is printspy's own app-level liveness signal - distinct
+// from any per-plug/per-printer topic. One process, one liveness signal: a
+// retained per-printer state topic looks identical whether the printer is
+// fine or printspy itself crashed, unless something says "printspy is up"
+// separately. Broker-enforced via LWT (see Configure), so it flips to
+// offline even on a hard crash, not just a graceful shutdown.
+const availabilityTopic = "printspy/availability"
+
 // Client is a persistent MQTT connection tracking cached power/energy state
 // for Tasmota devices, keyed by "<topic>:<idx>".
 type Client struct {
@@ -68,6 +76,12 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 	c.cli = nil
 	c.mu.Unlock()
 	if old != nil && old.IsConnected() {
+		// A graceful Disconnect never fires the broker's LWT (that's the
+		// point of LWT: only an ungraceful loss does) - without publishing
+		// offline here first, turning MQTT off in Settings (or reconfiguring
+		// mid-session) would leave the last "online" retained forever.
+		token := old.Publish(availabilityTopic, 1, true, "offline")
+		token.WaitTimeout(2 * time.Second)
 		old.Disconnect(250)
 	}
 	if brokerURL == "" {
@@ -76,9 +90,10 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("printspy-smartplugs-" + clientIDSuffix()).
+		SetClientID("printspy-smartplugs-"+clientIDSuffix()).
 		SetUsername(username).
 		SetPassword(password).
+		SetWill(availabilityTopic, "offline", 1, true).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectTimeout(10 * time.Second).
@@ -107,6 +122,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 // resubscribe path needed after a network blip.
 func (c *Client) onConnect(cli mqtt.Client) {
 	log.Print("mqtt: connected")
+	cli.Publish(availabilityTopic, 1, true, "online")
 	c.mu.RLock()
 	subs := make(map[string]topicSubs, len(c.subs))
 	for t, ts := range c.subs {
