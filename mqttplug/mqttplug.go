@@ -90,7 +90,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID("printspy-smartplugs-" + clientIDSuffix()).
+		SetClientID("printspy-smartplugs-"+clientIDSuffix()).
 		SetUsername(username).
 		SetPassword(password).
 		SetWill(availabilityTopic, "offline", 1, true).
