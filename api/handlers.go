@@ -814,7 +814,7 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *req.PrinterID)
+			h.poller.RepollAsync(*req.PrinterID)
 		}
 		go h.poller.SyncMQTTSubscriptions()
 		jsonResponse(w, map[string]int64{"id": id})
@@ -857,10 +857,10 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+			h.poller.RepollAsync(*existing.PrinterID)
 		}
 		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
-			go h.poller.Repoll(h.ctx, *req.PrinterID)
+			h.poller.RepollAsync(*req.PrinterID)
 		}
 		go h.poller.SyncMQTTSubscriptions()
 		w.WriteHeader(http.StatusNoContent)
@@ -872,7 +872,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+			h.poller.RepollAsync(*existing.PrinterID)
 		}
 		go h.poller.SyncMQTTSubscriptions()
 		w.WriteHeader(http.StatusNoContent)
@@ -915,7 +915,7 @@ func (h *Handler) handleCameras(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *req.PrinterID)
+			h.poller.RepollAsync(*req.PrinterID)
 		}
 		h.poller.BroadcastRefresh()
 		jsonResponse(w, map[string]int64{"id": id})
@@ -966,10 +966,10 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+			h.poller.RepollAsync(*existing.PrinterID)
 		}
 		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
-			go h.poller.Repoll(h.ctx, *req.PrinterID)
+			h.poller.RepollAsync(*req.PrinterID)
 		}
 		h.poller.BroadcastRefresh()
 		w.WriteHeader(http.StatusNoContent)
@@ -981,7 +981,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
-			go h.poller.Repoll(h.ctx, *existing.PrinterID)
+			h.poller.RepollAsync(*existing.PrinterID)
 		}
 		h.poller.BroadcastRefresh()
 		w.WriteHeader(http.StatusNoContent)
