@@ -505,7 +505,8 @@ function refreshSnapshots() {
 // the same render path the regular poll tick already uses.
 
 function getWebcamMode(printerId) {
-    return localStorage.getItem(`webcam-mode-${printerId}`) || 'plate';
+    const mode = localStorage.getItem(`webcam-mode-${printerId}`);
+    return mode === 'snapshot' || mode === 'live' ? mode : 'plate';
 }
 
 function setWebcamMode(printerId, mode) {
@@ -703,7 +704,7 @@ function renderPrinterCard(printer) {
             const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : (autoTitle ? `title="${esc(autoTitle)}"` : '');
             const onTitle = autoTitle ? ` title="${esc(autoTitle)}"` : '';
             const label = esc(plugLabel(ps));
-            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on','${esc(ps.id)}')"${onTitle}>${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off','${esc(ps.id)}')" ${offDisabled}>Off</button></span>`;
+            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on',this.closest('[data-plug-id]').dataset.plugId)"${onTitle}>${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off',this.closest('[data-plug-id]').dataset.plugId)" ${offDisabled}>Off</button></span>`;
         }).join('');
     }
 
@@ -722,7 +723,7 @@ function renderPrinterCard(printer) {
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
-                <span class="printer-state ${stateClass}" data-field="state">${stateLabel}</span>
+                <span class="printer-state ${stateClass}" data-field="state">${esc(stateLabel)}</span>
                 ${powerHTML}
                 ${controlHTML}
                 ${filesHTML}
@@ -827,7 +828,7 @@ function renderIdleStats(status, state) {
         return '';
     }
 
-    return `<div class="${stateIdleMsgClass(state)}" data-field="idle-msg">${stateMsg}</div>${tempsHTML}`;
+    return `<div class="${stateIdleMsgClass(state)}" data-field="idle-msg">${esc(stateMsg)}</div>${tempsHTML}`;
 }
 
 function updateCard(card, printer) {
@@ -1377,7 +1378,7 @@ function openEditCameraModal(id) {
     document.getElementById('camera-name').value = cam.name;
     populateCameraPrinterOptions(cam.printer_id);
     document.getElementById('camera-orientation-group').style.display = 'block';
-    document.getElementById('camera-web-link').href = cam.url;
+    document.getElementById('camera-web-link').href = safeUrl(cam.url);
     document.getElementById('camera-hmirror').checked = false;
     document.getElementById('camera-vflip').checked = false;
     fetch(`/api/cameras/${id}/settings`).then(r => r.ok ? r.json() : null).then(s => {
@@ -1538,7 +1539,7 @@ function renderSettingsPrinterList() {
                 <div class="settings-printer-actions">
                     <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
                     ${cfg.type === 'prusalink' ? `<button class="btn btn-sm" onclick="closeModal();openPrusalinkDebug(${cfg.id})" title="Raw API debug view">Raw API</button>` : ''}
-                    <a class="printer-link" href="${esc(cfg.url)}" target="_blank" rel="noopener" title="Open ${esc(p.display_name)}">${esc(p.display_name)} &#8599;</a>
+                    <a class="printer-link" href="${esc(safeUrl(cfg.url))}" target="_blank" rel="noopener" title="Open ${esc(p.display_name)}">${esc(p.display_name)} &#8599;</a>
                     <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
                 </div>
@@ -2040,7 +2041,12 @@ function computeETA(remainingSecs) {
 
 function esc(str) {
     if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Only http(s) URLs may become an href; stored config could hold javascript: etc.
+function safeUrl(u) {
+    return /^https?:\/\//i.test(u) ? u : '#';
 }
 
 function plugLabel(ps) {
