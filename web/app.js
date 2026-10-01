@@ -28,7 +28,48 @@ function stateIdleMsgText(state, detailMsg) {
     return meta.ignoreDetail ? meta.defaultMsg : (detailMsg || meta.defaultMsg);
 }
 
+// Failed-request helpers. checkOk alerts the server's own error (or
+// fallback) for a non-2xx response and returns whether resp was ok;
+// netFail is the catch-all for a request that never got a response.
+async function checkOk(resp, fallback) {
+    if (resp.ok) return true;
+    const data = await resp.json().catch(() => ({}));
+    alert(data.error || fallback);
+    return false;
+}
+
+function netFail(fallback) {
+    alert(`${fallback} (network error)`);
+}
+
+// localStorage throws in Safari private browsing and when storage is
+// blocked/full - a preference must never take the dashboard down with it.
+function lsGet(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+
+function lsSet(key, value) {
+    try { localStorage.setItem(key, value); } catch (e) {}
+}
+
 // SSE connection
+
+let sseRetryDelay = 2000;
+
+// EventSource retries on its own for network drops, but a non-2xx or
+// wrong-content-type response (expired session, proxy error page) closes it
+// for good. Find out why, then either go sign in again or retry with backoff.
+async function recoverSSE() {
+    try {
+        const resp = await fetch('/api/printers', {redirect: 'manual'});
+        if (resp.status === 401 || resp.type === 'opaqueredirect') {
+            location.href = '/login';
+            return;
+        }
+    } catch (e) {}
+    setTimeout(connectSSE, sseRetryDelay);
+    sseRetryDelay = Math.min(sseRetryDelay * 2, 30000);
+}
 
 function connectSSE() {
     if (eventSource) eventSource.close();
@@ -42,12 +83,14 @@ function connectSSE() {
         updateDashboard();
         loadIngestJobs();
         showConnectionBanner(false);
+        sseRetryDelay = 2000;
     });
 
     eventSource.addEventListener('status', (e) => {
         const msg = JSON.parse(e.data);
         applyStatusUpdate(msg.printer_id, msg.status);
         showConnectionBanner(false);
+        sseRetryDelay = 2000;
     });
 
     eventSource.addEventListener('refresh', () => {
@@ -58,6 +101,7 @@ function connectSSE() {
     eventSource.addEventListener('error', (e) => {
         console.warn(`[sse] connection error at ${new Date().toISOString()}, readyState=${eventSource.readyState}`, e);
         showConnectionBanner(true);
+        if (eventSource.readyState === EventSource.CLOSED) recoverSSE();
     });
 }
 
@@ -67,6 +111,10 @@ function connectSSE() {
 // so those don't need to wait on a separate, unordered SSE round-trip to
 // reflect what just happened.
 function applyStatusUpdate(printerId, status) {
+    // An action's own response can arrive after a newer SSE update - applying
+    // it would roll the card back (e.g. flip to "Printing" after a pause).
+    const cur = statusCache[printerId];
+    if (cur && cur.last_updated && status.last_updated && Date.parse(status.last_updated) < Date.parse(cur.last_updated)) return;
     statusCache[printerId] = status;
     const printer = printers.find(p => p.config.id === printerId);
     if (printer) {
@@ -134,12 +182,20 @@ function refreshFileManagerIfShowing(printerId) {
     }
 }
 
+let fileManagerReq = 0;
+
 async function loadFileManagerFiles(printerId) {
     const list = document.getElementById('filemanager-list');
+    const req = ++fileManagerReq; // a slower earlier response must not overwrite a newer one
     list.innerHTML = '<div class="settings-empty">Loading…</div>';
     try {
         const resp = await fetch(`/api/printers/${printerId}/recent?all=1`);
         const files = await resp.json();
+        if (req !== fileManagerReq) return;
+        if (!resp.ok) {
+            list.innerHTML = `<div class="settings-empty">${esc((files && files.error) || 'Failed to load files.')}</div>`;
+            return;
+        }
         if (!files || !files.length) {
             list.innerHTML = '<div class="settings-empty">No files found.</div>';
             return;
@@ -251,6 +307,7 @@ async function loadPrusalinkDebug(printerId) {
 let historyPrinterId = null;
 let historyPage = 0;
 let historyHasMore = false;
+let historyReq = 0;
 const HISTORY_PAGE_SIZE = 20;
 
 async function openPrintHistory(printerId) {
@@ -294,10 +351,12 @@ async function loadHistoryPage() {
     list.innerHTML = '<div class="settings-empty">Loading…</div>';
     prevBtn.disabled = true;
     nextBtn.disabled = true;
+    const req = ++historyReq; // latest request wins
     try {
         const offset = historyPage * HISTORY_PAGE_SIZE;
         const resp = await fetch(`/api/printers/${historyPrinterId}/history/list?limit=${HISTORY_PAGE_SIZE}&offset=${offset}`);
         const data = await resp.json();
+        if (req !== historyReq) return;
         const entries = data.entries || [];
         if (!entries.length) {
             list.innerHTML = `<div class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</div>`;
@@ -453,12 +512,13 @@ async function setPower(printerId, action, plugId) {
 
 async function bulkPower(action) {
     try {
-        await fetch('/api/printers/power', {
+        const resp = await fetch('/api/printers/power', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action}),
         });
-    } catch (e) {}
+        await checkOk(resp, 'Failed to change power state.');
+    } catch (e) { netFail('Failed to change power state.'); }
 }
 
 function refreshSnapshots() {
@@ -505,16 +565,17 @@ function refreshSnapshots() {
 // the same render path the regular poll tick already uses.
 
 function getWebcamMode(printerId) {
-    const mode = localStorage.getItem(`webcam-mode-${printerId}`);
+    const mode = lsGet(`webcam-mode-${printerId}`);
     return mode === 'snapshot' || mode === 'live' ? mode : 'plate';
 }
 
 function setWebcamMode(printerId, mode) {
-    localStorage.setItem(`webcam-mode-${printerId}`, mode);
+    lsSet(`webcam-mode-${printerId}`, mode);
     const printer = printers.find(p => p.config.id === printerId);
     const card = document.querySelector(`[data-printer-id="${printerId}"]`);
     if (!printer || !card) return;
     card.outerHTML = renderPrinterCard(printer);
+    renderIngestBanners();
 }
 
 function webcamError(img, isPrinting, tryThumb, hasCamera, mode) {
@@ -878,6 +939,7 @@ function updateCard(card, printer) {
 
     if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || pausedChanged || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
+        renderIngestBanners();
         return;
     }
 
@@ -1054,7 +1116,7 @@ document.querySelectorAll('.notify-customize').forEach(el => {
 });
 
 function openSettings() {
-    fetch('/api/settings').then(r => r.json()).then(settings => {
+    fetch('/api/settings').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(settings => {
         document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
         document.getElementById('setting-hide-webcam').checked = settings.hide_webcam_when_unreachable === '1';
         document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
@@ -1091,13 +1153,16 @@ function openSettings() {
             document.getElementById(`setting-notify-${t}-image`).value = settings[`notify_${t}_image`] || '';
             document.getElementById(`setting-notify-${t}-high-priority`).checked = settings[`notify_${t}_high_priority`] === '1';
         });
+        renderSettingsPrinterList();
+        loadUsers();
+        loadSmartPlugs();
+        loadCameras();
+        loadIngestKeys();
+        document.getElementById('settings-modal').classList.add('active');
+    }).catch(() => {
+        // Opening with the form's HTML defaults would let a Save overwrite the real config.
+        alert('Failed to load settings.');
     });
-    renderSettingsPrinterList();
-    loadUsers();
-    loadSmartPlugs();
-    loadCameras();
-    loadIngestKeys();
-    document.getElementById('settings-modal').classList.add('active');
 }
 
 // Smart plugs (direct Tasmota, managed independently of printers)
@@ -1107,6 +1172,7 @@ let smartPlugs = [];
 async function loadSmartPlugs() {
     try {
         const resp = await fetch('/api/smartplugs');
+        if (!resp.ok) return;
         smartPlugs = (await resp.json()) || [];
         renderSettingsSmartPlugList(smartPlugs);
     } catch (e) {}
@@ -1196,19 +1262,20 @@ async function saveSmartPlug(e) {
         const resp = id
             ? await fetch(`/api/smartplugs/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
             : await fetch('/api/smartplugs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (resp.ok) {
+        if (await checkOk(resp, 'Failed to save smart plug.')) {
             closeModal();
             await loadSmartPlugs();
             openSettings();
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to save smart plug.'); }
 }
 
 async function deleteSmartPlug(id) {
     try {
-        await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
+        const resp = await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
+        await checkOk(resp, 'Failed to delete smart plug.');
         loadSmartPlugs();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to delete smart plug.'); }
 }
 
 // Slicer print-host targets (ingest keys) — one per printer model bucket
@@ -1218,6 +1285,7 @@ let ingestKeys = [];
 async function loadIngestKeys() {
     try {
         const resp = await fetch('/api/ingest-keys');
+        if (!resp.ok) return;
         ingestKeys = (await resp.json()) || [];
         renderSettingsIngestKeyList(ingestKeys);
     } catch (e) {}
@@ -1316,9 +1384,10 @@ async function saveIngestKey(e) {
 
 async function deleteIngestKey(id) {
     try {
-        await fetch(`/api/ingest-keys/${id}`, {method: 'DELETE'});
+        const resp = await fetch(`/api/ingest-keys/${id}`, {method: 'DELETE'});
+        await checkOk(resp, 'Failed to delete ingest key.');
         loadIngestKeys();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to delete ingest key.'); }
 }
 
 // Cameras (printspy-cam, managed independently of printers)
@@ -1328,6 +1397,7 @@ let cameras = [];
 async function loadCameras() {
     try {
         const resp = await fetch('/api/cameras');
+        if (!resp.ok) return;
         cameras = (await resp.json()) || [];
         renderSettingsCameraList(cameras);
     } catch (e) {}
@@ -1408,12 +1478,12 @@ async function saveCamera(e) {
         const resp = id
             ? await fetch(`/api/cameras/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
             : await fetch('/api/cameras', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (resp.ok) {
+        if (await checkOk(resp, 'Failed to save camera.')) {
             closeModal();
             await loadCameras();
             openSettings();
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to save camera.'); }
 }
 
 async function saveCameraOrientation() {
@@ -1426,15 +1496,17 @@ async function saveCameraOrientation() {
         quality: parseInt(document.getElementById('camera-quality').value, 10),
     };
     try {
-        await fetch(`/api/cameras/${id}/settings`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-    } catch (e) {}
+        const resp = await fetch(`/api/cameras/${id}/settings`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
+        await checkOk(resp, 'Failed to save camera settings.');
+    } catch (e) { netFail('Failed to save camera settings.'); }
 }
 
 async function deleteCamera(id) {
     try {
-        await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
+        const resp = await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
+        await checkOk(resp, 'Failed to delete camera.');
         loadCameras();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to delete camera.'); }
 }
 
 // Account
@@ -1465,6 +1537,7 @@ async function changePassword(e) {
 async function loadUsers() {
     try {
         const resp = await fetch('/api/users');
+        if (!resp.ok) return;
         const users = await resp.json();
         renderSettingsUserList(users || []);
     } catch (e) {}
@@ -1549,14 +1622,15 @@ function renderSettingsPrinterList() {
 
 async function toggleMaintenance(id, maintenance) {
     try {
-        await fetch(`/api/printers/${id}/maintenance`, {
+        const resp = await fetch(`/api/printers/${id}/maintenance`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({maintenance}),
         });
+        await checkOk(resp, 'Failed to change maintenance mode.');
         await fetchPrinters();
         renderSettingsPrinterList();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to change maintenance mode.'); }
 }
 
 // Printer reordering
@@ -1819,20 +1893,21 @@ async function savePrinter(e) {
                 body: JSON.stringify(data),
             });
         }
-        if (resp.ok) {
+        if (await checkOk(resp, 'Failed to save printer.')) {
             closeModal();
             await fetchPrinters();
             openSettings();
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to save printer.'); }
 }
 
 async function deletePrinter(id) {
     try {
-        await fetch(`/api/printers/${id}`, {method: 'DELETE'});
+        const resp = await fetch(`/api/printers/${id}`, {method: 'DELETE'});
+        await checkOk(resp, 'Failed to delete printer.');
         await fetchPrinters();
         renderSettingsPrinterList();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to delete printer.'); }
 }
 
 async function testConnection() {
@@ -1883,6 +1958,22 @@ async function testConnection() {
 
 // General settings
 
+// PUTs settings and reports whether the server accepted them - a rejected
+// value (e.g. a bad MQTT URL) must not look like a successful save.
+async function putSettings(settings) {
+    try {
+        const resp = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(settings),
+        });
+        return await checkOk(resp, 'Failed to save settings.');
+    } catch (e) {
+        netFail('Failed to save settings.');
+        return false;
+    }
+}
+
 async function saveSettings(e) {
     e.preventDefault();
     const settings = {
@@ -1899,11 +1990,7 @@ async function saveSettings(e) {
     };
     const pollVal = document.getElementById('setting-poll-interval').value;
     if (pollVal) settings.poll_interval = pollVal;
-    await fetch('/api/settings', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(settings),
-    });
+    if (!await putSettings(settings)) return;
     snapshotInterval = parseInt(settings.snapshot_interval) || 10;
     restartSnapshotTimer();
     hideWebcamWhenUnreachable = settings.hide_webcam_when_unreachable === '1';
@@ -1933,11 +2020,7 @@ async function saveNotificationSettings(e) {
         settings[`notify_${t}_image`] = document.getElementById(`setting-notify-${t}-image`).value;
         settings[`notify_${t}_high_priority`] = document.getElementById(`setting-notify-${t}-high-priority`).checked ? '1' : '0';
     });
-    await fetch('/api/settings', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(settings),
-    });
+    if (!await putSettings(settings)) return;
     closeModal();
 }
 
@@ -1963,30 +2046,22 @@ async function putMQTTSettings() {
         mqtt_publish_enabled: document.getElementById('setting-mqtt-publish-enabled').checked ? '1' : '0',
         mqtt_publish_topic: document.getElementById('setting-mqtt-publish-topic').value,
     };
-    await fetch('/api/settings', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(settings),
-    });
+    return putSettings(settings);
 }
 
 async function saveMQTTSettings(e) {
     e.preventDefault();
-    await putMQTTSettings();
+    if (!await putMQTTSettings()) return;
     closeModal();
 }
 
 function generateStatusAPIKey() {
-    document.getElementById('setting-status-api-key').value = crypto.randomUUID().replace(/-/g, '');
+    document.getElementById('setting-status-api-key').value = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function saveStatusAPISettings(e) {
     e.preventDefault();
-    await fetch('/api/settings', {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({status_api_key: document.getElementById('setting-status-api-key').value.trim()}),
-    });
+    if (!await putSettings({status_api_key: document.getElementById('setting-status-api-key').value.trim()})) return;
     closeModal();
 }
 
@@ -2005,10 +2080,8 @@ async function sendMQTTTest() {
 async function saveAndTestMQTT() {
     const result = document.getElementById('mqtt-test-result');
     result.textContent = 'Saving...';
-    try {
-        await putMQTTSettings();
-    } catch (e) {
-        result.textContent = `Failed to save: ${e.message}`;
+    if (!await putMQTTSettings()) {
+        result.textContent = 'Failed to save settings.';
         return;
     }
     await sendMQTTTest();
@@ -2128,6 +2201,7 @@ let ingestJobs = [];
 async function loadIngestJobs() {
     try {
         const resp = await fetch('/api/ingest-jobs');
+        if (!resp.ok) return;
         ingestJobs = (await resp.json()) || [];
         renderIngestBanners();
     } catch (e) {}
@@ -2165,16 +2239,18 @@ function renderIngestBanners() {
 
 async function retryIngestJob(jobID) {
     try {
-        await fetch(`/api/ingest-jobs/${jobID}/retry`, {method: 'POST'});
+        const resp = await fetch(`/api/ingest-jobs/${jobID}/retry`, {method: 'POST'});
+        await checkOk(resp, 'Failed to retry job.');
         loadIngestJobs();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to retry job.'); }
 }
 
 async function discardIngestJob(jobID) {
     try {
-        await fetch(`/api/ingest-jobs/${jobID}`, {method: 'DELETE'});
+        const resp = await fetch(`/api/ingest-jobs/${jobID}`, {method: 'DELETE'});
+        await checkOk(resp, 'Failed to discard job.');
         loadIngestJobs();
-    } catch (e) {}
+    } catch (e) { netFail('Failed to discard job.'); }
 }
 
 // Initialize
