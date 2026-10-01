@@ -93,6 +93,29 @@ func redactedBroker(raw string) string {
 	return "broker"
 }
 
+// probe opens and immediately closes a one-shot connection (no retry, no
+// reconnect) to check that brokerURL and the credentials are accepted.
+func probe(brokerURL, username, password string) error {
+	opts := mqtt.NewClientOptions().
+		AddBroker(brokerURL).
+		SetClientID("printspy-probe-" + clientIDSuffix()).
+		SetUsername(username).
+		SetPassword(password).
+		SetAutoReconnect(false).
+		SetConnectRetry(false).
+		SetConnectTimeout(10 * time.Second)
+	cli := mqtt.NewClient(opts)
+	token := cli.Connect()
+	if !token.WaitTimeout(10 * time.Second) {
+		return fmt.Errorf("mqtt: connect to %s timed out", redactedBroker(brokerURL))
+	}
+	if err := token.Error(); err != nil {
+		return err
+	}
+	cli.Disconnect(0)
+	return nil
+}
+
 // Configure (re)connects to brokerURL, disconnecting any existing connection
 // first - safe to call repeatedly (settings changed, or a manual retry from
 // /api/mqtt-test). An empty brokerURL just disconnects, leaving MQTT mode
@@ -101,6 +124,15 @@ func redactedBroker(raw string) string {
 func (c *Client) Configure(brokerURL, username, password string) error {
 	if err := ValidateBrokerURL(brokerURL); err != nil {
 		return err
+	}
+	// Prove the new settings work with a throwaway connection first, so a
+	// typo'd URL or password leaves the working client (and every plug it
+	// controls) running instead of tearing it down before finding out. A
+	// separate ClientID avoids the broker evicting the live session.
+	if brokerURL != "" {
+		if err := probe(brokerURL, username, password); err != nil {
+			return err
+		}
 	}
 	c.mu.Lock()
 	old := c.cli
@@ -136,9 +168,13 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 	cli := mqtt.NewClient(opts)
 	token := cli.Connect()
 	if !token.WaitTimeout(10 * time.Second) {
+		// ConnectRetry keeps dialing in the background until told to stop;
+		// without this the abandoned client leaks and keeps subscribing.
+		cli.Disconnect(0)
 		return fmt.Errorf("mqtt: connect to %s timed out", redactedBroker(brokerURL))
 	}
 	if err := token.Error(); err != nil {
+		cli.Disconnect(0)
 		return err
 	}
 

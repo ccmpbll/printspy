@@ -8,7 +8,9 @@ package ingest
 
 import (
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -184,4 +186,41 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request, target *models.
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+// RemoveStaged deletes the staging directory (dataDir/ingest/<jobID>) holding
+// a job's file. It refuses anything that doesn't look like one, so an empty
+// or unexpected FilePath can never turn into RemoveAll(".").
+func RemoveStaged(filePath string) {
+	if filePath == "" {
+		return
+	}
+	dir := filepath.Dir(filePath)
+	if _, err := strconv.ParseInt(filepath.Base(dir), 10, 64); err != nil || filepath.Base(filepath.Dir(dir)) != "ingest" {
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		slog.Warn("failed to remove staged ingest dir", "dir", dir, "err", err)
+	}
+}
+
+// SweepOrphans removes staging directories with no matching ingest job -
+// left behind when a target was deleted (jobs cascade, files didn't) or a
+// cleanup failed. Any DB error other than "no such job" skips that dir.
+func SweepOrphans(dataDir string, database *db.DB) {
+	root := filepath.Join(dataDir, "ingest")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		id, err := strconv.ParseInt(e.Name(), 10, 64)
+		if err != nil || !e.IsDir() {
+			continue
+		}
+		if _, err := database.GetIngestJob(id); errors.Is(err, sql.ErrNoRows) {
+			slog.Info("removing orphaned ingest staging dir", "job", id)
+			os.RemoveAll(filepath.Join(root, e.Name()))
+		}
+	}
 }

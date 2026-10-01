@@ -267,3 +267,20 @@ func TestRedactedBrokerHidesPassword(t *testing.T) {
 		t.Errorf("redactedBroker leaked password: %q", got)
 	}
 }
+
+// A bad new config must be rejected by the probe without touching the
+// working client - previously Configure tore the old one down first.
+func TestConfigureFailureKeepsExistingClient(t *testing.T) {
+	c := New()
+	old := &fakePublishClient{}
+	c.cli = old
+	if err := c.Configure("tcp://127.0.0.1:1", "", ""); err == nil {
+		t.Fatal("want error for unreachable broker")
+	}
+	if c.cli != mqtt.Client(old) {
+		t.Error("working client was replaced by a failed Configure")
+	}
+	if len(old.published) != 0 {
+		t.Errorf("working client was told to go offline: %v", old.published)
+	}
+}

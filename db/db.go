@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -275,9 +276,23 @@ func (db *DB) GetPrinter(id int64) (*models.PrinterConfig, error) {
 	return &p, nil
 }
 
+// ErrNotFound is returned by UPDATE/DELETE helpers when no row matched id,
+// so handlers can answer 404 instead of a silent success.
+var ErrNotFound = errors.New("not found")
+
+// affected maps a zero-row UPDATE/DELETE to ErrNotFound.
+func affected(res sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (db *DB) SetMaintenance(id int64, maintenance bool) error {
-	_, err := db.conn.Exec(`UPDATE printers SET maintenance=? WHERE id=?`, maintenance, id)
-	return err
+	return affected(db.conn.Exec(`UPDATE printers SET maintenance=? WHERE id=?`, maintenance, id))
 }
 
 // Smart plugs — managed independently of printers, optionally assigned to one.
@@ -355,14 +370,12 @@ func (db *DB) UpdateSmartPlug(id int64, ip, idx, label string, hideLabel bool, p
 	if idx == "" {
 		idx = "1"
 	}
-	_, err := db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=?, mqtt_topic=? WHERE id=?`,
-		ip, idx, label, hideLabel, printerID, mqttTopic, id)
-	return err
+	return affected(db.conn.Exec(`UPDATE smart_plugs SET ip=?, idx=?, label=?, hide_label=?, printer_id=?, mqtt_topic=? WHERE id=?`,
+		ip, idx, label, hideLabel, printerID, mqttTopic, id))
 }
 
 func (db *DB) DeleteSmartPlug(id int64) error {
-	_, err := db.conn.Exec(`DELETE FROM smart_plugs WHERE id = ?`, id)
-	return err
+	return affected(db.conn.Exec(`DELETE FROM smart_plugs WHERE id = ?`, id))
 }
 
 // Cameras — printspy-cam devices, managed independently of printers, optionally assigned to one.
@@ -458,8 +471,8 @@ func (db *DB) CreateCamera(url, name string, printerID *int64) (int64, error) {
 }
 
 func (db *DB) UpdateCamera(id int64, url, name string, printerID *int64) error {
-	if _, err := db.conn.Exec(`UPDATE cameras SET url=?, name=?, printer_id=? WHERE id=?`,
-		url, name, printerID, id); err != nil {
+	if err := affected(db.conn.Exec(`UPDATE cameras SET url=?, name=?, printer_id=? WHERE id=?`,
+		url, name, printerID, id)); err != nil {
 		return err
 	}
 	if printerID != nil {
@@ -469,8 +482,7 @@ func (db *DB) UpdateCamera(id int64, url, name string, printerID *int64) error {
 }
 
 func (db *DB) DeleteCamera(id int64) error {
-	_, err := db.conn.Exec(`DELETE FROM cameras WHERE id = ?`, id)
-	return err
+	return affected(db.conn.Exec(`DELETE FROM cameras WHERE id = ?`, id))
 }
 
 func (db *DB) CreatePrinter(p *models.PrinterConfig) error {
@@ -512,11 +524,10 @@ func (db *DB) UpdatePrinter(p *models.PrinterConfig) error {
 	if p.HideModel {
 		hideModel = 1
 	}
-	_, err := db.conn.Exec(`
+	return affected(db.conn.Exec(`
 		UPDATE printers SET name=?, type=?, model=?, hide_model=?, url=?, api_key=?, username=?, enabled=?, poll_interval=?, idle_timeout_minutes=?, max_bed_temp=?, max_extruder_temp=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?
-	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp, p.ID)
-	return err
+	`, p.Name, p.Type, p.Model, hideModel, p.URL, p.APIKey, p.Username, enabled, p.PollInterval, p.IdleTimeoutMinutes, p.MaxBedTemp, p.MaxExtruderTemp, p.ID))
 }
 
 func (db *DB) ReorderPrinters(ids []int64) error {
@@ -533,9 +544,31 @@ func (db *DB) ReorderPrinters(ids []int64) error {
 	return tx.Commit()
 }
 
+// PruneOrphanedFileMeta drops file_meta_cache rows whose printer no longer
+// exists (left by versions that didn't clean up on delete).
+func (db *DB) PruneOrphanedFileMeta() (int64, error) {
+	res, err := db.conn.Exec(`DELETE FROM file_meta_cache WHERE printer_id NOT IN (SELECT id FROM printers)`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeletePrinter removes the printer and its file_meta_cache rows (which have
+// no foreign key, so would otherwise keep their thumbnail BLOBs forever).
 func (db *DB) DeletePrinter(id int64) error {
-	_, err := db.conn.Exec(`DELETE FROM printers WHERE id = ?`, id)
-	return err
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM file_meta_cache WHERE printer_id = ?`, id); err != nil {
+		return err
+	}
+	if err := affected(tx.Exec(`DELETE FROM printers WHERE id = ?`, id)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // PrintHistorySummary is a printer-wide rollup of print_history, shown as a
@@ -978,14 +1011,12 @@ func (db *DB) CreateIngestTarget(model string, printerID *int64, label, apiKey s
 }
 
 func (db *DB) UpdateIngestTarget(id int64, model string, printerID *int64, label string) error {
-	_, err := db.conn.Exec(`UPDATE ingest_targets SET model=?, printer_id=?, label=? WHERE id=?`,
-		model, printerID, label, id)
-	return err
+	return affected(db.conn.Exec(`UPDATE ingest_targets SET model=?, printer_id=?, label=? WHERE id=?`,
+		model, printerID, label, id))
 }
 
 func (db *DB) DeleteIngestTarget(id int64) error {
-	_, err := db.conn.Exec(`DELETE FROM ingest_targets WHERE id = ?`, id)
-	return err
+	return affected(db.conn.Exec(`DELETE FROM ingest_targets WHERE id = ?`, id))
 }
 
 // Ingest jobs — files staged by a slicer, awaiting dispatch to a printer.
@@ -1088,6 +1119,18 @@ func (db *DB) ClaimIngestJobForDispatch(jobID, printerID int64) (bool, error) {
 	}
 	n, err := result.RowsAffected()
 	return n > 0, err
+}
+
+// RecoverInterruptedIngestJobs marks jobs left in 'dispatching' by a restart
+// or crash as failed. Nothing else ever leaves that state for a job whose
+// goroutine is gone, and the dashboard hides dispatching jobs, so without
+// this they're stranded with no banner, retry or discard.
+func (db *DB) RecoverInterruptedIngestJobs() (int64, error) {
+	res, err := db.conn.Exec(`UPDATE ingest_jobs SET status='failed', error='interrupted by restart - retry to resend' WHERE status='dispatching'`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (db *DB) SetIngestJobFailed(id int64, errMsg string) error {

@@ -9,13 +9,13 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/ingest"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/mqttplug"
 	"github.com/ccmpbll/printspy/netguard"
@@ -1155,6 +1155,8 @@ func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
 
 	job, err := p.db.GetIngestJob(jobID)
 	if err != nil {
+		// Already claimed ('dispatching'), so don't strand it.
+		p.db.SetIngestJobFailed(jobID, "failed to load job: "+err.Error())
 		return
 	}
 	data, err := os.ReadFile(job.FilePath)
@@ -1167,7 +1169,7 @@ func (p *Poller) RelayIngestJob(ctx context.Context, jobID, printerID int64) {
 		return
 	}
 	p.db.DeleteIngestJob(jobID)
-	os.RemoveAll(filepath.Dir(job.FilePath))
+	ingest.RemoveStaged(job.FilePath)
 }
 
 // sendNotification is the shared Pushover send path for every notification
