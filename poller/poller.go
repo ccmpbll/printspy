@@ -37,6 +37,36 @@ type polledPrinter struct {
 	// printer transitions into a fresh print.
 	notifiedCheckpoint1 bool
 	notifiedCheckpoint2 bool
+
+	// lastOnline/lastOnlineStatus are the most recent poll where the printer
+	// answered (any state except Offline). A transient HTTP failure reports
+	// Offline without meaning the print ended, so print-history tracking
+	// compares against these instead of the raw previous tick. offlineSince
+	// is when the current run of Offline ticks began (zero when answering).
+	lastOnline       models.PrinterState
+	lastOnlineStatus *models.PrinterStatus
+	offlineSince     time.Time
+}
+
+// maxOfflineGap caps how long a printer can be unreachable mid-print and
+// still have its completion recorded when it reappears: past this, the last
+// known progress is too stale to say how the print ended.
+const maxOfflineGap = 10 * time.Minute
+
+// advance folds a new poll result into the online latch and returns the
+// last-answering state/status from before this poll, plus how long the
+// printer had been unreachable. Caller holds Poller.mu.
+func (pp *polledPrinter) advance(status *models.PrinterStatus, now time.Time) (prevState models.PrinterState, prevStatus *models.PrinterStatus, offlineFor time.Duration) {
+	prevState, prevStatus = pp.lastOnline, pp.lastOnlineStatus
+	if !pp.offlineSince.IsZero() {
+		offlineFor = now.Sub(pp.offlineSince)
+	}
+	if status.State != models.StateOffline {
+		pp.lastOnline, pp.lastOnlineStatus, pp.offlineSince = status.State, status, time.Time{}
+	} else if pp.offlineSince.IsZero() {
+		pp.offlineSince = now
+	}
+	return
 }
 
 type SSEMessage struct {
@@ -56,6 +86,16 @@ type Poller struct {
 	cache    map[int64]*models.PrinterStatus
 	db       *db.DB
 	wg       sync.WaitGroup
+	// closing is set by Wait(): once draining starts, nothing may wg.Add
+	// (that races wg.Wait on a zero counter). baseCtx is the root context
+	// background polls run on so shutdown cancels them.
+	closing bool
+	baseCtx context.Context
+
+	// pollLocks serializes poll() per printer - the tick loop, Repoll,
+	// WaitOnline and post-power-toggle polls would otherwise interleave and
+	// double-record a completion or overwrite a newer status.
+	pollLocks sync.Map
 
 	subMu       sync.Mutex
 	subscribers map[*subscriber]struct{}
@@ -123,7 +163,31 @@ func (p *Poller) SyncMQTTSubscriptions() error {
 }
 
 func (p *Poller) Wait() {
+	p.mu.Lock()
+	p.closing = true
+	p.mu.Unlock()
 	p.wg.Wait()
+}
+
+// goTracked runs fn on a goroutine counted by wg so shutdown waits for it,
+// or drops it if shutdown has already begun.
+func (p *Poller) goTracked(fn func()) {
+	p.mu.Lock()
+	if p.closing {
+		p.mu.Unlock()
+		return
+	}
+	p.wg.Add(1)
+	p.mu.Unlock()
+	go func() {
+		defer p.wg.Done()
+		fn()
+	}()
+}
+
+func (p *Poller) pollLock(id int64) *sync.Mutex {
+	l, _ := p.pollLocks.LoadOrStore(id, &sync.Mutex{})
+	return l.(*sync.Mutex)
 }
 
 func (p *Poller) getInterval(perPrinter int) time.Duration {
@@ -155,6 +219,11 @@ func (p *Poller) Start(ctx context.Context) error {
 func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConfig) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	if p.closing {
+		return
+	}
+	p.baseCtx = parentCtx
 
 	if existing, ok := p.printers[config.ID]; ok {
 		existing.cancel()
@@ -601,6 +670,18 @@ func (p *Poller) Repoll(ctx context.Context, id int64) {
 	p.poll(ctx, id, pl)
 }
 
+// RepollAsync is Repoll on a shutdown-tracked goroutine using the poller's
+// own context rather than a request's.
+func (p *Poller) RepollAsync(id int64) {
+	p.mu.RLock()
+	ctx := p.baseCtx
+	p.mu.RUnlock()
+	if ctx == nil {
+		return
+	}
+	p.goTracked(func() { p.Repoll(ctx, id) })
+}
+
 // ResetAllIdleClocks restarts every printer's idle-timeout clock. Called
 // when the global auto_off_idle_minutes setting changes - without this, a
 // printer already sitting idle longer than a newly-lowered timeout would
@@ -689,7 +770,7 @@ func (p *Poller) SetPowerState(ctx context.Context, id int64, plugID string, on 
 		slog.Debug("power toggle succeeded", "printer", id, "plug", plugID, "on", on)
 		p.patchPowerState(id, plugID, "", on)
 	}
-	go p.poll(context.Background(), id, pl)
+	p.RepollAsync(id)
 	return setErr
 }
 
@@ -889,6 +970,10 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.
 }
 
 func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
+	lock := p.pollLock(id)
+	lock.Lock()
+	defer lock.Unlock()
+
 	start := time.Now()
 	status, err := pl.GetStatus(ctx)
 	if err != nil {
@@ -912,8 +997,16 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	}
 
 	p.mu.Lock()
+	// A poll that outlived its printer (removed, or replaced by an edit)
+	// must not resurrect a cache entry nothing will ever update.
+	pp, current := p.printers[id]
+	if !current || pp.plugin != pl {
+		p.mu.Unlock()
+		return
+	}
 	prev := p.cache[id]
 	p.cache[id] = status
+	histPrevState, histPrev, offlineFor := pp.advance(status, time.Now())
 	p.mu.Unlock()
 
 	prevState := models.StateOffline
@@ -937,7 +1030,7 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		}
 	}
 
-	p.trackPrintHistory(ctx, id, prevState, status, prev, pl)
+	p.trackPrintHistory(ctx, id, histPrevState, status, histPrev, offlineFor, pl)
 	p.checkAutoOff(ctx, id, status)
 	p.checkThermalRunaway(ctx, id, status)
 	p.checkIngestOnline(ctx, id, prevState, status)
@@ -1422,7 +1515,13 @@ func (p *Poller) checkThermalRunaway(ctx context.Context, id int64, status *mode
 // printer that stays idle) doesn't spam the smart plug's API every tick.
 func (p *Poller) autoPowerOff(ctx context.Context, id int64, source string) {
 	plugs, err := p.db.ListSmartPlugs(id)
-	if err != nil || len(plugs) == 0 {
+	if err != nil {
+		return
+	}
+	if len(plugs) == 0 {
+		if source == "auto-thermal" {
+			log.Printf("[printer:%d] thermal runaway but no smart plug assigned - cannot cut power", id)
+		}
 		return
 	}
 	for _, sp := range plugs {
@@ -1560,11 +1659,19 @@ func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.
 	return states
 }
 
-func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus, pl plugin.PrinterPlugin) {
+func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState models.PrinterState, status *models.PrinterStatus, prev *models.PrinterStatus, offlineFor time.Duration, pl plugin.PrinterPlugin) {
 	wasPrinting := prevState == models.StatePrinting || prevState == models.StatePaused
-	nowDone := status.State == models.StateIdle || status.State == models.StateError || status.State == models.StateOffline
+	// Offline is not "done": a failed poll says nothing about the print.
+	// prevState/prev are the last poll where the printer answered (see
+	// polledPrinter.advance), so printing -> offline -> printing records
+	// nothing and printing -> offline -> idle records one completion.
+	nowDone := status.State == models.StateIdle || status.State == models.StateError || status.State == models.StateDisconnected
 
 	if !wasPrinting || !nowDone {
+		return
+	}
+	if offlineFor > maxOfflineGap {
+		log.Printf("[printer:%d] print outcome unknown (unreachable for %s) - not recording", id, offlineFor.Round(time.Second))
 		return
 	}
 
