@@ -2,6 +2,7 @@ package mqttplug
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -240,5 +241,29 @@ func TestPublish(t *testing.T) {
 	}
 	if len(fc.retained) != 1 || !fc.retained[0] {
 		t.Fatalf("expected publish to be retained, got %v", fc.retained)
+	}
+}
+
+func TestValidateBrokerURL(t *testing.T) {
+	for in, ok := range map[string]bool{
+		"":                        true,
+		"tcp://10.0.0.5:1883":     true,
+		"mqtts://broker.lan:8883": true,
+		"wss://broker.lan/mqtt":   true,
+		"unix:///var/run/x.sock":  false,
+		"file:///etc/passwd":      false,
+		"10.0.0.5:1883":           false,
+		"tcp://":                  false,
+	} {
+		if err := ValidateBrokerURL(in); (err == nil) != ok {
+			t.Errorf("ValidateBrokerURL(%q) = %v, want ok=%v", in, err, ok)
+		}
+	}
+}
+
+func TestRedactedBrokerHidesPassword(t *testing.T) {
+	got := redactedBroker("tcp://user:s3cret@10.0.0.5:1883")
+	if strings.Contains(got, "s3cret") {
+		t.Errorf("redactedBroker leaked password: %q", got)
 	}
 }

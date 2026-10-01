@@ -88,3 +88,29 @@ func TestSetState(t *testing.T) {
 		t.Errorf("cmnd = %q, want %q", gotCmnd, "Power1 On")
 	}
 }
+
+func TestSetStateChecksStatusAndEcho(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  int
+		body    string
+		on      bool
+		wantErr bool
+	}{
+		{"matching echo", 200, `{"POWER1":"ON"}`, true, false},
+		{"echo says opposite", 200, `{"POWER1":"OFF"}`, true, true},
+		{"unprefixed echo", 200, `{"POWER":"OFF"}`, false, false},
+		{"http error page", 500, `oops`, true, true},
+		{"no state key accepted", 200, `{"Command":"Unknown"}`, true, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(c.status)
+			w.Write([]byte(c.body))
+		}))
+		err := newTestClient().SetState(context.Background(), strings.TrimPrefix(srv.URL, "http://"), "1", c.on)
+		srv.Close()
+		if (err != nil) != c.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", c.name, err, c.wantErr)
+		}
+	}
+}
