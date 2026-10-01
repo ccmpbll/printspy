@@ -87,7 +87,13 @@ func main() {
 	mux.Handle("/", http.FileServer(http.Dir(webDir)))
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr, Handler: logRequests(nosniff(handler.RequireAuth(mux)))}
+	// No ReadTimeout/WriteTimeout: SSE, webcam streams and large uploads are long-lived.
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           logRequests(nosniff(handler.RequireAuth(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 
 	go func() {
 		sigCh := make(chan os.Signal, 1)
