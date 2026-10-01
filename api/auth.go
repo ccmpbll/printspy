@@ -4,9 +4,11 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -15,7 +17,10 @@ import (
 const (
 	loginMaxAttempts = 5
 	loginWindow      = 15 * time.Minute
-	minPasswordLen   = 8
+	// loginMaxKeys bounds the failure table: keys include attacker-chosen
+	// usernames, so it must not grow without limit.
+	loginMaxKeys   = 10000
+	minPasswordLen = 8
 
 	sessionCookieName = "printspy_session"
 	sessionDuration   = 30 * 24 * time.Hour
@@ -28,6 +33,34 @@ func hashPassword(password string) (string, error) {
 
 func checkPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
+}
+
+var (
+	dummyHashOnce sync.Once
+	dummyHash     string
+)
+
+// spendPasswordCheck burns the same bcrypt time as a real check, so an
+// unknown username can't be told apart from a wrong password by latency.
+func spendPasswordCheck(password string) {
+	dummyHashOnce.Do(func() { dummyHash, _ = hashPassword("printspy-dummy") })
+	checkPassword(dummyHash, password)
+}
+
+// loginKey scopes failure counting to client address + username, so one
+// client guessing at "admin" can't lock the real admin out from elsewhere.
+// Behind a reverse proxy RemoteAddr is the proxy, so this degrades to
+// per-username (X-Forwarded-For is spoofable, so it is not trusted).
+func loginKey(r *http.Request, username string) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	username = strings.ToLower(username)
+	if len(username) > 64 {
+		username = username[:64]
+	}
+	return host + "|" + username
 }
 
 func newSessionToken() (string, error) {
@@ -142,7 +175,27 @@ func (h *Handler) rateLimited(key string) bool {
 func (h *Handler) recordLoginFailure(key string) {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
+	if _, ok := h.loginFails[key]; !ok && len(h.loginFails) >= loginMaxKeys {
+		h.pruneLoginFailuresLocked()
+	}
 	h.loginFails[key] = append(h.loginFails[key], time.Now())
+}
+
+// pruneLoginFailuresLocked drops expired entries and, if the table is still
+// full of live ones, evicts arbitrary keys down to half capacity.
+func (h *Handler) pruneLoginFailuresLocked() {
+	now := time.Now()
+	for k, attempts := range h.loginFails {
+		if len(attempts) == 0 || now.Sub(attempts[len(attempts)-1]) >= loginWindow {
+			delete(h.loginFails, k)
+		}
+	}
+	for k := range h.loginFails {
+		if len(h.loginFails) <= loginMaxKeys/2 {
+			break
+		}
+		delete(h.loginFails, k)
+	}
 }
 
 func (h *Handler) clearLoginFailures(key string) {
@@ -229,19 +282,23 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		username := strings.TrimSpace(r.FormValue("username"))
 		password := r.FormValue("password")
 
-		if h.rateLimited(username) {
+		key := loginKey(r, username)
+		if h.rateLimited(key) {
 			http.Redirect(w, r, "/login?error=ratelimit", http.StatusFound)
 			return
 		}
 
 		user, err := h.db.GetUserByUsername(username)
+		if err != nil {
+			spendPasswordCheck(password)
+		}
 		if err != nil || !checkPassword(user.PasswordHash, password) {
-			h.recordLoginFailure(username)
+			h.recordLoginFailure(key)
 			http.Redirect(w, r, "/login?error=1", http.StatusFound)
 			return
 		}
 
-		h.clearLoginFailures(username)
+		h.clearLoginFailures(key)
 		if err := h.startSession(w, username); err != nil {
 			jsonError(w, "failed to start session", http.StatusInternalServerError)
 			return

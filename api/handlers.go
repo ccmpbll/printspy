@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -158,7 +159,15 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.Header.Get("X-Api-Key") != key {
+	// Unauthenticated endpoint: throttle failed guesses per client, and
+	// compare in constant time.
+	limitKey := loginKey(r, "status-api-key")
+	if h.rateLimited(limitKey) {
+		jsonError(w, "too many attempts", http.StatusTooManyRequests)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Api-Key")), []byte(key)) != 1 {
+		h.recordLoginFailure(limitKey)
 		jsonError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -1441,6 +1450,10 @@ func printerIndexPtr(id *int64, index map[int64]int) *int {
 	return nil
 }
 
+// minStatusAPIKeyLen keeps the unauthenticated /api/status key out of
+// brute-force range; the dashboard's Generate button makes 32 hex chars.
+const minStatusAPIKeyLen = 16
+
 // maxConfigImportBytes bounds an imported YAML file (real exports are a few KB).
 const maxConfigImportBytes = 5 << 20
 
@@ -2014,7 +2027,11 @@ func validateSetting(key, value string) (string, error) {
 		}
 		return value, nil
 	case "status_api_key":
-		return strings.TrimSpace(value), nil
+		value = strings.TrimSpace(value)
+		if value != "" && len(value) < minStatusAPIKeyLen {
+			return "", fmt.Errorf("status_api_key must be at least %d characters (use Generate)", minStatusAPIKeyLen)
+		}
+		return value, nil
 	case "debug_logging":
 		if value != "0" && value != "1" {
 			return "", fmt.Errorf("debug_logging must be 0 or 1")
