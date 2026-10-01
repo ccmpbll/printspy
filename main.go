@@ -57,6 +57,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Housekeeping before anything can touch these: jobs a restart left in
+	// 'dispatching', staging dirs/cache rows whose owner was deleted.
+	if n, err := database.RecoverInterruptedIngestJobs(); err == nil && n > 0 {
+		log.Printf("marked %d interrupted ingest job(s) as failed - retry from the dashboard", n)
+	}
+	ingest.SweepOrphans(dataDir, database)
+	if n, err := database.PruneOrphanedFileMeta(); err == nil && n > 0 {
+		log.Printf("pruned %d orphaned file metadata row(s)", n)
+	}
+
 	p := poller.New(database)
 	if err := p.Start(ctx); err != nil {
 		log.Fatalf("failed to start poller: %v", err)

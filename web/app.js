@@ -2095,9 +2095,16 @@ async function importConfig(input) {
         });
         if (resp.ok) {
             const data = await resp.json();
-            alert(`Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`);
+            let msg = `Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`;
+            if (data.skipped && data.skipped.length) {
+                msg += `\n\nSkipped ${data.skipped.length} item(s):\n- ` + data.skipped.join('\n- ');
+            }
+            alert(msg);
             await fetchPrinters();
             openSettings();
+        } else {
+            const data = await resp.json().catch(() => ({}));
+            alert(data.error || 'Import failed.');
         }
     } catch (e) {}
     input.value = '';

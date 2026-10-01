@@ -3,13 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ccmpbll/printspy/db"
+	"github.com/ccmpbll/printspy/ingest"
 	"github.com/ccmpbll/printspy/logging"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/mqttplug"
@@ -345,17 +346,34 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 		MaxExtruderTemp:    req.MaxExtruderTemp,
 	}
 
+	// Same required fields as addPrinter - a partial PUT would otherwise
+	// blank url/api_key, and the printer would silently drop out of polling.
+	current, err := h.db.GetPrinter(id)
+	if err != nil {
+		jsonError(w, "printer not found", http.StatusNotFound)
+		return
+	}
+	if p.Name == "" || p.URL == "" || p.APIKey == "" {
+		jsonError(w, "name, url, and api_key are required", http.StatusBadRequest)
+		return
+	}
+	if p.Type == "" {
+		p.Type = current.Type
+	}
+	if p.PollInterval <= 0 {
+		p.PollInterval = 10
+	}
+
 	if err := h.db.UpdatePrinter(&p); err != nil {
-		jsonError(w, "failed to update printer", http.StatusInternalServerError)
+		dbFail(w, err, "failed to update printer")
 		return
 	}
 
-	// UpdatePrinter doesn't touch the maintenance column - re-fetch it so
-	// saving unrelated edits (name, URL, ...) doesn't silently resume
-	// polling a printer that's deliberately paused.
-	current, _ := h.db.GetPrinter(id)
+	// UpdatePrinter doesn't touch the maintenance column - use the row
+	// fetched above so saving unrelated edits (name, URL, ...) doesn't
+	// silently resume polling a printer that's deliberately paused.
 	h.poller.RemovePrinter(id)
-	if p.Enabled && (current == nil || !current.Maintenance) {
+	if p.Enabled && !current.Maintenance {
 		h.poller.AddPrinter(h.ctx, p)
 	}
 	h.poller.BroadcastRefresh()
@@ -365,7 +383,7 @@ func (h *Handler) updatePrinter(w http.ResponseWriter, r *http.Request, id int64
 func (h *Handler) deletePrinter(w http.ResponseWriter, r *http.Request, id int64) {
 	h.poller.RemovePrinter(id)
 	if err := h.db.DeletePrinter(id); err != nil {
-		jsonError(w, "failed to delete printer", http.StatusInternalServerError)
+		dbFail(w, err, "failed to delete printer")
 		return
 	}
 	h.poller.BroadcastRefresh()
@@ -581,18 +599,7 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if _, ok := settings["auto_off_idle_minutes"]; ok {
-			h.poller.ResetAllIdleClocks()
-		}
-		_, brokerChanged := settings["mqtt_broker_url"]
-		_, userChanged := settings["mqtt_username"]
-		_, passChanged := settings["mqtt_password"]
-		if brokerChanged || userChanged || passChanged {
-			go h.poller.ConfigureMQTT()
-		}
-		if v, ok := settings["debug_logging"]; ok {
-			logging.SetDebug(v == "1")
-		}
+		h.applySettingSideEffects(settings)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -721,7 +728,7 @@ func (h *Handler) handleMaintenance(w http.ResponseWriter, r *http.Request, id i
 	}
 
 	if err := h.db.SetMaintenance(id, req.Maintenance); err != nil {
-		jsonError(w, "failed to update maintenance state", http.StatusInternalServerError)
+		dbFail(w, err, "failed to update maintenance state")
 		return
 	}
 
@@ -854,7 +861,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		}
 		existing, _ := h.db.GetSmartPlug(id)
 		if err := h.db.UpdateSmartPlug(id, req.IP, req.Idx, req.Label, req.HideLabel, req.PrinterID, req.MQTTTopic); err != nil {
-			jsonError(w, "failed to update smart plug", http.StatusInternalServerError)
+			dbFail(w, err, "failed to update smart plug")
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
@@ -869,7 +876,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		existing, _ := h.db.GetSmartPlug(id)
 		if err := h.db.DeleteSmartPlug(id); err != nil {
-			jsonError(w, "failed to delete smart plug", http.StatusInternalServerError)
+			dbFail(w, err, "failed to delete smart plug")
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
@@ -963,7 +970,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 		}
 		existing, _ := h.db.GetCamera(id)
 		if err := h.db.UpdateCamera(id, req.URL, req.Name, req.PrinterID); err != nil {
-			jsonError(w, "failed to update camera", http.StatusInternalServerError)
+			dbFail(w, err, "failed to update camera")
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
@@ -978,7 +985,7 @@ func (h *Handler) handleCameraByID(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		existing, _ := h.db.GetCamera(id)
 		if err := h.db.DeleteCamera(id); err != nil {
-			jsonError(w, "failed to delete camera", http.StatusInternalServerError)
+			dbFail(w, err, "failed to delete camera")
 			return
 		}
 		if existing != nil && existing.PrinterID != nil {
@@ -1434,6 +1441,26 @@ func printerIndexPtr(id *int64, index map[int64]int) *int {
 	return nil
 }
 
+// maxConfigImportBytes bounds an imported YAML file (real exports are a few KB).
+const maxConfigImportBytes = 5 << 20
+
+// applySettingSideEffects makes saved settings take effect at runtime, for
+// both the settings form and config import.
+func (h *Handler) applySettingSideEffects(settings map[string]string) {
+	if _, ok := settings["auto_off_idle_minutes"]; ok {
+		h.poller.ResetAllIdleClocks()
+	}
+	_, brokerChanged := settings["mqtt_broker_url"]
+	_, userChanged := settings["mqtt_username"]
+	_, passChanged := settings["mqtt_password"]
+	if brokerChanged || userChanged || passChanged {
+		go h.poller.ConfigureMQTT()
+	}
+	if v, ok := settings["debug_logging"]; ok {
+		logging.SetDebug(v == "1")
+	}
+}
+
 func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1441,23 +1468,33 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var export configExport
-	if err := yaml.NewDecoder(r.Body).Decode(&export); err != nil {
+	if err := yaml.NewDecoder(http.MaxBytesReader(w, r.Body, maxConfigImportBytes)).Decode(&export); err != nil {
 		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Anything dropped is reported back instead of hidden behind "success".
+	var skipped []string
+	applied := map[string]string{}
 	for k, v := range export.Settings {
 		validated, err := validateSetting(k, v)
 		if err != nil {
+			skipped = append(skipped, "setting "+k+": "+err.Error())
 			continue
 		}
-		h.db.SetSetting(k, validated)
+		if err := h.db.SetSetting(k, validated); err != nil {
+			skipped = append(skipped, "setting "+k+": "+err.Error())
+			continue
+		}
+		applied[k] = validated
 	}
+	h.applySettingSideEffects(applied)
 
 	added := 0
 	newPrinterIDs := make([]*int64, len(export.Printers))
 	for i, ep := range export.Printers {
 		if ep.URL == "" || ep.APIKey == "" {
+			skipped = append(skipped, fmt.Sprintf("printer %q: url and api_key are required", ep.Name))
 			continue
 		}
 		if ep.Type == "" {
@@ -1481,6 +1518,7 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 			MaxExtruderTemp:    ep.MaxExtruderTemp,
 		}
 		if err := h.db.CreatePrinter(&p); err != nil {
+			skipped = append(skipped, fmt.Sprintf("printer %q: %v", ep.Name, err))
 			continue
 		}
 		if ep.Maintenance {
@@ -1504,9 +1542,12 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	plugsAdded := 0
 	for _, sp := range export.SmartPlugs {
 		if sp.IP == "" && sp.MQTTTopic == "" {
+			skipped = append(skipped, fmt.Sprintf("smart plug %q: ip or mqtt_topic is required", sp.Label))
 			continue
 		}
-		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex), sp.MQTTTopic); err == nil {
+		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex), sp.MQTTTopic); err != nil {
+			skipped = append(skipped, fmt.Sprintf("smart plug %q: %v", sp.Label, err))
+		} else {
 			plugsAdded++
 		}
 	}
@@ -1514,9 +1555,12 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	camerasAdded := 0
 	for _, c := range export.Cameras {
 		if c.URL == "" {
+			skipped = append(skipped, fmt.Sprintf("camera %q: url is required", c.Name))
 			continue
 		}
-		if _, err := h.db.CreateCamera(c.URL, c.Name, resolvePrinterID(c.PrinterIndex)); err == nil {
+		if _, err := h.db.CreateCamera(c.URL, c.Name, resolvePrinterID(c.PrinterIndex)); err != nil {
+			skipped = append(skipped, fmt.Sprintf("camera %q: %v", c.Name, err))
+		} else {
 			camerasAdded++
 		}
 	}
@@ -1524,16 +1568,22 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	targetsAdded := 0
 	for _, t := range export.IngestTargets {
 		if t.Label == "" || t.APIKey == "" {
+			skipped = append(skipped, fmt.Sprintf("ingest target %q: label and api_key are required", t.Label))
 			continue
 		}
-		if _, err := h.db.CreateIngestTarget(t.Model, resolvePrinterID(t.PrinterIndex), t.Label, t.APIKey); err == nil {
+		if _, err := h.db.CreateIngestTarget(t.Model, resolvePrinterID(t.PrinterIndex), t.Label, t.APIKey); err != nil {
+			skipped = append(skipped, fmt.Sprintf("ingest target %q: %v", t.Label, err))
+		} else {
 			targetsAdded++
 		}
 	}
 
+	// Plugs imported in MQTT mode only respond once the client subscribes.
+	go h.poller.SyncMQTTSubscriptions()
 	h.poller.BroadcastRefresh()
 	jsonResponse(w, map[string]any{
-		"success":           true,
+		"success":           len(skipped) == 0,
+		"skipped":           skipped,
 		"printers_added":    added,
 		"plugs_added":       plugsAdded,
 		"cameras_added":     camerasAdded,
@@ -2085,15 +2135,27 @@ func (h *Handler) handleIngestKeyByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err := h.db.UpdateIngestTarget(id, "", req.PrinterID, req.Label); err != nil {
-			jsonError(w, "failed to update ingest target", http.StatusInternalServerError)
+			dbFail(w, err, "failed to update ingest target")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
+		// Jobs cascade away with the target but their staged files don't.
+		var staged []string
+		if jobs, err := h.db.ListIngestJobs(); err == nil {
+			for _, j := range jobs {
+				if j.IngestTargetID == id {
+					staged = append(staged, j.FilePath)
+				}
+			}
+		}
 		if err := h.db.DeleteIngestTarget(id); err != nil {
-			jsonError(w, "failed to delete ingest target", http.StatusInternalServerError)
+			dbFail(w, err, "failed to delete ingest target")
 			return
+		}
+		for _, fp := range staged {
+			ingest.RemoveStaged(fp)
 		}
 		w.WriteHeader(http.StatusNoContent)
 
@@ -2142,7 +2204,7 @@ func (h *Handler) handleIngestJobByID(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to delete ingest job", http.StatusInternalServerError)
 		return
 	}
-	os.RemoveAll(filepath.Dir(job.FilePath))
+	ingest.RemoveStaged(job.FilePath)
 	jsonResponse(w, map[string]bool{"success": true})
 }
 
@@ -2277,7 +2339,7 @@ func (h *Handler) runDispatch(job models.IngestJob, printer models.PrinterConfig
 	}
 
 	h.db.DeleteIngestJob(job.ID)
-	os.RemoveAll(filepath.Dir(job.FilePath))
+	ingest.RemoveStaged(job.FilePath)
 }
 
 func jsonResponse(w http.ResponseWriter, data any) {
@@ -2285,6 +2347,15 @@ func jsonResponse(w http.ResponseWriter, data any) {
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("json encode error: %v", err)
 	}
+}
+
+// dbFail answers a failed UPDATE/DELETE: 404 when no row matched, else 500.
+func dbFail(w http.ResponseWriter, err error, msg string) {
+	if errors.Is(err, db.ErrNotFound) {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	jsonError(w, msg, http.StatusInternalServerError)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
