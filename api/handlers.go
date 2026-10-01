@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1590,10 +1591,13 @@ func (h *Handler) handleWebcamProxy(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("[webcam:%d] connected, status=%d content-type=%s", id, resp.StatusCode, resp.Header.Get("Content-Type"))
 
-	for _, header := range []string{"Content-Type", "Cache-Control", "Connection"} {
+	for _, header := range []string{"Cache-Control", "Connection"} {
 		if v := resp.Header.Get(header); v != "" {
 			w.Header().Set(header, v)
 		}
+	}
+	if v := resp.Header.Get("Content-Type"); v != "" {
+		w.Header().Set("Content-Type", safeImageType(v))
 	}
 	w.WriteHeader(resp.StatusCode)
 
@@ -1657,7 +1661,7 @@ func (h *Handler) handleSnapshotProxy(w http.ResponseWriter, r *http.Request) {
 		h.logOnce(fmt.Sprintf("snapshot-status-%d", id), 30*time.Second, "[snapshot:%d] unexpected status %d from %s", id, resp.StatusCode, snapshotURL)
 	}
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Content-Type", safeImageType(resp.Header.Get("Content-Type")))
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
@@ -1690,7 +1694,7 @@ func (h *Handler) handleThumbnailProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Content-Type", safeImageType(resp.Header.Get("Content-Type")))
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
@@ -1726,7 +1730,7 @@ func (h *Handler) handleHistoryThumbnailProxy(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", safeImageType(contentType))
 	w.Header().Set("Cache-Control", "max-age=31536000, immutable")
 	w.Write(thumbnail)
 }
@@ -1751,7 +1755,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	uploadedAt, _ := strconv.ParseInt(r.URL.Query().Get("uploaded_at"), 10, 64)
 
 	if row, hit, _ := h.db.GetFileMetaCache(id, path); hit && row.UploadedAt == uploadedAt && len(row.Thumbnail) > 0 {
-		w.Header().Set("Content-Type", row.ThumbnailContentType)
+		w.Header().Set("Content-Type", safeImageType(row.ThumbnailContentType))
 		w.Header().Set("Cache-Control", "max-age=3600")
 		w.Write(row.Thumbnail)
 		return
@@ -1797,13 +1801,26 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 	if resp.StatusCode == http.StatusOK {
 		// nil tools_json - don't clobber tools data a prior backfill wrote.
-		h.db.SetFileMetaCache(id, path, uploadedAt, nil, data, resp.Header.Get("Content-Type"))
+		h.db.SetFileMetaCache(id, path, uploadedAt, nil, data, safeImageType(resp.Header.Get("Content-Type")))
 	}
 
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Content-Type", safeImageType(resp.Header.Get("Content-Type")))
 	w.Header().Set("Cache-Control", "max-age=3600")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(data)
+}
+
+// safeImageType passes through image content types (and the MJPEG multipart
+// type) from an upstream printer/camera and downgrades anything else to
+// octet-stream, so a malicious or compromised device can't get HTML or
+// script served from PrintSpy's own origin. SVG is excluded because it can
+// carry script when opened directly.
+func safeImageType(ct string) string {
+	mt, _, err := mime.ParseMediaType(ct)
+	if err == nil && mt != "image/svg+xml" && (strings.HasPrefix(mt, "image/") || mt == "multipart/x-mixed-replace") {
+		return ct
+	}
+	return "application/octet-stream"
 }
 
 func validateSetting(key, value string) (string, error) {
