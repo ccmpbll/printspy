@@ -1,0 +1,8 @@
+.git
+.github
+.devdata
+.DS_Store
+/printspy
+*.db
+/data
+config.yaml

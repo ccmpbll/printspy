@@ -23,7 +23,7 @@ func Transport() *http.Transport {
 			if ip == nil {
 				return fmt.Errorf("netguard: invalid address %q", host)
 			}
-			if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 				return fmt.Errorf("netguard: blocked request to %s", ip)
 			}
 			return nil

@@ -254,11 +254,15 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		h.db.DeleteSession(cookie.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
-	http.Redirect(w, r, "/login", http.StatusFound)
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -380,6 +384,15 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.db.UpdateUserPassword(username, hash); err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
+	// Invalidate every existing session (e.g. a stolen cookie), then keep this one logged in.
+	if err := h.db.DeleteSessionsForUser(username); err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.startSession(w, username); err != nil {
 		jsonError(w, "failed to update password", http.StatusInternalServerError)
 		return
 	}
