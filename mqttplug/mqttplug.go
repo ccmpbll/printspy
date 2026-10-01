@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -65,12 +66,42 @@ func clientIDSuffix() string {
 	return "unknown"
 }
 
+// ValidateBrokerURL accepts empty (MQTT off) or a tcp/ssl/tls/mqtt/mqtts/
+// ws/wss URL - not paho's other schemes (unix sockets), which would let a
+// saved setting make the server dial arbitrary local paths.
+func ValidateBrokerURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("mqtt: invalid broker URL")
+	}
+	switch u.Scheme {
+	case "tcp", "ssl", "tls", "mqtt", "mqtts", "ws", "wss":
+		return nil
+	}
+	return fmt.Errorf("mqtt: broker URL scheme must be tcp, ssl, mqtt, mqtts, ws or wss")
+}
+
+// redactedBroker drops any user:password@ from a broker URL for logs and
+// error messages that reach the browser.
+func redactedBroker(raw string) string {
+	if u, err := url.Parse(raw); err == nil {
+		return u.Redacted()
+	}
+	return "broker"
+}
+
 // Configure (re)connects to brokerURL, disconnecting any existing connection
 // first - safe to call repeatedly (settings changed, or a manual retry from
 // /api/mqtt-test). An empty brokerURL just disconnects, leaving MQTT mode
 // fully opt-in. Subscriptions from the last Sync survive a reconfigure -
 // onConnect resubscribes them once the new connection is up.
 func (c *Client) Configure(brokerURL, username, password string) error {
+	if err := ValidateBrokerURL(brokerURL); err != nil {
+		return err
+	}
 	c.mu.Lock()
 	old := c.cli
 	c.cli = nil
@@ -105,7 +136,7 @@ func (c *Client) Configure(brokerURL, username, password string) error {
 	cli := mqtt.NewClient(opts)
 	token := cli.Connect()
 	if !token.WaitTimeout(10 * time.Second) {
-		return fmt.Errorf("mqtt: connect to %s timed out", brokerURL)
+		return fmt.Errorf("mqtt: connect to %s timed out", redactedBroker(brokerURL))
 	}
 	if err := token.Error(); err != nil {
 		return err

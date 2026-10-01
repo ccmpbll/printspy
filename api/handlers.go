@@ -20,6 +20,7 @@ import (
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/logging"
 	"github.com/ccmpbll/printspy/models"
+	"github.com/ccmpbll/printspy/mqttplug"
 	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
@@ -1794,8 +1795,9 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
+	const maxThumbBytes = 10 << 20
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxThumbBytes+1))
+	if err != nil || len(data) > maxThumbBytes {
 		http.Error(w, "failed to read thumbnail", http.StatusBadGateway)
 		return
 	}
@@ -1949,7 +1951,12 @@ func validateSetting(key, value string) (string, error) {
 		return value, nil
 	case "pushover_user_key", "pushover_app_token":
 		return value, nil
-	case "mqtt_broker_url", "mqtt_username", "mqtt_password", "mqtt_publish_topic":
+	case "mqtt_broker_url":
+		if err := mqttplug.ValidateBrokerURL(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	case "mqtt_username", "mqtt_password", "mqtt_publish_topic":
 		return value, nil
 	case "mqtt_publish_enabled":
 		if value != "0" && value != "1" {

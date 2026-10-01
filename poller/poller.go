@@ -18,6 +18,7 @@ import (
 	"github.com/ccmpbll/printspy/db"
 	"github.com/ccmpbll/printspy/models"
 	"github.com/ccmpbll/printspy/mqttplug"
+	"github.com/ccmpbll/printspy/netguard"
 	"github.com/ccmpbll/printspy/notify"
 	"github.com/ccmpbll/printspy/plugin"
 	"github.com/ccmpbll/printspy/plugin/prusalink"
@@ -129,7 +130,7 @@ func New(database *db.DB) *Poller {
 		cache:        make(map[int64]*models.PrinterStatus),
 		db:           database,
 		subscribers:  make(map[*subscriber]struct{}),
-		notifyClient: &http.Client{Timeout: 15 * time.Second},
+		notifyClient: &http.Client{Timeout: 15 * time.Second, Transport: netguard.Transport()},
 		mqtt:         mqttplug.New(),
 	}
 }
@@ -860,6 +861,10 @@ func (p *Poller) captureThumbnail(ctx context.Context, id int64, urlOverride str
 	return p.fetchImageURL(ctx, id, thumbURL, false)
 }
 
+// maxNotifyImageBytes bounds a camera snapshot/thumbnail fetched for a
+// notification attachment (Pushover's own cap is 5MB).
+const maxNotifyImageBytes = 10 << 20
+
 func (p *Poller) fetchImageURL(ctx context.Context, id int64, url string, direct bool) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -880,9 +885,12 @@ func (p *Poller) fetchImageURL(ctx context.Context, id int64, url string, direct
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("http %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxNotifyImageBytes+1))
 	if err != nil {
 		return nil, "", err
+	}
+	if len(data) > maxNotifyImageBytes {
+		return nil, "", fmt.Errorf("image larger than %d bytes", maxNotifyImageBytes)
 	}
 	return data, resp.Header.Get("Content-Type"), nil
 }
