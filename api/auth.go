@@ -387,6 +387,15 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to update password", http.StatusInternalServerError)
 		return
 	}
+	// Invalidate every existing session (e.g. a stolen cookie), then keep this one logged in.
+	if err := h.db.DeleteSessionsForUser(username); err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
+	if err := h.startSession(w, username); err != nil {
+		jsonError(w, "failed to update password", http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
