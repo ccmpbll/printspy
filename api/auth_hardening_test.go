@@ -98,3 +98,22 @@ func TestStatusAPIKeyMinLength(t *testing.T) {
 		t.Errorf("empty (disable) rejected: %v", err)
 	}
 }
+
+func TestLoginFloodDoesNotEvictLiveEntries(t *testing.T) {
+	h, _ := newTestHandler(t)
+	victim := "10.0.0.9|admin"
+	for i := 0; i < loginMaxAttempts; i++ {
+		h.recordLoginFailure(victim)
+	}
+	for i := 0; i < loginMaxKeys*2; i++ {
+		k := fmt.Sprintf("10.0.0.1|flood%d", i)
+		h.rateLimited(k)
+		h.recordLoginFailure(k)
+	}
+	if !h.rateLimited(victim) {
+		t.Error("flooding unique usernames wiped the victim's failure record")
+	}
+	if !h.rateLimited("10.0.0.2|never-seen") {
+		t.Error("table full of live entries should fail closed for unseen keys")
+	}
+}

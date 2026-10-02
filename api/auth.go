@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccmpbll/printspy/db"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -156,12 +158,21 @@ func (h *Handler) startSession(w http.ResponseWriter, username string) error {
 }
 
 // rateLimited reports whether key has failed to log in loginMaxAttempts times
-// within loginWindow, pruning stale attempts as it goes.
+// within loginWindow, pruning stale attempts as it goes. When the table is
+// full of live entries a key we have never seen is refused outright (fail
+// closed): evicting live entries instead would let an attacker flood unique
+// usernames to wipe the record of the account they are guessing.
 func (h *Handler) rateLimited(key string) bool {
 	h.loginMu.Lock()
 	defer h.loginMu.Unlock()
 	now := time.Now()
-	attempts := h.loginFails[key]
+	attempts, known := h.loginFails[key]
+	if !known && len(h.loginFails) >= loginMaxKeys {
+		h.pruneLoginFailuresLocked()
+		if len(h.loginFails) >= loginMaxKeys {
+			return true
+		}
+	}
 	fresh := attempts[:0]
 	for _, t := range attempts {
 		if now.Sub(t) < loginWindow {
@@ -177,24 +188,21 @@ func (h *Handler) recordLoginFailure(key string) {
 	defer h.loginMu.Unlock()
 	if _, ok := h.loginFails[key]; !ok && len(h.loginFails) >= loginMaxKeys {
 		h.pruneLoginFailuresLocked()
+		if len(h.loginFails) >= loginMaxKeys {
+			return // rateLimited already refuses unseen keys while full
+		}
 	}
 	h.loginFails[key] = append(h.loginFails[key], time.Now())
 }
 
-// pruneLoginFailuresLocked drops expired entries and, if the table is still
-// full of live ones, evicts arbitrary keys down to half capacity.
+// pruneLoginFailuresLocked drops expired entries only. Live entries are never
+// evicted - see rateLimited.
 func (h *Handler) pruneLoginFailuresLocked() {
 	now := time.Now()
 	for k, attempts := range h.loginFails {
 		if len(attempts) == 0 || now.Sub(attempts[len(attempts)-1]) >= loginWindow {
 			delete(h.loginFails, k)
 		}
-	}
-	for k := range h.loginFails {
-		if len(h.loginFails) <= loginMaxKeys/2 {
-			break
-		}
-		delete(h.loginFails, k)
 	}
 }
 
@@ -397,10 +405,13 @@ func (h *Handler) handleUserByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.db.DeleteUser(id); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "user not found", http.StatusNotFound)
+			return
+		}
 		jsonError(w, "failed to delete user", http.StatusInternalServerError)
 		return
 	}
-	h.db.DeleteSessionsForUser(target.Username)
 	w.WriteHeader(http.StatusNoContent)
 }
 

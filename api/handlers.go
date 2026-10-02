@@ -473,6 +473,10 @@ func (h *Handler) getPrintHistory(w http.ResponseWriter, r *http.Request, id int
 	jsonResponse(w, summary)
 }
 
+// maxHistoryLimit caps ?limit= (an unbounded value overflowed limit+1 to a
+// negative LIMIT, which SQLite treats as "no limit").
+const maxHistoryLimit = 500
+
 func (h *Handler) getPrintHistoryList(w http.ResponseWriter, r *http.Request, id int64) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -480,7 +484,7 @@ func (h *Handler) getPrintHistoryList(w http.ResponseWriter, r *http.Request, id
 	}
 	limit := 20
 	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
-		limit = v
+		limit = min(v, maxHistoryLimit)
 	}
 	offset := 0
 	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v >= 0 {
@@ -597,18 +601,23 @@ func (h *Handler) handleSettings(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
+		// Validate everything before persisting anything: map iteration order
+		// is random, so validating inline saved an arbitrary subset and then
+		// returned 400 for the rest.
+		validated := make(map[string]string, len(settings))
 		for k, v := range settings {
-			validated, err := validateSetting(k, v)
+			val, err := validateSetting(k, v)
 			if err != nil {
 				jsonError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			if err := h.db.SetSetting(k, validated); err != nil {
-				jsonError(w, "failed to save settings", http.StatusInternalServerError)
-				return
-			}
+			validated[k] = val
 		}
-		h.applySettingSideEffects(settings)
+		if err := h.db.SetSettings(validated); err != nil {
+			jsonError(w, "failed to save settings", http.StatusInternalServerError)
+			return
+		}
+		h.applySettingSideEffects(validated)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

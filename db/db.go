@@ -913,6 +913,24 @@ func (db *DB) SetSetting(key, value string) error {
 	return err
 }
 
+// SetSettings upserts every pair or none of them.
+func (db *DB) SetSettings(kv map[string]string) error {
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for k, v := range kv {
+		if _, err := tx.Exec(`
+			INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value
+		`, k, v); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (db *DB) GetAllSettings() (map[string]string, error) {
 	rows, err := db.conn.Query(`SELECT key, value FROM settings`)
 	if err != nil {
@@ -975,9 +993,21 @@ func (db *DB) CreateUser(username, passwordHash string) (int64, error) {
 	return result.LastInsertId()
 }
 
+// DeleteUser removes the user and every session they hold in one
+// transaction, so a deleted account can never keep a live login.
 func (db *DB) DeleteUser(id int64) error {
-	_, err := db.conn.Exec(`DELETE FROM users WHERE id = ?`, id)
-	return err
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM sessions WHERE username = (SELECT username FROM users WHERE id = ?)`, id); err != nil {
+		return err
+	}
+	if err := affected(tx.Exec(`DELETE FROM users WHERE id = ?`, id)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (db *DB) UpdateUserPassword(username, passwordHash string) error {

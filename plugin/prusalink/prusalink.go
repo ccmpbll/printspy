@@ -432,6 +432,11 @@ func (p *Plugin) downloadFile(ctx context.Context, path string, rangeBytes int) 
 		io.Copy(io.Discard, resp.Body)
 		return nil, fmt.Errorf("prusalink returned %d for %s", resp.StatusCode, path)
 	}
+	if rangeBytes > 0 {
+		// A printer that ignores Range serves the whole file; keep only the
+		// requested prefix (the parser tolerates a truncated tail).
+		return io.ReadAll(io.LimitReader(resp.Body, int64(rangeBytes)))
+	}
 	return io.ReadAll(resp.Body)
 }
 
@@ -514,7 +519,7 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.ReadAll(resp.Body)
+		readBody(resp.Body)
 		resp.Body.Close()
 
 		req2, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -530,14 +535,14 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 		}
 		defer resp2.Body.Close()
 
-		data, err := io.ReadAll(resp2.Body)
+		data, err := readBody(resp2.Body)
 		if err != nil {
 			return nil, resp2.StatusCode, err
 		}
 		return data, resp2.StatusCode, nil
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -586,7 +591,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.ReadAll(resp.Body)
+		readBody(resp.Body)
 		resp.Body.Close()
 
 		var bodyReader2 io.Reader
@@ -611,7 +616,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		}
 		defer resp2.Body.Close()
 
-		data, err := io.ReadAll(resp2.Body)
+		data, err := readBody(resp2.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -621,7 +626,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 		return data, nil
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -679,7 +684,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		authHeader := resp.Header.Get("WWW-Authenticate")
-		io.ReadAll(resp.Body)
+		readBody(resp.Body)
 		resp.Body.Close()
 
 		req2, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
@@ -696,7 +701,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 		}
 		defer resp2.Body.Close()
 
-		body, err := io.ReadAll(resp2.Body)
+		body, err := readBody(resp2.Body)
 		if err != nil {
 			return "", 0, err
 		}
@@ -707,7 +712,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 		return name, mtime, nil
 	}
 
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := readBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", 0, fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(body))
 	}
@@ -782,4 +787,17 @@ type jobResponse struct {
 			Icon      string `json:"icon"`
 		} `json:"refs"`
 	} `json:"file"`
+}
+
+// maxBody caps any single API response read. Upstream printers are
+// semi-trusted LAN devices; an unbounded io.ReadAll on the poll path lets a
+// misbehaving or hostile one exhaust memory.
+const maxBody = 16 << 20
+
+func readBody(r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, maxBody+1))
+	if err == nil && len(b) > maxBody {
+		err = fmt.Errorf("response exceeds %d bytes", maxBody)
+	}
+	return b, err
 }

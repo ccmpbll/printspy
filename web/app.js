@@ -1669,6 +1669,7 @@ function onPrinterTypeChange() {
 }
 
 function openAddModal() {
+    editModalReq++;
     document.getElementById('modal-title').textContent = 'Add printer';
     document.getElementById('printer-id').value = '';
     document.getElementById('printer-name').value = '';
@@ -1688,7 +1689,10 @@ function openAddModal() {
     document.getElementById('printer-modal').classList.add('active');
 }
 
+let editModalReq = 0;
+
 async function openEditModal(id) {
+    const req = ++editModalReq;
     const printer = printers.find(p => p.config.id === id);
     if (!printer) return;
     const cfg = printer.config;
@@ -1715,6 +1719,10 @@ async function openEditModal(id) {
         const resp = await fetch(`/api/printers/${cfg.id}`);
         if (resp.ok) {
             const data = await resp.json();
+            // Modal may have been closed/reopened for another printer (or
+            // switched to Add) while this was in flight - writing the key
+            // now would plant this printer's credential in the wrong form.
+            if (req !== editModalReq) return;
             document.getElementById('printer-apikey').value = data.api_key || '';
             if (data.username) document.getElementById('printer-username').value = data.username;
         }
@@ -1722,6 +1730,7 @@ async function openEditModal(id) {
 }
 
 function closeModal() {
+    editModalReq++;
     document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
     stopPrusalinkDebugPoll();
 }
