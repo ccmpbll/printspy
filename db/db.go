@@ -145,62 +145,112 @@ func (db *DB) migrate() error {
 	}
 
 	// Migration: add sort_order column if missing (existing databases)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("printers", "sort_order", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add username column for PrusaLink digest auth
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN username TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("printers", "username", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// Migration: add hide_label column to smart_plugs if missing (existing databases)
-	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN hide_label INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("smart_plugs", "hide_label", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add maintenance column to printers if missing (existing databases)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN maintenance INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("printers", "maintenance", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add model column to printers if missing (existing databases)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN model TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("printers", "model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// Migration: add hide_model column to printers if missing (existing databases)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN hide_model INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("printers", "hide_model", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add auto-off/thermal-runaway override columns to printers if missing
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN idle_timeout_minutes INTEGER NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_bed_temp REAL NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE printers ADD COLUMN max_extruder_temp REAL NOT NULL DEFAULT 0`)
+	if err := db.addColumn("printers", "idle_timeout_minutes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("printers", "max_bed_temp", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("printers", "max_extruder_temp", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add auto_dispatch_on_print_now column to ingest_targets if missing
-	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN auto_dispatch_on_print_now INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("ingest_targets", "auto_dispatch_on_print_now", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: add printer_id column to ingest_targets if missing - lets a
 	// target bind to one specific printer instead of a model bucket
-	db.conn.Exec(`ALTER TABLE ingest_targets ADD COLUMN printer_id INTEGER`)
+	if err := db.addColumn("ingest_targets", "printer_id", "INTEGER"); err != nil {
+		return err
+	}
 
 	// Migration: print history real metadata (extracted from the file
 	// itself at completion - see printmeta package). PrusaLink-only; stays
 	// at defaults for OctoPrint rows.
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN filament_used_g REAL NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN layer_height REAL NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN fill_density TEXT NOT NULL DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN printer_model TEXT NOT NULL DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN material TEXT NOT NULL DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tool_index INTEGER NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN filament_cost REAL NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN estimated_duration_secs INTEGER NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN max_layer_z REAL NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN object_names TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("print_history", "filament_used_g", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "layer_height", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "fill_density", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "printer_model", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "material", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "tool_index", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "filament_cost", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "estimated_duration_secs", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "max_layer_z", "REAL NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "object_names", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// Migration: multi-tool support - a print using 2+ tools (MMU
 	// multi-material, or a real tool changer) previously only recorded the
 	// first tool's data.
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tool_changes INTEGER NOT NULL DEFAULT 0`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN tools_json TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("print_history", "tool_changes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "tools_json", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// Migration: real thumbnails in History - path/uploaded_at matched
 	// file_meta_cache's key for the same file, so a History row could look
 	// up its cached thumbnail without touching the printer. Superseded
 	// below (History now stores its own copy) - columns left in place,
 	// unused, rather than risk a DROP COLUMN migration for no real gain.
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN path TEXT NOT NULL DEFAULT ''`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN uploaded_at INTEGER NOT NULL DEFAULT 0`)
+	if err := db.addColumn("print_history", "path", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "uploaded_at", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 
 	// Migration: History gets its own thumbnail, independent of whatever's
 	// still on the printer. The path/uploaded_at cross-reference above
@@ -208,8 +258,12 @@ func (db *DB) migrate() error {
 	// real timestamp (or the file got deleted from the printer) - History
 	// is a permanent record and shouldn't depend on the printer's live
 	// state at all. Looked up directly by the history row's own id.
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN thumbnail BLOB`)
-	db.conn.Exec(`ALTER TABLE print_history ADD COLUMN thumbnail_content_type TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("print_history", "thumbnail", "BLOB"); err != nil {
+		return err
+	}
+	if err := db.addColumn("print_history", "thumbnail_content_type", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
 	// One-time backfill for existing rows from before the above: pull
 	// whatever's still sitting in file_meta_cache under this row's old
@@ -217,7 +271,7 @@ func (db *DB) migrate() error {
 	// broke these in the first place) into the row's own copy. Only
 	// touches rows with no thumbnail of their own yet and a real match to
 	// copy, so safe to run on every startup - a no-op once it's done.
-	db.conn.Exec(`
+	if _, err := db.conn.Exec(`
 		UPDATE print_history SET
 			thumbnail = (SELECT thumbnail FROM file_meta_cache WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path),
 			thumbnail_content_type = (SELECT thumbnail_content_type FROM file_meta_cache WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path)
@@ -226,12 +280,50 @@ func (db *DB) migrate() error {
 			WHERE file_meta_cache.printer_id = print_history.printer_id AND file_meta_cache.path = print_history.path
 				AND length(file_meta_cache.thumbnail) > 0
 		)
-	`)
+	`); err != nil {
+		return fmt.Errorf("backfill history thumbnails: %w", err)
+	}
 
 	// Migration: MQTT mode for smart plugs - non-empty means this plug is
 	// controlled via MQTT topic instead of direct HTTP to ip/idx.
-	db.conn.Exec(`ALTER TABLE smart_plugs ADD COLUMN mqtt_topic TEXT NOT NULL DEFAULT ''`)
+	if err := db.addColumn("smart_plugs", "mqtt_topic", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// addColumn adds a column unless it already exists. Checking table_info
+// (rather than ignoring the ALTER error) means a real failure - disk full,
+// locked DB, bad definition - aborts startup instead of surfacing later as
+// 500s on every request that touches the missing column.
+func (db *DB) addColumn(table, col, def string) error {
+	rows, err := db.conn.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", table, err)
+	}
+	found := false
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return fmt.Errorf("inspect %s: %w", table, err)
+		}
+		if name == col {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("inspect %s: %w", table, err)
+	}
+	rows.Close()
+	if found {
+		return nil
+	}
+	if _, err := db.conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + col + " " + def); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, col, err)
+	}
 	return nil
 }
 
