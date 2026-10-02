@@ -186,6 +186,24 @@ func (p *Poller) goTracked(fn func()) {
 	}()
 }
 
+// Go runs fn on a shutdown-tracked goroutine (dropped once shutdown began).
+func (p *Poller) Go(fn func()) { p.goTracked(fn) }
+
+// SyncMQTTAsync and ConfigureMQTTAsync run the MQTT calls on tracked goroutines.
+func (p *Poller) SyncMQTTAsync()      { p.goTracked(func() { p.SyncMQTTSubscriptions() }) }
+func (p *Poller) ConfigureMQTTAsync() { p.goTracked(func() { p.ConfigureMQTT() }) }
+
+// bgCtx is the poller's lifetime context (Background before the first
+// AddPrinter), for background work that must outlive a request but not the app.
+func (p *Poller) bgCtx() context.Context {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.baseCtx != nil {
+		return p.baseCtx
+	}
+	return context.Background()
+}
+
 func (p *Poller) pollLock(id int64) *sync.Mutex {
 	l, _ := p.pollLocks.LoadOrStore(id, &sync.Mutex{})
 	return l.(*sync.Mutex)
@@ -243,12 +261,10 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 	}
 	p.printers[config.ID] = pp
 
-	interval := p.getInterval(config.PollInterval)
-
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
-		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, interval)
+		p.pollLoop(ctx, config.ID, config.Name, pp.plugin, config.PollInterval)
 	}()
 
 	if kp, ok := pl.(plugin.Keepalive); ok {
@@ -492,10 +508,10 @@ func (p *Poller) backfillFileMeta(id int64, pl plugin.PrinterPlugin, files []mod
 		return
 	}
 
-	go func() {
+	p.goTracked(func() {
 		// Not the request's context - that's cancelled the moment the HTTP
 		// handler returns, which is before this goroutine even starts.
-		ctx := context.Background()
+		ctx := p.bgCtx()
 		for _, f := range stale {
 			// Generous on purpose - this is fully backgrounded (File Manager
 			// already opens instantly regardless, see backfillFileMeta's own
@@ -516,7 +532,7 @@ func (p *Poller) backfillFileMeta(id int64, pl plugin.PrinterPlugin, files []mod
 
 			p.parseAndCacheFileMeta(id, f.FileName, f.Path, f.UploadedAt, data)
 		}
-	}()
+	})
 }
 
 // cacheFilePath strips a "/origin/path" ref (e.g. PrusaLink's
@@ -954,7 +970,8 @@ func (p *Poller) sendToAll(msg SSEMessage) {
 	}
 }
 
-func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, interval time.Duration) {
+func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.PrinterPlugin, perPrinterSecs int) {
+	interval := p.getInterval(perPrinterSecs)
 	log.Printf("starting poller for printer %d (%s) every %s", id, name, interval)
 
 	if err := pl.Connect(ctx); err != nil {
@@ -973,6 +990,12 @@ func (p *Poller) pollLoop(ctx context.Context, id int64, name string, pl plugin.
 			return
 		case <-ticker.C:
 			p.poll(ctx, id, pl)
+			// Pick up a changed global poll_interval without a restart.
+			if n := p.getInterval(perPrinterSecs); n != interval {
+				interval = n
+				ticker.Reset(interval)
+				log.Printf("[printer:%d] poll interval now %s", id, interval)
+			}
 		}
 	}
 }
@@ -984,6 +1007,12 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 
 	start := time.Now()
 	status, err := pl.GetStatus(ctx)
+	if err != nil && ctx.Err() != nil {
+		// Our own context ended (request cancelled, shutdown) - that says
+		// nothing about the printer, so don't write a synthetic "offline"
+		// into the cache and fan it out over SSE/MQTT.
+		return
+	}
 	if err != nil {
 		log.Printf("[printer:%d] poll error: %v", id, err)
 		status = &models.PrinterStatus{
@@ -1129,11 +1158,11 @@ func (p *Poller) checkIngestOnline(ctx context.Context, id int64, prevState mode
 	// UploadFile's per-printer lock would serialize the actual transfers
 	// either way, but running the claim+WaitOnline steps for job 2 while
 	// job 1 is still uploading is pointless contention for no benefit here.
-	go func() {
+	p.goTracked(func() {
 		for _, job := range jobs {
 			p.RelayIngestJob(ctx, job.ID, id)
 		}
-	}()
+	})
 }
 
 // RelayIngestJob claims a staged job and, if the printer is currently
@@ -1309,6 +1338,15 @@ func (p *Poller) seedPrintingState(id int64, status *models.PrinterStatus) {
 func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.PrinterStatus) {
 	printing := status.State == models.StatePrinting || status.State == models.StatePaused
 
+	// Settings are SQLite reads - done before taking p.mu so the global lock
+	// is never held across disk I/O.
+	var en1, en2 bool
+	var pct1, pct2 float64
+	if status.State == models.StatePrinting && status.Job != nil {
+		en1, en2 = p.notifySettingBool("notify_checkpoint1_enabled"), p.notifySettingBool("notify_checkpoint2_enabled")
+		pct1, pct2 = p.notifySettingPercent("notify_checkpoint1_percent", 5), p.notifySettingPercent("notify_checkpoint2_percent", 50)
+	}
+
 	p.mu.Lock()
 	pp, ok := p.printers[id]
 	if !ok {
@@ -1327,8 +1365,8 @@ func (p *Poller) checkCheckpoints(ctx context.Context, id int64, status *models.
 	}
 
 	progress := status.Job.Progress
-	fire1 := !pp.notifiedCheckpoint1 && p.notifySettingBool("notify_checkpoint1_enabled") && progress >= p.notifySettingPercent("notify_checkpoint1_percent", 5)
-	fire2 := !pp.notifiedCheckpoint2 && p.notifySettingBool("notify_checkpoint2_enabled") && progress >= p.notifySettingPercent("notify_checkpoint2_percent", 50)
+	fire1 := !pp.notifiedCheckpoint1 && en1 && progress >= pct1
+	fire2 := !pp.notifiedCheckpoint2 && en2 && progress >= pct2
 	if fire1 {
 		pp.notifiedCheckpoint1 = true
 	}
@@ -1751,7 +1789,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)
 		return
 	}
-	go func() {
+	p.goTracked(func() {
 		data, err := downloader.DownloadFileForMetadata(ctx, filePath, fileName)
 		if err != nil {
 			log.Printf("[printer:%d] failed to download %s for print metadata: %v", id, fileName, err)
@@ -1812,7 +1850,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, prevState mode
 			}
 		}
 		p.insertPrintHistory(ctx, id, h, thumbnailURL)
-	}()
+	})
 }
 
 // printResult decides a completed print's outcome. jobState is the plugin's
