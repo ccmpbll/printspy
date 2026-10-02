@@ -112,12 +112,21 @@ Both modes can be mixed freely across plugs.
 
 Any printer type can get a webcam feed by assigning a [printspy-cam](https://github.com/ccmpbll/printspy-cam) device under Settings → Cameras — useful for PrusaLink, which has no webcam support of its own. Assigning a camera overrides whatever webcam a printer's own plugin would otherwise show. Cameras are managed independently of printers, so deleting a printer unassigns its camera instead of deleting it.
 
+### Slicer print targets
+
+Create a target under Settings → Slicer print targets, pinned to one printer. In PrusaSlicer or OrcaSlicer, add a physical printer using the **PrusaLink** host type and set:
+
+- **Host:** the URL shown on the target, `http://<printspy-host>:<port>/ingest/<label>` (the target's label or numeric id both work)
+- **API key / password:** the target's own API key, sent by the slicer as the `X-Api-Key` header. It is separate from your login and from the status API key, and this endpoint does not use the login session.
+
+"Upload" stages the file and relays it to the printer as soon as it is online; "Upload and Print" also powers the printer on first if needed and then starts the print. A wrong key returns `401` and an unknown label or id returns `404`. Staged files are kept under `PRINTSPY_DATA_DIR/ingest/` until they have been relayed.
+
 ### Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PRINTSPY_PORT` | `8080` | HTTP server port |
-| `PRINTSPY_DATA_DIR` | `/data` | SQLite database location |
+| `PRINTSPY_DATA_DIR` | `/data` | Data directory: the SQLite database (`printspy.db`) plus `ingest/<job id>/` staging folders for slicer uploads that haven't been relayed to a printer yet. Mount it on persistent storage with room for a few uploaded print files. |
 
 ## Getting your OctoPrint API key
 
@@ -135,7 +144,7 @@ Any printer type can get a webcam feed by assigning a [printspy-cam](https://git
 ## Building from source
 
 ```bash
-# Requires Go 1.25+ and CGO (for SQLite)
+# Requires Go 1.26+ and CGO (for SQLite)
 make build
 
 # Or with Docker
