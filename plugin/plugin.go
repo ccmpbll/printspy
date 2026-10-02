@@ -82,6 +82,14 @@ func Register(pluginType string, factory PluginFactory) {
 	registry[pluginType] = factory
 }
 
+// Known reports whether a plugin type is registered.
+func Known(pluginType string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	_, ok := registry[pluginType]
+	return ok
+}
+
 func Create(config models.PrinterConfig) (PrinterPlugin, error) {
 	mu.RLock()
 	defer mu.RUnlock()
