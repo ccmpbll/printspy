@@ -842,7 +842,7 @@ func (h *Handler) handleSmartPlugs(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil {
 			h.poller.RepollAsync(*req.PrinterID)
 		}
-		go h.poller.SyncMQTTSubscriptions()
+		h.poller.SyncMQTTAsync()
 		jsonResponse(w, map[string]int64{"id": id})
 
 	default:
@@ -888,7 +888,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		if req.PrinterID != nil && (existing == nil || existing.PrinterID == nil || *req.PrinterID != *existing.PrinterID) {
 			h.poller.RepollAsync(*req.PrinterID)
 		}
-		go h.poller.SyncMQTTSubscriptions()
+		h.poller.SyncMQTTAsync()
 		w.WriteHeader(http.StatusNoContent)
 
 	case http.MethodDelete:
@@ -900,7 +900,7 @@ func (h *Handler) handleSmartPlugByID(w http.ResponseWriter, r *http.Request) {
 		if existing != nil && existing.PrinterID != nil {
 			h.poller.RepollAsync(*existing.PrinterID)
 		}
-		go h.poller.SyncMQTTSubscriptions()
+		h.poller.SyncMQTTAsync()
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -1476,8 +1476,9 @@ func (h *Handler) applySettingSideEffects(settings map[string]string) {
 	_, userChanged := settings["mqtt_username"]
 	_, passChanged := settings["mqtt_password"]
 	if brokerChanged || userChanged || passChanged {
-		go h.poller.ConfigureMQTT()
+		h.poller.ConfigureMQTTAsync()
 	}
+	// poll_interval needs no hook: each poll loop re-reads it every tick.
 	if v, ok := settings["debug_logging"]; ok {
 		logging.SetDebug(v == "1")
 	}
@@ -1601,7 +1602,7 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Plugs imported in MQTT mode only respond once the client subscribes.
-	go h.poller.SyncMQTTSubscriptions()
+	h.poller.SyncMQTTAsync()
 	h.poller.BroadcastRefresh()
 	jsonResponse(w, map[string]any{
 		"success":           len(skipped) == 0,
@@ -2266,7 +2267,8 @@ func (h *Handler) retryIngestJob(w http.ResponseWriter, r *http.Request, jobID i
 		jsonError(w, "job already dispatching or resolved", http.StatusConflict)
 		return
 	}
-	go h.runDispatch(*job, *printer)
+	j, pr := *job, *printer
+	h.poller.Go(func() { h.runDispatch(j, pr) })
 	w.WriteHeader(http.StatusAccepted)
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -81,10 +82,10 @@ func main() {
 
 	ingestHandler := ingest.New(database, dataDir)
 	ingestHandler.SetDispatchFunc(func(jobID, printerID int64) {
-		go handler.AutoDispatchIngestJob(jobID, printerID)
+		p.Go(func() { handler.AutoDispatchIngestJob(jobID, printerID) })
 	})
 	ingestHandler.SetRelayFunc(func(jobID, printerID int64) {
-		go p.RelayIngestJob(ctx, jobID, printerID)
+		p.Go(func() { p.RelayIngestJob(ctx, jobID, printerID) })
 	})
 	ingestHandler.SetBroadcastFunc(p.BroadcastRefresh)
 	ingestHandler.RegisterRoutes(mux)
@@ -103,22 +104,35 @@ func main() {
 		Handler:           logRequests(nosniff(handler.RequireAuth(mux))),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
+		// Request contexts derive from ctx, so cancelling it on shutdown
+		// ends SSE streams and in-flight upstream calls instead of letting
+		// Shutdown wait on them.
+		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 		log.Println("shutting down...")
 		cancel()
+		shutCtx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		if err := server.Shutdown(shutCtx); err != nil {
+			log.Printf("graceful shutdown: %v", err)
+			server.Close()
+		}
+		// Nothing may write to the DB after this returns: main closes it next.
 		p.Wait()
-		server.Close()
 	}()
 
 	log.Printf("PrintSpy starting on http://0.0.0.0%s", addr)
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		log.Fatalf("server error: %v", err)
 	}
+	<-shutdownDone
 }
 
 // logRequests logs every request at debug level (method, path, status,
