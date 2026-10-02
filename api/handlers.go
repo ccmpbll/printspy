@@ -252,6 +252,10 @@ func (h *Handler) addPrinter(w http.ResponseWriter, r *http.Request) {
 	if p.Type == "" {
 		p.Type = "octoprint"
 	}
+	if !plugin.Known(p.Type) {
+		jsonError(w, fmt.Sprintf("unknown printer type %q", p.Type), http.StatusBadRequest)
+		return
+	}
 	if p.PollInterval <= 0 {
 		p.PollInterval = 10
 	}
@@ -1523,6 +1527,10 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		if ep.Type == "" {
 			ep.Type = "octoprint"
 		}
+		if !plugin.Known(ep.Type) {
+			skipped = append(skipped, fmt.Sprintf("printer %q: unknown type %q", ep.Name, ep.Type))
+			continue
+		}
 		if ep.PollInterval <= 0 {
 			ep.PollInterval = 10
 		}
@@ -1561,11 +1569,19 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 		}
 		return newPrinterIDs[*idx]
 	}
+	// An item that names a printer which wasn't imported must be dropped, not
+	// created unattached (resolvePrinterID yields nil for both "no printer"
+	// and "printer was skipped").
+	orphaned := func(idx *int) bool { return idx != nil && resolvePrinterID(idx) == nil }
 
 	plugsAdded := 0
 	for _, sp := range export.SmartPlugs {
 		if sp.IP == "" && sp.MQTTTopic == "" {
 			skipped = append(skipped, fmt.Sprintf("smart plug %q: ip or mqtt_topic is required", sp.Label))
+			continue
+		}
+		if orphaned(sp.PrinterIndex) {
+			skipped = append(skipped, fmt.Sprintf("smart plug %q: its printer was not imported", sp.Label))
 			continue
 		}
 		if _, err := h.db.CreateSmartPlug(sp.IP, sp.Idx, sp.Label, sp.HideLabel, resolvePrinterID(sp.PrinterIndex), sp.MQTTTopic); err != nil {
@@ -1581,6 +1597,10 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 			skipped = append(skipped, fmt.Sprintf("camera %q: url is required", c.Name))
 			continue
 		}
+		if orphaned(c.PrinterIndex) {
+			skipped = append(skipped, fmt.Sprintf("camera %q: its printer was not imported", c.Name))
+			continue
+		}
 		if _, err := h.db.CreateCamera(c.URL, c.Name, resolvePrinterID(c.PrinterIndex)); err != nil {
 			skipped = append(skipped, fmt.Sprintf("camera %q: %v", c.Name, err))
 		} else {
@@ -1592,6 +1612,10 @@ func (h *Handler) handleConfigImport(w http.ResponseWriter, r *http.Request) {
 	for _, t := range export.IngestTargets {
 		if t.Label == "" || t.APIKey == "" {
 			skipped = append(skipped, fmt.Sprintf("ingest target %q: label and api_key are required", t.Label))
+			continue
+		}
+		if orphaned(t.PrinterIndex) {
+			skipped = append(skipped, fmt.Sprintf("ingest target %q: its printer was not imported", t.Label))
 			continue
 		}
 		if _, err := h.db.CreateIngestTarget(t.Model, resolvePrinterID(t.PrinterIndex), t.Label, t.APIKey); err != nil {
