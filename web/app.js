@@ -79,6 +79,7 @@ function connectSSE() {
     eventSource.addEventListener('init', (e) => {
         printers = JSON.parse(e.data);
         printers.forEach(p => { if (p.status) statusCache[p.config.id] = p.status; });
+        printersSig = JSON.stringify(printers.map(p => ({...p, status: null})));
         prevPrinterIDs = [];
         updateDashboard();
         loadIngestJobs();
@@ -155,13 +156,13 @@ async function startReprint(btn) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({origin, path}),
         });
-        const data = await resp.json();
+        const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
             if (data.status) applyStatusUpdate(parseInt(printerId), data.status);
-        } else if (data.error) {
-            alert(data.error);
+        } else {
+            alert(data.error || 'Failed to start print.');
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to start print.'); }
 }
 
 // File manager - replaces the old per-card "Recent files" dropdown. Same
@@ -449,13 +450,8 @@ async function deleteManagedFile(btn) {
         const resp = await fetch(`/api/printers/${printerId}/recent?origin=${encodeURIComponent(origin)}&path=${encodeURIComponent(path)}`, {
             method: 'DELETE',
         });
-        if (resp.ok) {
-            loadFileManagerFiles(printerId);
-        } else {
-            const data = await resp.json();
-            if (data.error) alert(data.error);
-        }
-    } catch (e) {}
+        if (await checkOk(resp, 'Failed to delete file.')) loadFileManagerFiles(printerId);
+    } catch (e) { netFail('Failed to delete file.'); }
 }
 
 function totalWatts(power) {
@@ -483,13 +479,13 @@ async function controlPrint(printerId, action) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({action}),
         });
-        const data = await resp.json();
+        const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
             if (data.status) applyStatusUpdate(printerId, data.status);
-        } else if (data.error) {
-            alert(data.error);
+        } else {
+            alert(data.error || 'Print command failed.');
         }
-    } catch (e) {}
+    } catch (e) { netFail('Print command failed.'); }
 }
 
 // Power control
@@ -658,12 +654,26 @@ function webcamSrc(printerId, mode) {
 }
 
 // Fetch full printer list
+let fetchPrintersReq = 0;
+let printersSig = '';
+
 async function fetchPrinters() {
+    const req = ++fetchPrintersReq;
     try {
         const resp = await fetch('/api/printers');
         if (!resp.ok) return;
-        printers = await resp.json();
-        prevPrinterIDs = [];
+        const data = await resp.json();
+        if (req !== fetchPrintersReq) return; // a newer fetch superseded this one
+        printers = data;
+        // Rebuild the cards only when their static data changed. A forced
+        // rebuild on every call (SSE 'refresh' fires on any plug/camera/
+        // settings change) restarts every webcam stream for nothing; live
+        // status travels separately via SSE, so it's excluded from the compare.
+        const sig = JSON.stringify(printers.map(p => ({...p, status: null})));
+        if (sig !== printersSig) {
+            printersSig = sig;
+            prevPrinterIDs = [];
+        }
         updateDashboard();
     } catch (e) {}
 }
@@ -1521,15 +1531,12 @@ async function changePassword(e) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({current_password, new_password}),
         });
-        if (resp.ok) {
+        if (await checkOk(resp, 'Failed to change password.')) {
             document.getElementById('current-password').value = '';
             document.getElementById('new-password').value = '';
             alert('Password changed.');
-        } else {
-            const err = await resp.json();
-            alert(err.error || 'Failed to change password');
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to change password.'); }
 }
 
 // Users
@@ -1566,27 +1573,19 @@ async function addUser(e) {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username, password}),
         });
-        if (resp.ok) {
+        if (await checkOk(resp, 'Failed to add user.')) {
             document.getElementById('new-user-username').value = '';
             document.getElementById('new-user-password').value = '';
             loadUsers();
-        } else {
-            const err = await resp.json();
-            alert(err.error || 'Failed to add user');
         }
-    } catch (e) {}
+    } catch (e) { netFail('Failed to add user.'); }
 }
 
 async function deleteUser(id) {
     try {
         const resp = await fetch(`/api/users/${id}`, {method: 'DELETE'});
-        if (resp.ok) {
-            loadUsers();
-        } else {
-            const err = await resp.json();
-            alert(err.error || 'Failed to delete user');
-        }
-    } catch (e) {}
+        if (await checkOk(resp, 'Failed to delete user.')) loadUsers();
+    } catch (e) { netFail('Failed to delete user.'); }
 }
 
 function renderSettingsPrinterList() {
@@ -1648,11 +1647,18 @@ async function movePrinter(id, direction) {
     updateDashboard();
     renderSettingsPrinterList();
 
-    await fetch('/api/printers/reorder', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ids}),
-    });
+    // The optimistic swap above is only true if the server agrees - on any
+    // failure, reload the real order so the UI never shows an unsaved one.
+    try {
+        const resp = await fetch('/api/printers/reorder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ids}),
+        });
+        if (await checkOk(resp, 'Failed to reorder printers.')) return;
+    } catch (e) { netFail('Failed to reorder printers.'); }
+    await fetchPrinters();
+    renderSettingsPrinterList();
 }
 
 // Add/Edit printer modals
@@ -2176,7 +2182,7 @@ async function importConfig(input) {
             body: text,
         });
         if (resp.ok) {
-            const data = await resp.json();
+            const data = await resp.json().catch(() => ({}));
             let msg = `Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`;
             if (data.skipped && data.skipped.length) {
                 msg += `\n\nSkipped ${data.skipped.length} item(s):\n- ` + data.skipped.join('\n- ');
@@ -2188,7 +2194,7 @@ async function importConfig(input) {
             const data = await resp.json().catch(() => ({}));
             alert(data.error || 'Import failed.');
         }
-    } catch (e) {}
+    } catch (e) { netFail('Import failed.'); }
     input.value = '';
 }
 
