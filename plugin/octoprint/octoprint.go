@@ -736,7 +736,7 @@ func (p *Plugin) doPost(ctx context.Context, path string, body any) ([]byte, err
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -792,7 +792,7 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 	}
 	defer resp.Body.Close()
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -935,4 +935,17 @@ type layerProgressResponse struct {
 		Total            string `json:"total"`
 		TotalFormatted   string `json:"totalFormatted"`
 	} `json:"height"`
+}
+
+// maxBody caps any single API response read. Upstream printers are
+// semi-trusted LAN devices; an unbounded io.ReadAll on the poll path lets a
+// misbehaving or hostile one exhaust memory.
+const maxBody = 16 << 20
+
+func readBody(r io.Reader) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, maxBody+1))
+	if err == nil && len(b) > maxBody {
+		err = fmt.Errorf("response exceeds %d bytes", maxBody)
+	}
+	return b, err
 }

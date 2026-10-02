@@ -127,7 +127,7 @@ func parseBgcode(data []byte) (*Info, error) {
 		switch {
 		case blockType == blockFileMetadata || blockType == blockPrinterMetadata || blockType == blockPrintMetadata:
 			blockData := data[off+paramsSize : int(blockEnd)]
-			if text, err := decodeBytes(blockData, compression); err == nil {
+			if text, err := decodeBytes(blockData, compression, uncompressedSize); err == nil {
 				parseINILines(string(text), kv)
 			}
 		case blockType == blockThumbnail && off+6 <= len(data):
@@ -135,7 +135,7 @@ func parseBgcode(data []byte) (*Info, error) {
 			width := binary.LittleEndian.Uint16(data[off+2 : off+4])
 			height := binary.LittleEndian.Uint16(data[off+4 : off+6])
 			if ct, ok := thumbnailContentType(format); ok {
-				if raw, err := decodeBytes(data[off+paramsSize:int(blockEnd)], compression); err == nil {
+				if raw, err := decodeBytes(data[off+paramsSize:int(blockEnd)], compression, uncompressedSize); err == nil {
 					if area := int(width) * int(height); area > bestThumbArea {
 						bestThumb, bestThumbCT, bestThumbArea = raw, ct, area
 					}
@@ -159,7 +159,16 @@ func parseBgcode(data []byte) (*Info, error) {
 	return info, nil
 }
 
-func decodeBytes(b []byte, compression uint16) ([]byte, error) {
+// maxDecodedBlock caps what a metadata/thumbnail block may inflate to. The
+// header's uncompressed size is attacker-controlled data from a remote file,
+// so it is both validated against this cap and enforced during inflation (a
+// zlib stream can lie about its own size; 510x amplification was measured).
+const maxDecodedBlock = 16 << 20
+
+func decodeBytes(b []byte, compression uint16, uncompressedSize uint32) ([]byte, error) {
+	if uncompressedSize > maxDecodedBlock {
+		return nil, fmt.Errorf("block claims %d bytes uncompressed (cap %d)", uncompressedSize, maxDecodedBlock)
+	}
 	switch compression {
 	case 0:
 		return b, nil
@@ -169,7 +178,14 @@ func decodeBytes(b []byte, compression uint16) ([]byte, error) {
 			return nil, err
 		}
 		defer r.Close()
-		return io.ReadAll(r)
+		out, err := io.ReadAll(io.LimitReader(r, int64(uncompressedSize)+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(out) != int(uncompressedSize) {
+			return nil, fmt.Errorf("block inflated to %d bytes, header says %d", len(out), uncompressedSize)
+		}
+		return out, nil
 	default:
 		// Heatshrink (2, 3) is only ever used for gcode blocks in practice -
 		// metadata/thumbnail blocks we care about are always 0 or 1.
