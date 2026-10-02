@@ -1,6 +1,7 @@
 package prusalink
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -437,7 +438,35 @@ func (p *Plugin) downloadFile(ctx context.Context, path string, rangeBytes int) 
 		// requested prefix (the parser tolerates a truncated tail).
 		return io.ReadAll(io.LimitReader(resp.Body, int64(rangeBytes)))
 	}
-	return io.ReadAll(resp.Body)
+	return keepGcodeComments(resp.Body)
+}
+
+// maxKeptGcodeComments bounds what keepGcodeComments retains.
+const maxKeptGcodeComments = 8 << 20
+
+// keepGcodeComments streams a plain-gcode body and keeps only the ';' comment
+// lines - the only part printmeta reads (config footer + base64 thumbnails).
+// A 200MB+ file therefore costs a few MB, not 200MB. Output stops at
+// maxKeptGcodeComments; a line longer than 1MB ends the scan.
+func keepGcodeComments(r io.Reader) ([]byte, error) {
+	var out bytes.Buffer
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 || line[0] != ';' {
+			continue
+		}
+		if out.Len()+len(line)+1 > maxKeptGcodeComments {
+			break
+		}
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+	if err := sc.Err(); err != nil && err != bufio.ErrTooLong {
+		return nil, err
+	}
+	return out.Bytes(), nil
 }
 
 func (p *Plugin) UploadFile(ctx context.Context, storage, path string, data []byte, printAfter bool) (string, int64, error) {
