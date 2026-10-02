@@ -137,7 +137,19 @@ func (h *Handler) currentUser(r *http.Request) (string, bool) {
 	return username, true
 }
 
-func (h *Handler) startSession(w http.ResponseWriter, username string) error {
+// isHTTPS reports whether the client reached us over TLS, directly or via a
+// TLS-terminating proxy. Used to set the cookie's Secure flag only where it
+// can work - forcing it on plain-HTTP LAN installs would break login. A
+// spoofed X-Forwarded-Proto can only make a client's own cookie Secure.
+func isHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	proto, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
+}
+
+func (h *Handler) startSession(w http.ResponseWriter, r *http.Request, username string) error {
 	token, err := newSessionToken()
 	if err != nil {
 		return err
@@ -152,6 +164,7 @@ func (h *Handler) startSession(w http.ResponseWriter, username string) error {
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	return nil
@@ -255,7 +268,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/setup?error=1", http.StatusFound)
 			return
 		}
-		if err := h.startSession(w, username); err != nil {
+		if err := h.startSession(w, r, username); err != nil {
 			jsonError(w, "failed to start session", http.StatusInternalServerError)
 			return
 		}
@@ -307,7 +320,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.clearLoginFailures(key)
-		if err := h.startSession(w, username); err != nil {
+		if err := h.startSession(w, r, username); err != nil {
 			jsonError(w, "failed to start session", http.StatusInternalServerError)
 			return
 		}
@@ -460,7 +473,7 @@ func (h *Handler) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to update password", http.StatusInternalServerError)
 		return
 	}
-	if err := h.startSession(w, username); err != nil {
+	if err := h.startSession(w, r, username); err != nil {
 		jsonError(w, "failed to update password", http.StatusInternalServerError)
 		return
 	}

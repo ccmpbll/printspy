@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -115,5 +116,32 @@ func TestLoginFloodDoesNotEvictLiveEntries(t *testing.T) {
 	}
 	if !h.rateLimited("10.0.0.2|never-seen") {
 		t.Error("table full of live entries should fail closed for unseen keys")
+	}
+}
+
+func TestSessionCookieSecureOnlyOverHTTPS(t *testing.T) {
+	h, _ := newTestHandler(t)
+	cases := []struct {
+		name   string
+		mod    func(*http.Request)
+		secure bool
+	}{
+		{"plain http", func(r *http.Request) {}, false},
+		{"proxy https", func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "https") }, true},
+		{"proxy chain https first", func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "HTTPS, http") }, true},
+		{"proxy http", func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "http") }, false},
+		{"direct tls", func(r *http.Request) { r.TLS = &tls.ConnectionState{} }, true},
+	}
+	for i, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/login", nil)
+		c.mod(req)
+		if err := h.startSession(rec, req, fmt.Sprintf("u%d", i)); err != nil {
+			t.Fatal(err)
+		}
+		ck := rec.Result().Cookies()
+		if len(ck) != 1 || ck[0].Secure != c.secure || !ck[0].HttpOnly {
+			t.Errorf("%s: cookie=%+v, want Secure=%v HttpOnly", c.name, ck, c.secure)
+		}
 	}
 }
