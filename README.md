@@ -5,7 +5,7 @@ A self-hosted dashboard for monitoring multiple 3D printers — OctoPrint and Pr
 
 This was built for my own personal use and the way I want to interact with my printers, as well as an ongoing experiment in agentic coding.
 
-> **Early Development** — expect rough edges, breaking changes, and evolving APIs. Feedback and contributions welcome.
+> **Still Under Development** — expect rough edges, breaking changes, and evolving APIs. Feedback and contributions welcome.
 
 ## What it does
 
