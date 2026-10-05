@@ -219,12 +219,12 @@
                     <div class="form-hint field-spaced"><a id="camera-web-link" class="printer-link" href="#" target="_blank" rel="noopener">Open camera web UI &#8599;</a></div>
                     <label for="camera-resolution">Resolution</label>
                     <select id="camera-resolution" class="field-spaced" onchange="saveCameraOrientation()">
-                        <option value="8">VGA (640x480, fastest stream)</option>
-                        <option value="9">SVGA (800x600)</option>
-                        <option value="10">XGA (1024x768)</option>
-                        <option value="11">HD (1280x720, default)</option>
-                        <option value="12">SXGA (1280x1024)</option>
-                        <option value="13">UXGA (1600x1200, slowest stream)</option>
+                        <option value="10">VGA (640x480, fastest stream)</option>
+                        <option value="11">SVGA (800x600)</option>
+                        <option value="12">XGA (1024x768)</option>
+                        <option value="13">HD (1280x720, default)</option>
+                        <option value="14">SXGA (1280x1024)</option>
+                        <option value="15">UXGA (1600x1200, slowest stream)</option>
                     </select>
                     <label for="camera-quality">JPEG quality (<span id="camera-quality-val">12</span>, lower = better/slower)</label>
                     <input type="range" id="camera-quality" class="field-spaced" min="4" max="40" step="1" oninput="document.getElementById('camera-quality-val').textContent=this.value" onchange="saveCameraOrientation()">
