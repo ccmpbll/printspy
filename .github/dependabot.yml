@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    rebase-strategy: auto
+    commit-message:
+      prefix: "chore"
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    rebase-strategy: auto
+    commit-message:
+      prefix: "chore"
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    rebase-strategy: auto
+    commit-message:
+      prefix: "chore"
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
