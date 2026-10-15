@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
@@ -12,7 +12,7 @@ ARG VERSION=dev
 RUN CGO_ENABLED=1 go build -mod=readonly -o printspy -ldflags="-s -w -X main.version=${VERSION}" .
 RUN CGO_ENABLED=1 go build -mod=readonly -o backfill-history ./cmd/backfill-history
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache sqlite sqlite-libs ca-certificates
 COPY --from=builder /build/printspy /usr/local/bin/
 COPY --from=builder /build/backfill-history /usr/local/bin/
