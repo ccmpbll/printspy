@@ -1051,7 +1051,11 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		prevState = prev.State
 	}
 	if prevState != status.State {
-		log.Printf("[printer:%d] state changed: %s -> %s", id, prevState, status.State)
+		if status.StateMessage != "" {
+			log.Printf("[printer:%d] state changed: %s -> %s (%s)", id, prevState, status.State, status.StateMessage)
+		} else {
+			log.Printf("[printer:%d] state changed: %s -> %s", id, prevState, status.State)
+		}
 	}
 
 	if status.State == models.StatePrinting && status.Job != nil {
