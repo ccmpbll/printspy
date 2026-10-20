@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -105,7 +106,8 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 
 	printerData, statusCode, err := p.doGetRaw(ctx, "/api/printer?exclude=sd")
 	if err != nil {
-		log.Printf("[octoprint:%s] failed to get printer state: %v", p.config.URL, err)
+		// Debug only: the poller logs the offline transition once; this fires every tick.
+		slog.Debug("octoprint: failed to get printer state", "url", p.config.URL, "err", err)
 		status.State = models.StateOffline
 		status.StateMessage = "Unable to reach OctoPrint"
 		return status, nil

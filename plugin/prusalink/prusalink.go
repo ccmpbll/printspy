@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -144,7 +145,8 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 
 	statusData, statusCode, err := p.doGetRaw(ctx, "/api/v1/status")
 	if err != nil {
-		log.Printf("[prusalink:%s] failed to get status: %v", p.config.URL, err)
+		// Debug only: the poller logs the offline transition once; this fires every tick.
+		slog.Debug("prusalink: failed to get status", "url", p.config.URL, "err", err)
 		status.State = models.StateOffline
 		status.StateMessage = "Unable to reach PrusaLink"
 		return status, nil
