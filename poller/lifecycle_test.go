@@ -1,9 +1,13 @@
 package poller
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,5 +103,114 @@ func TestGoTrackedWaitsAndDropsAfterClose(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if ran.Load() {
 		t.Error("goroutine started after shutdown began")
+	}
+}
+
+// runKeepalive runs the keepalive loop for a printer in the given state (empty
+// = nothing polled yet) with ping standing in for the ICMP call, until stop
+// returns true or two seconds pass.
+func runKeepalive(t *testing.T, state models.PrinterState, ping func(string, time.Duration) error, stop func() bool, setup ...func(p *Poller, d *db.DB, id int64)) {
+	t.Helper()
+	orig := pingFn
+	pingFn = ping
+	t.Cleanup(func() { pingFn = orig })
+	p, d, id := newLifecyclePoller(t)
+	if state != "" {
+		p.mu.Lock()
+		p.cache[id] = &models.PrinterStatus{State: state}
+		p.mu.Unlock()
+	}
+	for _, fn := range setup {
+		fn(p, d, id)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", 5*time.Millisecond); close(done) }()
+	for deadline := time.Now().Add(2 * time.Second); !stop() && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
+func TestKeepaliveProbesAnOfflinePrinterOnlyOncePerInterval(t *testing.T) {
+	origEvery := offlineProbeEvery
+	offlineProbeEvery = time.Hour
+	t.Cleanup(func() { offlineProbeEvery = origEvery })
+
+	var pings atomic.Int32
+	count := func(string, time.Duration) error { pings.Add(1); return nil }
+
+	// Offline: the first tick probes, then nothing for the rest of the interval.
+	var first time.Time
+	runKeepalive(t, models.StateOffline, count, func() bool {
+		if pings.Load() >= 1 && first.IsZero() {
+			first = time.Now()
+		}
+		return !first.IsZero() && time.Since(first) >= 100*time.Millisecond // 20 more ticks
+	})
+	if n := pings.Load(); n != 1 {
+		t.Errorf("offline printer was pinged %d times in an hour-long probe interval, want 1", n)
+	}
+
+	// Online (and not yet polled): every tick pings.
+	for _, state := range []models.PrinterState{models.StateIdle, ""} {
+		pings.Store(0)
+		runKeepalive(t, state, count, func() bool { return pings.Load() >= 3 })
+		if n := pings.Load(); n < 3 {
+			t.Errorf("state %q: only %d pings, want a ping on every tick", state, n)
+		}
+	}
+}
+
+func TestKeepaliveLogsAFailureOnceUntilItAnswersAgain(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	var calls atomic.Int32
+	flaky := func(string, time.Duration) error {
+		n := calls.Add(1)
+		if n >= 2 && n <= 6 {
+			return errors.New("i/o timeout")
+		}
+		return nil
+	}
+	runKeepalive(t, models.StateIdle, flaky, func() bool { return calls.Load() >= 9 })
+
+	out := buf.String()
+	if got := strings.Count(out, "failed: i/o timeout"); got != 1 {
+		t.Errorf("failure logged %d times for 5 failed pings, want once:\n%s", got, out)
+	}
+	if got := strings.Count(out, "answered again"); got != 1 {
+		t.Errorf("recovery logged %d times, want once:\n%s", got, out)
+	}
+	if strings.Index(out, "failed:") > strings.Index(out, "answered again") {
+		t.Errorf("recovery logged before the failure:\n%s", out)
+	}
+}
+
+func TestKeepaliveSendsNothingWhileAllAssignedPlugsAreOff(t *testing.T) {
+	var pings atomic.Int32
+	count := func(string, time.Duration) error { pings.Add(1); return nil }
+	plug := func(on bool) func(p *Poller, d *db.DB, id int64) {
+		return func(p *Poller, d *db.DB, id int64) {
+			if _, err := d.CreateSmartPlug("10.0.0.9", "1", "plug", false, &id, ""); err != nil {
+				t.Fatal(err)
+			}
+			p.mu.Lock()
+			p.cache[id].Power = []models.PowerState{{ID: "10.0.0.9:1", On: on}}
+			p.mu.Unlock()
+		}
+	}
+	start := time.Now()
+	runKeepalive(t, models.StateIdle, count, func() bool { return time.Since(start) >= 100*time.Millisecond }, plug(false))
+	if n := pings.Load(); n != 0 {
+		t.Errorf("printer with its plug off was pinged %d times", n)
+	}
+	pings.Store(0)
+	runKeepalive(t, models.StateIdle, count, func() bool { return pings.Load() >= 3 }, plug(true))
+	if n := pings.Load(); n < 3 {
+		t.Errorf("printer with its plug on: only %d pings", n)
 	}
 }
