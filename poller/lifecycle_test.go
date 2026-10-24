@@ -217,35 +217,35 @@ func TestKeepaliveLogsANewFailureAfterAPlugOffPeriod(t *testing.T) {
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	p, d, id := newLifecyclePoller(t)
-	if _, err := d.CreateSmartPlug("10.0.0.9", "1", "plug", false, &id, ""); err != nil {
-		t.Fatal(err)
-	}
-	setPlug := func(on bool) {
-		p.mu.Lock()
-		p.cache[id] = &models.PrinterStatus{State: models.StateIdle, Power: []models.PowerState{{ID: "10.0.0.9:1", On: on}}}
-		p.mu.Unlock()
-	}
 	var calls atomic.Int32
-	p.ping = func(string, time.Duration) error { calls.Add(1); return errors.New("i/o timeout") }
-
-	setPlug(true)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", 5*time.Millisecond); close(done) }()
-	waitFor := func(cond func() bool) {
-		for deadline := time.Now().Add(2 * time.Second); !cond() && time.Now().Before(deadline); {
-			time.Sleep(2 * time.Millisecond)
+	failing := func(string, time.Duration) error { calls.Add(1); return errors.New("i/o timeout") }
+	var setPlug func(on bool)
+	plugAssigned := func(p *Poller, d *db.DB, id int64) {
+		if _, err := d.CreateSmartPlug("10.0.0.9", "1", "plug", false, &id, ""); err != nil {
+			t.Fatal(err)
 		}
+		setPlug = func(on bool) {
+			p.mu.Lock()
+			p.cache[id] = &models.PrinterStatus{State: models.StateIdle, Power: []models.PowerState{{ID: "10.0.0.9:1", On: on}}}
+			p.mu.Unlock()
+		}
+		setPlug(true)
 	}
-	waitFor(func() bool { return calls.Load() >= 3 }) // failing, logged once
-	setPlug(false)                                    // powered down: pings pause
-	time.Sleep(30 * time.Millisecond)
-	before := calls.Load()
-	setPlug(true) // powered up, still not answering
-	waitFor(func() bool { return calls.Load() >= before+2 })
-	cancel()
-	<-done
+
+	// Phases, driven from the stop check: pinging and failing, plug off (pings
+	// pause), plug on again and still failing.
+	phase, offAt, before := 0, time.Time{}, int32(0)
+	runKeepalive(t, models.StateIdle, failing, func() bool {
+		switch {
+		case phase == 0 && calls.Load() >= 3:
+			setPlug(false)
+			phase, offAt = 1, time.Now()
+		case phase == 1 && time.Since(offAt) >= 30*time.Millisecond:
+			setPlug(true)
+			phase, before = 2, calls.Load()
+		}
+		return phase == 2 && calls.Load() >= before+2
+	}, plugAssigned)
 
 	if got := strings.Count(buf.String(), "failed: i/o timeout"); got != 2 {
 		t.Errorf("failure logged %d times across two episodes, want 2:\n%s", got, buf.String())
