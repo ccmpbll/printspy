@@ -294,15 +294,28 @@ func (p *Poller) pingInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+// pingFn is pingHost; a test swaps it so the loop can run without a raw socket.
+var pingFn = pingHost
+
+// offlineProbeEvery is how often a ping is still sent while the poller sees
+// the printer offline. Every tick would only fill the log, but stopping
+// entirely could leave a printer whose wifi went to sleep with no traffic to
+// wake it, so one a minute keeps that door open.
+var offlineProbeEvery = time.Minute
+
 // keepaliveLoop periodically ICMP-pings a printer's IP, independent of the
 // status poll loop, to keep its wifi interface from dropping off the
-// network during idle periods.
+// network during idle periods. It does not ping while every assigned plug is
+// off (the printer has no power), pings an offline printer only every
+// offlineProbeEvery, and logs a failing ping once until it answers again.
 func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string, interval time.Duration) {
 	log.Printf("starting keepalive ping for printer %d (%s) -> %s every %s", id, name, host, interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	var lastPing time.Time
+	failing := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -312,11 +325,30 @@ func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string,
 				slog.Debug("keepalive: skipping ping, all assigned plugs off", "printer", id, "host", host)
 				continue
 			}
-			if err := pingHost(host, 3*time.Second); err != nil {
-				log.Printf("[printer:%d] keepalive ping to %s failed: %v", id, host, err)
+			if p.knownOffline(id) && time.Since(lastPing) < offlineProbeEvery {
+				slog.Debug("keepalive: skipping ping, printer offline", "printer", id, "host", host)
+				continue
+			}
+			lastPing = time.Now()
+			err := pingFn(host, 3*time.Second)
+			switch {
+			case err != nil && !failing:
+				failing = true
+				log.Printf("[printer:%d] keepalive ping to %s failed: %v (further failures are logged at debug level until it answers)", id, host, err)
+			case err != nil:
+				slog.Debug("keepalive ping failed", "printer", id, "host", host, "err", err)
+			case failing:
+				failing = false
+				log.Printf("[printer:%d] keepalive ping to %s answered again", id, host)
 			}
 		}
 	}
+}
+
+// knownOffline reports whether the poller has a status for this printer and
+// it is not online. No status yet is not offline: keep pinging.
+func (p *Poller) knownOffline(id int64) bool {
+	return p.GetStatus(id) != nil && !p.IsOnline(id)
 }
 
 // allAssignedPlugsOff reports whether every smart plug assigned to this
