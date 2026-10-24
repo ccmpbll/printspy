@@ -57,8 +57,9 @@ Plugin architecture — new platforms should be straightforward to add.
 
 - Snapshot only — no live stream from the printer's own camera (assign a printspy-cam for a live feed)
 - No native power control over the API — use a directly-configured smart plug instead
-- Keepalive ping — works around printers whose wifi drops off after sitting idle; paused while its smart plugs are all off, probed only once a minute while the printer is offline, and a failing ping is logged once until it answers again
+- Keepalive ping — keeps idle printers' wifi up; paused while the printer is off
 - File upload from the dashboard, with an optional "print immediately"
+- PrusaLink printers with an assigned smart plug are polled only once a minute while offline with every plug off
 - Slicer print-host target — point PrusaSlicer/OrcaSlicer's "Send to printer" (PrusaLink mode) at PrintSpy, pinned to one specific printer; "Upload" relays automatically once the printer's online, "Upload and Print" also powers it on first if it's off — no manual step either way
 - Print history enriched with real per-print metadata — material, filament used/cost, layer height, duration vs. estimate, and per-tool breakdown for multi-material prints — parsed directly from the file's own slicer metadata, since none of this is exposed over PrusaLink's API
 
