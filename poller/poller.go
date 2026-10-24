@@ -294,6 +294,9 @@ func (p *Poller) pingInterval() time.Duration {
 	return time.Duration(n) * time.Second
 }
 
+// pingFn is pingHost; a test swaps it so the loop can run without a raw socket.
+var pingFn = pingHost
+
 // keepaliveLoop periodically ICMP-pings a printer's IP, independent of the
 // status poll loop, to keep its wifi interface from dropping off the
 // network during idle periods.
@@ -308,15 +311,27 @@ func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string,
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if p.allAssignedPlugsOff(id) {
-				slog.Debug("keepalive: skipping ping, all assigned plugs off", "printer", id, "host", host)
+			if p.skipKeepalive(id) {
+				slog.Debug("keepalive: skipping ping, printer offline or all assigned plugs off", "printer", id, "host", host)
 				continue
 			}
-			if err := pingHost(host, 3*time.Second); err != nil {
+			if err := pingFn(host, 3*time.Second); err != nil {
 				log.Printf("[printer:%d] keepalive ping to %s failed: %v", id, host, err)
 			}
 		}
 	}
+}
+
+// skipKeepalive reports whether a ping would be pointless: the latest poll
+// already found the printer offline (nothing up to keep awake, and a ping
+// just logs a failure every tick; the poll loop keeps running and the pings
+// resume once the printer answers again), or every assigned plug is off.
+// No cached status yet means keep pinging.
+func (p *Poller) skipKeepalive(id int64) bool {
+	if st := p.GetStatus(id); st != nil && st.State == models.StateOffline {
+		return true
+	}
+	return p.allAssignedPlugsOff(id)
 }
 
 // allAssignedPlugsOff reports whether every smart plug assigned to this

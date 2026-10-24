@@ -101,3 +101,61 @@ func TestGoTrackedWaitsAndDropsAfterClose(t *testing.T) {
 		t.Error("goroutine started after shutdown began")
 	}
 }
+
+func TestSkipKeepaliveWhilePrinterOffline(t *testing.T) {
+	p, _, id := newLifecyclePoller(t)
+	if p.skipKeepalive(id) {
+		t.Errorf("no status cached yet: want keep pinging")
+	}
+	for state, want := range map[models.PrinterState]bool{
+		models.StateOffline:  true,
+		models.StateIdle:     false,
+		models.StatePrinting: false,
+	} {
+		p.mu.Lock()
+		p.cache[id] = &models.PrinterStatus{State: state}
+		p.mu.Unlock()
+		if got := p.skipKeepalive(id); got != want {
+			t.Errorf("state %s: skipKeepalive = %v, want %v", state, got, want)
+		}
+	}
+	// The poll loop is what notices the printer coming back: once it caches
+	// a reachable state the pings resume.
+	p.mu.Lock()
+	p.cache[id] = &models.PrinterStatus{State: models.StateOffline}
+	p.mu.Unlock()
+	if !p.skipKeepalive(id) {
+		t.Fatal("setup: offline should skip")
+	}
+	p.mu.Lock()
+	p.cache[id] = &models.PrinterStatus{State: models.StateIdle}
+	p.mu.Unlock()
+	if p.skipKeepalive(id) {
+		t.Errorf("printer back online: want pings to resume")
+	}
+}
+
+func TestKeepaliveLoopSendsNoPingsToAnOfflinePrinter(t *testing.T) {
+	var pings atomic.Int32
+	orig := pingFn
+	pingFn = func(string, time.Duration) error { pings.Add(1); return nil }
+	t.Cleanup(func() { pingFn = orig })
+
+	run := func(state models.PrinterState) int32 {
+		p, _, id := newLifecyclePoller(t)
+		p.mu.Lock()
+		p.cache[id] = &models.PrinterStatus{State: state}
+		p.mu.Unlock()
+		pings.Store(0)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+		defer cancel()
+		p.keepaliveLoop(ctx, id, "p", "10.0.0.1", 10*time.Millisecond)
+		return pings.Load()
+	}
+	if n := run(models.StateOffline); n != 0 {
+		t.Errorf("offline printer was pinged %d times", n)
+	}
+	if n := run(models.StateIdle); n == 0 {
+		t.Errorf("idle printer was never pinged")
+	}
+}
