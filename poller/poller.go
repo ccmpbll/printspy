@@ -29,6 +29,13 @@ import (
 type polledPrinter struct {
 	plugin plugin.PrinterPlugin
 	cancel context.CancelFunc
+	// skipWhenUnpowered (PrusaLink only): once the printer is cached offline and
+	// every smart plug assigned to it reads off, poll() stops sending status
+	// requests to it (see skipUnpoweredPoll).
+	skipWhenUnpowered bool
+	// lastRequest is when poll() last actually asked the printer for its
+	// status; only touched under the per-printer poll lock.
+	lastRequest time.Time
 	// idleSince tracks when this printer entered the idle state, for the
 	// auto-off-after-idle-timeout feature. Zero value means "not idle" (or
 	// auto-off already fired for this idle streak).
@@ -256,8 +263,9 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	pp := &polledPrinter{
-		plugin: pl,
-		cancel: cancel,
+		plugin:            pl,
+		cancel:            cancel,
+		skipWhenUnpowered: config.Type == "prusalink",
 	}
 	p.printers[config.ID] = pp
 
@@ -1006,18 +1014,34 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	defer lock.Unlock()
 
 	start := time.Now()
-	status, err := pl.GetStatus(ctx)
-	if err != nil && ctx.Err() != nil {
-		// Our own context ended (request cancelled, shutdown) - that says
-		// nothing about the printer, so don't write a synthetic "offline"
-		// into the cache and fan it out over SSE/MQTT.
-		return
+	p.mu.RLock()
+	pp := p.printers[id]
+	p.mu.RUnlock()
+	if pp != nil && pp.plugin != pl {
+		pp = nil // a stale poll for a replaced printer
 	}
-	if err != nil {
-		log.Printf("[printer:%d] poll error: %v", id, err)
-		status = &models.PrinterStatus{
-			State:       models.StateOffline,
-			LastUpdated: time.Now(),
+	var status *models.PrinterStatus
+	if pp != nil && p.skipUnpoweredPoll(id, pp) {
+		slog.Debug("poll: printer offline and its plugs are off, not asking it", "printer", id)
+		status = &models.PrinterStatus{State: models.StateOffline, LastUpdated: time.Now()}
+	} else {
+		var err error
+		status, err = pl.GetStatus(ctx)
+		if pp != nil {
+			pp.lastRequest = time.Now()
+		}
+		if err != nil && ctx.Err() != nil {
+			// Our own context ended (request cancelled, shutdown) - that says
+			// nothing about the printer, so don't write a synthetic "offline"
+			// into the cache and fan it out over SSE/MQTT.
+			return
+		}
+		if err != nil {
+			log.Printf("[printer:%d] poll error: %v", id, err)
+			status = &models.PrinterStatus{
+				State:       models.StateOffline,
+				LastUpdated: time.Now(),
+			}
 		}
 	}
 	if status.Job != nil {
@@ -1027,7 +1051,7 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	}
 
 	if plugs, err := p.db.ListSmartPlugs(id); err == nil && len(plugs) > 0 {
-		status.Power = append(status.Power, p.fetchDirectPower(ctx, id, plugs)...)
+		status.Power = append(status.Power, directPowerFn(p, ctx, id, plugs)...)
 	}
 	for _, ps := range status.Power {
 		slog.Debug("poll: plug state", "printer", id, "plug", ps.ID, "on", ps.On, "source", ps.Source)
@@ -1684,6 +1708,31 @@ func (p *Poller) globalThermalSetting(key string) float64 {
 	}
 	n, _ := strconv.ParseFloat(v, 64)
 	return n
+}
+
+// directPowerFn is (*Poller).fetchDirectPower; a test swaps it so poll() can
+// run without reaching a real smart plug.
+var directPowerFn = (*Poller).fetchDirectPower
+
+// unpoweredProbeEvery is how often a PrusaLink printer is still asked for its
+// status while it is cached offline with every assigned plug off. The plugs
+// could be something other than the printer's own power (a lamp), and a
+// printer that is actually up must not stay "offline" until a plug changes.
+var unpoweredProbeEvery = 5 * time.Minute
+
+// skipUnpoweredPoll reports whether this tick should not send a request to
+// the printer: a PrusaLink printer already cached as offline whose assigned
+// plugs all read off, and which was asked less than unpoweredProbeEvery ago.
+// Only a cached offline state qualifies, so a printer that was printing (or
+// idle) when its plug went off keeps being polled until that failed poll
+// records it as offline, with the usual print handling. The plug readings
+// are still refreshed on every tick, so turning the plug on resumes polling.
+func (p *Poller) skipUnpoweredPoll(id int64, pp *polledPrinter) bool {
+	if !pp.skipWhenUnpowered || time.Since(pp.lastRequest) >= unpoweredProbeEvery {
+		return false
+	}
+	st := p.GetStatus(id)
+	return st != nil && st.State == models.StateOffline && p.allAssignedPlugsOff(id)
 }
 
 func (p *Poller) fetchDirectPower(ctx context.Context, id int64, plugs []models.SmartPlug) []models.PowerState {
