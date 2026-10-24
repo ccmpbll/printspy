@@ -114,10 +114,8 @@ func TestGoTrackedWaitsAndDropsAfterClose(t *testing.T) {
 // returns true or two seconds pass.
 func runKeepalive(t *testing.T, state models.PrinterState, ping func(string, time.Duration) error, stop func() bool, setup ...func(p *Poller, d *db.DB, id int64)) {
 	t.Helper()
-	orig := pingFn
-	pingFn = ping
-	t.Cleanup(func() { pingFn = orig })
 	p, d, id := newLifecyclePoller(t)
+	p.ping = ping
 	if state != "" {
 		p.mu.Lock()
 		p.cache[id] = &models.PrinterStatus{State: state}
@@ -137,14 +135,10 @@ func runKeepalive(t *testing.T, state models.PrinterState, ping func(string, tim
 }
 
 func TestKeepaliveProbesAnOfflinePrinterOnlyOncePerInterval(t *testing.T) {
-	origEvery := offlineProbeEvery
-	offlineProbeEvery = time.Hour
-	t.Cleanup(func() { offlineProbeEvery = origEvery })
-
 	var pings atomic.Int32
 	count := func(string, time.Duration) error { pings.Add(1); return nil }
 
-	// Offline: the first tick probes, then nothing for the rest of the interval.
+	// Offline: the first tick probes, then nothing for the rest of the (one minute) interval.
 	var first time.Time
 	runKeepalive(t, models.StateOffline, count, func() bool {
 		if pings.Load() >= 1 && first.IsZero() {
@@ -153,7 +147,7 @@ func TestKeepaliveProbesAnOfflinePrinterOnlyOncePerInterval(t *testing.T) {
 		return !first.IsZero() && time.Since(first) >= 100*time.Millisecond // 20 more ticks
 	})
 	if n := pings.Load(); n != 1 {
-		t.Errorf("offline printer was pinged %d times in an hour-long probe interval, want 1", n)
+		t.Errorf("offline printer was pinged %d times inside one probe interval, want 1", n)
 	}
 
 	// Online (and not yet polled): every tick pings.
@@ -215,5 +209,45 @@ func TestKeepaliveSendsNothingWhileAllAssignedPlugsAreOff(t *testing.T) {
 	runKeepalive(t, models.StateIdle, count, func() bool { return pings.Load() >= 3 }, plug(true))
 	if n := pings.Load(); n < 3 {
 		t.Errorf("printer with its plug on: only %d pings", n)
+	}
+}
+
+func TestKeepaliveLogsANewFailureAfterAPlugOffPeriod(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	p, d, id := newLifecyclePoller(t)
+	if _, err := d.CreateSmartPlug("10.0.0.9", "1", "plug", false, &id, ""); err != nil {
+		t.Fatal(err)
+	}
+	setPlug := func(on bool) {
+		p.mu.Lock()
+		p.cache[id] = &models.PrinterStatus{State: models.StateIdle, Power: []models.PowerState{{ID: "10.0.0.9:1", On: on}}}
+		p.mu.Unlock()
+	}
+	var calls atomic.Int32
+	p.ping = func(string, time.Duration) error { calls.Add(1); return errors.New("i/o timeout") }
+
+	setPlug(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", 5*time.Millisecond); close(done) }()
+	waitFor := func(cond func() bool) {
+		for deadline := time.Now().Add(2 * time.Second); !cond() && time.Now().Before(deadline); {
+			time.Sleep(2 * time.Millisecond)
+		}
+	}
+	waitFor(func() bool { return calls.Load() >= 3 }) // failing, logged once
+	setPlug(false)                                    // powered down: pings pause
+	time.Sleep(30 * time.Millisecond)
+	before := calls.Load()
+	setPlug(true) // powered up, still not answering
+	waitFor(func() bool { return calls.Load() >= before+2 })
+	cancel()
+	<-done
+
+	if got := strings.Count(buf.String(), "failed: i/o timeout"); got != 2 {
+		t.Errorf("failure logged %d times across two episodes, want 2:\n%s", got, buf.String())
 	}
 }

@@ -43,11 +43,9 @@ func newUnpoweredRig(t *testing.T, typ string, withPlug bool) *unpoweredRig {
 			t.Fatal(err)
 		}
 	}
-	orig := directPowerFn
-	directPowerFn = func(*Poller, context.Context, int64, []models.SmartPlug) []models.PowerState {
+	r.p.fetchPower = func(context.Context, int64, []models.SmartPlug) []models.PowerState {
 		return []models.PowerState{{ID: "10.0.0.9:1", On: r.plugOn.Load()}}
 	}
-	t.Cleanup(func() { directPowerFn = orig })
 	return r
 }
 
@@ -164,6 +162,24 @@ func TestPollingIsUnchangedOutsideTheSkipCase(t *testing.T) {
 		r.poll()
 		if n := r.calls.Load(); n != tc.wantCalls {
 			t.Errorf("%s: printer asked %d times, want %d", tc.name, n, tc.wantCalls)
+		}
+	}
+}
+
+func TestASkippedPollKeepsWhatThePrinterLastReported(t *testing.T) {
+	for _, state := range []models.PrinterState{models.StateOffline, models.StateDisconnected} {
+		r := newUnpoweredRig(t, "prusalink", true)
+		r.p.mu.Lock()
+		r.p.cache[r.id] = &models.PrinterStatus{State: state, StateMessage: "Unable to reach PrusaLink", Power: []models.PowerState{{ID: "10.0.0.9:1"}}}
+		r.p.mu.Unlock()
+		r.poll()
+		r.poll()
+		if n := r.calls.Load(); n != 0 {
+			t.Fatalf("%s: skip case was asked %d times", state, n)
+		}
+		st := r.p.GetStatus(r.id)
+		if st.State != state || st.StateMessage != "Unable to reach PrusaLink" {
+			t.Errorf("%s: skipped poll left %s / %q, want the cached state and reason kept", state, st.State, st.StateMessage)
 		}
 	}
 }
