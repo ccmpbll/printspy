@@ -20,7 +20,10 @@ import (
 type fnPlugin struct {
 	plugin.PrinterPlugin
 	get func(ctx context.Context) (*models.PrinterStatus, error)
+	typ string
 }
+
+func (f *fnPlugin) Type() string { return f.typ }
 
 func (f *fnPlugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) { return f.get(ctx) }
 func (f *fnPlugin) Connect(ctx context.Context) error                            { return nil }
