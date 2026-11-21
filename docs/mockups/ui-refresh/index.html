@@ -15,6 +15,7 @@
         <button data-v="cur">Current</button>
         <button data-v="a" class="on">A · Refined cards</button>
         <button data-v="b">B · Camera tiles</button>
+        <button data-v="set">Settings</button>
     </span>
     <span class="mock-seg" id="seg2" title="Demo data">
         <button data-d="busy" class="on">Busy fleet</button>
@@ -177,7 +178,7 @@ function tileB(p){
 function headerCur(){ return `<span class="power-controls"><button class="btn btn-sm">&#9889; All On</button><button class="btn btn-sm">&#9889; All Off</button></span>
   <button class="btn btn-sm">&#8593; Upload</button><button class="btn btn-icon">${IC.gear}</button><button class="btn btn-icon">${IC.out}</button>`; }
 const USERMENU = `<span class="menu-wrap usermenu"><button class="btn um-btn" onclick="toggleMenu(event,'um')" aria-haspopup="true"><span class="avatar">A</span><span class="uname">admin</span><span class="caret">&#9662;</span></button>
-  <div class="menu" id="um"><button>&#9881;&nbsp; Settings</button><hr><button>Log out</button><hr><div class="ver">PrintSpy v2026.07.17</div></div></span>`;
+  <div class="menu" id="um"><button onclick="go('set')">&#9881;&nbsp; Settings</button><hr><button>Log out</button><hr><div class="ver">PrintSpy v2026.07.17</div></div></span>`;
 let side = 'right';
 function headerNew(){ return `<span class="menu-wrap"><button class="btn btn-sm" onclick="toggleMenu(event,'pw')">&#9889;<span class="lbl"> Power</span> &#9662;</button>
     <div class="menu" id="pw"><button>All printers on</button><button>All printers off</button><hr><button>Turn off idle printers</button></div></span>
@@ -207,6 +208,7 @@ const NOTES = {
   <li>Below: filename, ETA / left / layer, temps, then controls and plugs. Fits 2–3 printers per screen on desktop.</li></ul></div>`
 };
 
+function go(v){ view=v; filter='all'; document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.v===v)); render(); window.scrollTo(0,0); }
 function render(){
   const pc=document.getElementById('printer-count'); pc.textContent = view==='cur' ? `${DATA.filter(p=>p.state!=='offline').length}/${DATA.length} connected` : ''; pc.style.marginLeft='auto'; document.body.dataset.view=view;
   document.getElementById('hdr-actions').innerHTML = view==='cur' ? headerCur() : headerNew();
@@ -214,7 +216,8 @@ function render(){
   document.getElementById('app-version').style.display = view==='cur' ? '' : 'none';
   document.body.dataset.side = side;
   
-  document.getElementById('fleet').innerHTML = view==='cur' ? '' : fleetHTML();
+  document.getElementById('fleet').innerHTML = (view==='cur'||view==='set') ? '' : fleetHTML();
+  if (view==='set') { document.getElementById('list').innerHTML = settingsHTML(); return; }
   const list = view==='cur' ? DATA : DATA.filter(p=>filter==='all'||p.state===filter);
   document.getElementById('list').innerHTML = view==='cur' ? list.map(cardCur).join('')
     : view==='a' ? list.map(cardA).join('') : `<div class="b-grid">${list.map(tileB).join('')}</div>`;
@@ -226,5 +229,6 @@ document.getElementById('seg2').onclick = e => { const d=e.target.dataset.d; if(
 document.getElementById('seg4').onclick = e => { const v=e.target.dataset.f; if(!v) return; fh=v; [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b.dataset.f===v)); render(); };
 render();
 </script>
+<script src="settings.js"></script>
 </body>
 </html>
