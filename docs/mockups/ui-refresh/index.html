@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PrintSpy UI mockup</title>
+<link rel="icon" href="../../../web/logo.png">
+<link rel="stylesheet" href="../../../web/style.css">
+<link rel="stylesheet" href="mock.css">
+</head>
+<body>
+<div class="mock-switch">
+    <b>PrintSpy UI mockup</b>
+    <span class="mock-seg" id="seg">
+        <button data-v="cur">Current</button>
+        <button data-v="a" class="on">A · Refined cards</button>
+        <button data-v="b">B · Camera tiles</button>
+    </span>
+    <span class="mock-seg" id="seg2" title="Demo data">
+        <button data-d="busy" class="on">Busy fleet</button>
+        <button data-d="idle">All idle</button>
+    </span>
+    <span class="mock-seg" id="seg4" title="Files and History"><button data-f="btn" class="on">Files/History: buttons</button><button data-f="menu">in ⋯ menu</button></span>
+    <span style="margin-left:auto">Mockup only: static data, nothing is wired up.</span>
+</div>
+
+<div class="container">
+    <header>
+        <img src="../../../web/logo.png" alt="PrintSpy" class="header-logo">
+        <h1>PrintSpy</h1>
+        <span class="app-version" id="app-version">v2026.07.17</span>
+        <span id="hdr-left" style="display:contents"></span>
+        <span class="printer-count" id="printer-count"></span>
+        <span id="hdr-actions" style="display:contents"></span>
+    </header>
+
+    <div id="fleet"></div>
+    <div id="list"></div>
+</div>
+
+<script>
+const IC = {
+  gear: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>',
+  out: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>',
+  more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>'
+};
+
+// ---- demo data ----
+const BUSY = [
+  {id:1, name:'Core One', model:'Prusa Core One+', state:'printing', img:'plate-coreone.png', file:'allparts_m_joints-v1_0.4n_0.15mm_PETG_COREONE_1h14m.bgcode',
+   pct:64, elapsed:'1h 6m', remain:'26m', eta:'01:20 PM', layer:'212 / 331', hot:[250,250], bed:[86,85], chamber:[38,0], watts:150,
+   plugs:[{l:'Printer',on:true},{l:'Lights',on:true}]},
+  {id:2, name:'MK4S', model:'Prusa MK4S + MMU3', state:'printing', img:'plate-mk4s.png', file:'allparts_m_body-v1_0.4n_0.15mm_PLA_MK4SMMU3_2h16m.bgcode',
+   pct:53, elapsed:'1h 13m', remain:'1h 3m', eta:'01:57 PM', layer:'148 / 280', hot:[225,225], bed:[60,60], watts:126,
+   plugs:[{l:'Printer',on:true},{l:'Lights',on:true},{l:'Fan',on:true}]},
+  {id:3, name:'Ender 3', model:'OctoPrint', state:'paused', img:null, file:'benchy_0.2mm_PLA.gcode', pct:41, elapsed:'38m', remain:'54m', eta:'02:11 PM', layer:'98 / 240',
+   hot:[205,205], bed:[60,60], watts:92, plugs:[{l:'Printer',on:true}], msg:'Paused: filament change'},
+  {id:4, name:'Mini+', model:'Prusa Mini+', state:'idle', img:null, last:'plate-mk4s.png', ingest:'benchy_0.2mm_PLA_MINI.bgcode', msg:'Idle. Last print finished 2h ago (success)', hot:[24,0], bed:[23,0], watts:4,
+   plugs:[{l:'Printer',on:true}]},
+  {id:6, name:'XL', model:'Prusa XL 5T', state:'error', img:null, msg:'Error: Heatbed thermistor disconnected (MINTEMP). Check the cable, then power-cycle.', hot:[27,0], bed:[19,0], plugs:[{l:'Printer',on:true}]},
+  {id:5, name:'Voron 2.4', model:'Klipper', state:'offline', img:null, msg:'No response for 14 min', plugs:[{l:'Printer',on:false}]}
+];
+const IDLE = BUSY.map(p => p.state==='printing'||p.state==='paused'
+  ? {...p, state:'idle', img:p.img, msg:'Idle. Last print finished 12 min ago (success)', hot:[24,0], bed:[23,0], watts:6} : p);
+let DATA = BUSY, view = 'a', open = null;
+
+const cap = s => s[0].toUpperCase()+s.slice(1);
+const on = p => p.state==='printing'||p.state==='paused';
+const stClass = s => `state-${s}`;
+const stLabel = p => p.state==='paused' ? 'Paused' : cap(p.state);
+
+function camHTML(p, cls='ph') {
+  if (p.img) return `<img src="${p.img}" alt="">`;
+  if (p.state==='offline') return `<div class="${cls} offline">No camera</div>`;
+  return `<div class="${cls}"></div>`;
+}
+
+/* ====== CURRENT (faithful: real classes + real stylesheet) ====== */
+function plugOld(pl){ return `<span class="power-btn-group"><button class="power-toggle-btn ${pl.on?'power-btn-active power-on':''}">${pl.l}&#9889; On</button><button class="power-toggle-btn ${!pl.on?'power-btn-active power-off':''}">Off</button></span>`; }
+function cardCur(p){
+  const cls = {printing:'card-busy',paused:'card-attention',offline:'card-offline',error:'card-error'}[p.state]||'';
+  const ctl = p.state==='printing' ? `<span class="print-controls"><button class="btn btn-sm">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger"><span class="icon-stop"></span> Cancel</button></span>`
+            : p.state==='paused' ? `<span class="print-controls"><button class="btn btn-sm btn-primary"><span class="icon-play"></span> Resume</button><button class="btn btn-sm btn-danger"><span class="icon-stop"></span> Cancel</button></span>` : '';
+  const stat = on(p) ? `
+    <div class="file-and-thumb"><div class="file-and-progress"><div class="print-filename">${p.file}</div>
+      <div><div class="progress-row"><span class="progress-label">Progress</span><span class="progress-value">${p.pct}%</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${p.pct}%"></div></div></div></div></div>
+    <div class="stat-rows"><div class="stat-grid stat-grid-auto">
+      <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value">${p.elapsed}</div></div>
+      <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value">${p.remain}</div></div>
+      <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value">${p.eta}</div></div></div>
+      <div class="stat-grid stat-grid-auto">
+      <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value">${p.hot[0]}<span class="stat-unit">&deg;C / ${p.hot[1]}&deg;C</span></div></div>
+      <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value">${p.bed[0]}<span class="stat-unit">&deg;C / ${p.bed[1]}&deg;C</span></div></div>
+      <div class="stat-box"><div class="stat-label">Power</div><div class="stat-value">${p.watts}<span class="stat-unit">W</span></div></div></div></div>`
+    : `<div class="idle-message msg-${p.state}">${p.msg}</div>` + (p.hot ? `<div class="stat-grid stat-grid-auto">
+      <div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value">${p.hot[0]}<span class="stat-unit">&deg;C / off</span></div></div>
+      <div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value">${p.bed[0]}<span class="stat-unit">&deg;C / off</span></div></div>
+      <div class="stat-box"><div class="stat-label">Power</div><div class="stat-value">${p.watts}<span class="stat-unit">W</span></div></div></div>` : '');
+  return `<div class="printer-card ${cls}">
+    <div class="printer-header"><span class="printer-name">${p.name}</span><span class="printer-model">${p.model}</span>
+      <span class="printer-state ${stClass(p.state)}">${stLabel(p)}</span>${p.plugs.map(plugOld).join('')}${ctl}
+      <button class="btn btn-sm btn-files">Files</button><button class="btn btn-sm btn-history">History</button></div>
+    <div class="printer-body"><div class="webcam-wrapper"><div class="webcam-container">${p.img?`<img class="webcam-img" src="${p.img}">`:`<div class="webcam-placeholder">${p.state==='offline'?'No camera':'Camera Unreachable'}</div>`}</div>
+      <div class="webcam-mode-row"><button class="webcam-mode-btn active">PLATE</button><button class="webcam-mode-btn">SNAP</button><button class="webcam-mode-btn">LIVE</button></div></div>
+    <div class="printer-stats">${stat}</div></div></div>`;
+}
+
+/* ====== PROPOSAL A: refined cards ====== */
+const pillCls = s => `${stClass(s)} pill ${s}`;
+function plugNew(pl, p){
+  const lock = p && on(p) && pl.l==='Printer' && pl.on;
+  return lock ? `<span class="plug on locked" title="Can't turn the printer off while printing"><span class="knob"></span>${pl.l}<small>&#128274;</small></span>`
+              : `<span class="plug ${pl.on?'on':''}" onclick="this.classList.toggle('on')"><span class="knob"></span>${pl.l}</span>`; }
+function tempCell(lab, v, t, max){
+  const ok = t>0 && v>=t-3, heat = t>0 && v<t-3;
+  const w = Math.min(100, (t>0 ? v/t : v/max*.5)*100);
+  return `<span class="tempcell temp ${ok?'ok':''} ${heat?'heat':''}"><span style="display:block;width:100%"><span class="t-lab">${lab}${heat?' &#8599;':''}</span><br>${v}&deg;<small>/ ${t>0?t+'&deg;':'off'}</small><span class="temp-bar"><i style="width:${w}%"></i></span></span></span>`;
+}
+function menu(id, items){
+  return `<span class="menu-wrap"><button class="btn btn-icon btn-sm" onclick="toggleMenu(event,'${id}')" title="More">${IC.more}</button><div class="menu" id="${id}">${items}</div></span>`;
+}
+let fh = 'btn';
+const moreItemsFull = '<button>&#128193; Files</button><button>&#128339; History</button><button>&#9998; Edit printer</button><hr><button>&#8599; Open printer web UI</button>';
+const moreItemsSlim = '<button>&#9998; Edit printer</button><hr><button>&#8599; Open printer web UI</button>';
+function actionsHTML(p, id){
+  const showFH = fh==='btn' && p.state!=='offline';
+  return ctlNew(p) + (showFH ? '<button class="btn btn-sm btn-quiet">Files</button><button class="btn btn-sm btn-quiet">History</button>' : '') + menu(id, fh==='btn' ? moreItemsSlim : moreItemsFull);
+}
+const moreItems = '<button>&#128193; Files</button><button>&#128339; History</button><button>&#9998; Edit printer</button><hr><button>&#8599; Open printer web UI</button>';
+function ctlNew(p){
+  if (p.state==='printing') return `<button class="btn btn-sm">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger"><span class="icon-stop"></span> Cancel</button>`;
+  if (p.state==='paused') return `<button class="btn btn-sm btn-primary"><span class="icon-play"></span> Resume</button><button class="btn btn-sm btn-danger"><span class="icon-stop"></span> Cancel</button>`;
+  if (p.state==='error') return `<button class="btn btn-sm">Details</button>`;
+  if (p.state==='idle') return `<button class="btn btn-sm btn-primary">&#8593; Start print</button>`;
+  return '';
+}
+function cardA(p){
+  const head = `<div class="a-head"><span class="nm">${p.name}</span><span class="md">${p.model}</span><span class="${pillCls(p.state)}">${stLabel(p)}</span><span class="sp"></span><span class="a-actions">${actionsHTML(p,'m'+p.id)}</span></div>`;
+  const foot = `<div class="a-foot">${p.plugs.map(x=>plugNew(x,p)).join('')}<span class="sp"></span>${p.watts!=null?`<span class="temp"><span class="t-lab">Power</span>${p.watts}<small>W</small></span>`:''}</div>`;
+  if (on(p)) return `<div class="a-card" data-state="${p.state}">${head}
+    <div class="a-body"><div class="a-camcol"><div class="a-cam">${camHTML(p)}</div><div class="webcam-mode-row"><button class="webcam-mode-btn active">PLATE</button><button class="webcam-mode-btn">SNAP</button><button class="webcam-mode-btn">LIVE</button></div></div>
+    <div class="a-info">
+      <div class="a-file" title="${p.file}">${p.file}</div>
+      <div class="a-prog"><div class="bar"><i style="width:${p.pct}%"></i></div><div class="pc">${p.pct}%</div></div>
+      <div class="a-eta"><span class="si"><span class="t-lab">ETA</span><b>${p.eta}</b></span><span class="si"><span class="t-lab">Remaining</span><b>${p.remain}</b></span><span class="si"><span class="t-lab">Elapsed</span><b>${p.elapsed}</b></span><span class="si"><span class="t-lab">Layer</span><b>${p.layer}</b></span></div>
+      <div class="temps">${tempCell('Hotend',p.hot[0],p.hot[1],300)}${tempCell('Bed',p.bed[0],p.bed[1],120)}${p.chamber?tempCell('Chamber',p.chamber[0],p.chamber[1],60):''}</div>
+    </div></div>${foot}</div>`;
+  // idle / offline: slim card, no big camera box
+  return `<div class="a-card slim" data-state="${p.state}">${head}
+    ${p.ingest?`<div class="ingest-banner a-ingest"><span><b>Received from slicer:</b> ${p.ingest}</span><span class="ingest-banner-actions"><button class="btn btn-sm btn-primary">Print now</button><button class="btn btn-sm">Keep</button><button class="btn btn-sm btn-danger">Discard</button></span></div>`:''}
+    <div class="a-slim-row">${p.last?`<img class="a-last" src="${p.last}" alt="">`:''}<span class="msg ${p.state==='error'?'a-err':''}">${p.msg}</span>${p.hot?`<span class="temps">${tempCell('Hotend',p.hot[0],p.hot[1],300)}${tempCell('Bed',p.bed[0],p.bed[1],120)}</span>`:''}</div>${foot}</div>`;
+}
+
+/* ====== PROPOSAL B: camera tiles ====== */
+function tileB(p){
+  const live = on(p);
+  return `<div class="b-tile" data-state="${p.state}">
+    <div class="b-img">${camHTML(p)}
+      <span class="b-tl"><span class="${pillCls(p.state)}">${stLabel(p)}</span></span>
+      <span class="b-bl"><span class="nm">${p.name}</span><span class="md">${p.model}</span></span>
+      ${live?`<span class="b-br">${p.pct}%</span><span class="b-edge"><i style="width:${p.pct}%"></i></span>`:''}
+    </div>
+    <div class="webcam-mode-row b-modes"><button class="webcam-mode-btn active">PLATE</button><button class="webcam-mode-btn">SNAP</button><button class="webcam-mode-btn">LIVE</button></div>
+    <div class="b-meta">
+      ${live?`<div class="b-file" title="${p.file}">${p.file}</div>
+      <div class="a-eta"><span class="si"><span class="t-lab">ETA</span><b>${p.eta}</b></span><span class="si"><span class="t-lab">Remaining</span><b>${p.remain}</b></span><span class="si"><span class="t-lab">Layer</span><b>${p.layer}</b></span></div>`
+           :`<div class="b-file" style="font-weight:400;color:var(--text-secondary);white-space:normal">${p.msg}</div>`}
+      ${p.hot?`<div class="temps">${tempCell('Hotend',p.hot[0],p.hot[1],300)}${tempCell('Bed',p.bed[0],p.bed[1],120)}</div>`:''}
+    </div>
+    <div class="b-actions"><span class="b-act">${actionsHTML(p,'t'+p.id)}</span></div>
+    <div class="a-foot b-foot">${p.plugs.map(x=>plugNew(x,p)).join('')}<span class="sp"></span>${p.watts!=null?`<span class="temp"><span class="t-lab">Power</span>${p.watts}<small>W</small></span>`:''}</div>
+  </div>`;
+}
+
+/* ====== page chrome ====== */
+function headerCur(){ return `<span class="power-controls"><button class="btn btn-sm">&#9889; All On</button><button class="btn btn-sm">&#9889; All Off</button></span>
+  <button class="btn btn-sm">&#8593; Upload</button><button class="btn btn-icon">${IC.gear}</button><button class="btn btn-icon">${IC.out}</button>`; }
+const USERMENU = `<span class="menu-wrap usermenu"><button class="btn um-btn" onclick="toggleMenu(event,'um')" aria-haspopup="true"><span class="avatar">A</span><span class="uname">admin</span><span class="caret">&#9662;</span></button>
+  <div class="menu" id="um"><button>&#9881;&nbsp; Settings</button><hr><button>Log out</button><hr><div class="ver">PrintSpy v2026.07.17</div></div></span>`;
+let side = 'right';
+function headerNew(){ return `<span class="menu-wrap"><button class="btn btn-sm" onclick="toggleMenu(event,'pw')">&#9889;<span class="lbl"> Power</span> &#9662;</button>
+    <div class="menu" id="pw"><button>All printers on</button><button>All printers off</button><hr><button>Turn off idle printers</button></div></span>
+  <button class="btn btn-sm">&#8593; Upload</button>${side==='right'?USERMENU:''}`; }
+
+let filter = 'all', noteOpen = true;
+function fleetHTML(){
+  const nxt = DATA.filter(p=>on(p)&&p.state==='printing').sort((a,b)=>a.pct<b.pct?1:-1)[0];
+  const c = s => DATA.filter(p=>p.state===s).length;
+  const chip = (k,l,n,cl='') => n? `<span class="fleet-chip ${k} ${filter===k?'on':''}" onclick="filter='${k}';render()"><span class="dot"></span>${n} ${l}</span>`:'';
+  return `<div class="fleet"><span class="fleet-chip all ${filter==='all'?'on':''}" onclick="filter='all';render()">All ${DATA.length}</span>
+    ${chip('printing','printing',c('printing'))}${chip('paused','paused',c('paused'))}${chip('idle','idle',c('idle'))}${chip('offline','offline',c('offline'))}${chip('error','error',c('error'))}${nxt?`<span class="fleet-next">Next finish: <b>${nxt.name}</b> at <b>${nxt.eta}</b></span>`:''}</div>`;
+}
+
+const NOTES = {
+ cur: `<div><b>Current.</b> Rebuilt with the real <code>style.css</code> and the real class names, for side-by-side comparison. Light/dark follows your OS.</div>`,
+ a: `<div><b>A · Refined cards, round 2</b><ul>
+  <li><b>Temps:</b> bar fills toward the <i>target</i>, green when there, amber with ↗ while heating (before, a bed 1° over target showed amber).</li>
+  <li><b>Printer plug is locked</b> (🔒) while printing, like today's disabled Off button. Other plugs stay toggleable.</li>
+  <li><b>Error card</b> (XL): red rail, message in full, Details button. <b>Slicer ingest banner</b> (Mini+) reuses the existing banner with Print now / Keep / Discard.</li>
+  <li><b>Fleet strip</b> also says which print finishes next. Idle card shows a thumbnail of the last print.</li>
+  <li><b>User menu</b> (like Ulmo): avatar + name pill replaces the version text, settings and logout buttons. Menu holds Settings, Log out and the version.</li>
+  <li>Phone: header fits one row (Power label drops to ⚡, version hidden); the old "n/n connected" text is gone since the chips cover it.</li></ul></div>`,
+ b: `<div><b>B · Camera tiles</b> — camera-first grid for 3+ printers (1 column on phones):<ul>
+  <li>State, name and % sit <b>on</b> the image; thin progress line along its bottom edge.</li>
+  <li>Plate/Snap/Live are pills in a row under the image, same as A.</li>
+  <li>Below: filename, ETA / left / layer, temps, then controls and plugs. Fits 2–3 printers per screen on desktop.</li></ul></div>`
+};
+
+function render(){
+  const pc=document.getElementById('printer-count'); pc.textContent = view==='cur' ? `${DATA.filter(p=>p.state!=='offline').length}/${DATA.length} connected` : ''; pc.style.marginLeft='auto'; document.body.dataset.view=view;
+  document.getElementById('hdr-actions').innerHTML = view==='cur' ? headerCur() : headerNew();
+  document.getElementById('hdr-left').innerHTML = (view!=='cur' && side==='left') ? USERMENU : '';
+  document.getElementById('app-version').style.display = view==='cur' ? '' : 'none';
+  document.body.dataset.side = side;
+  
+  document.getElementById('fleet').innerHTML = view==='cur' ? '' : fleetHTML();
+  const list = view==='cur' ? DATA : DATA.filter(p=>filter==='all'||p.state===filter);
+  document.getElementById('list').innerHTML = view==='cur' ? list.map(cardCur).join('')
+    : view==='a' ? list.map(cardA).join('') : `<div class="b-grid">${list.map(tileB).join('')}</div>`;
+}
+function toggleMenu(e,id){ e.stopPropagation(); const m=document.getElementById(id); const was=m.classList.contains('open'); document.querySelectorAll('.menu.open').forEach(x=>x.classList.remove('open')); if(!was) m.classList.add('open'); }
+document.addEventListener('click', ()=>document.querySelectorAll('.menu.open').forEach(x=>x.classList.remove('open')));
+document.getElementById('seg').onclick = e => { const v=e.target.dataset.v; if(!v) return; view=v; filter='all'; [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b.dataset.v===v)); render(); };
+document.getElementById('seg2').onclick = e => { const d=e.target.dataset.d; if(!d) return; DATA = d==='busy'?BUSY:IDLE; filter='all'; [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b.dataset.d===d)); render(); };
+document.getElementById('seg4').onclick = e => { const v=e.target.dataset.f; if(!v) return; fh=v; [...e.currentTarget.children].forEach(b=>b.classList.toggle('on',b.dataset.f===v)); render(); };
+render();
+</script>
+</body>
+</html>
