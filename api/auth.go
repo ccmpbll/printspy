@@ -363,13 +363,15 @@ type backgroundPref struct {
 	Fade     bool   `json:"fade"`
 }
 
-// Progress bars: the print-progress colour ("" = the theme's own green), plus a
-// style that applies to every bar on the page.
+// Progress bars: the print-progress colour ("" = the theme's own green), a style for
+// the print progress bar and a separate style for all the other bars (temperatures,
+// history, upload), and one stripe strength for both.
 type progressPref struct {
-	Color     string `json:"color"`
-	Style     string `json:"style"`
-	Stripe    int    `json:"stripe"`
-	KeepAmber bool   `json:"keep_amber"`
+	Color      string `json:"color"`
+	Style      string `json:"style"`
+	OtherStyle string `json:"other_style"`
+	Stripe     int    `json:"stripe"`
+	KeepAmber  bool   `json:"keep_amber"`
 }
 
 var (
@@ -383,7 +385,10 @@ const (
 )
 
 func (p *progressPref) valid() bool {
-	return (p.Color == "" || hexColor.MatchString(p.Color)) && progressStyles[p.Style] && p.Stripe >= minStripe && p.Stripe <= maxStripe
+	if p.OtherStyle == "" {
+		p.OtherStyle = "solid" // saved before the other bars had a style of their own
+	}
+	return (p.Color == "" || hexColor.MatchString(p.Color)) && progressStyles[p.Style] && progressStyles[p.OtherStyle] && p.Stripe >= minStripe && p.Stripe <= maxStripe
 }
 
 type userPrefs struct {

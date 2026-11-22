@@ -288,6 +288,7 @@ func TestPreferencesProgressValidationAndRoundTrip(t *testing.T) {
 		"stripe too low":   `{"progress":{"color":"","style":"striped","stripe":0,"keep_amber":true}}`,
 		"stripe too high":  `{"progress":{"color":"","style":"striped","stripe":9,"keep_amber":true}}`,
 		"missing style":    `{"progress":{"color":"#aabbcc","stripe":4}}`,
+		"bad other style":  `{"progress":{"color":"","style":"solid","other_style":"zigzag","stripe":4,"keep_amber":true}}`,
 		"bad bg, good bar": `{"background":{"pattern":"glow","strength":6,"fade":true},"progress":{"color":"","style":"solid","stripe":4,"keep_amber":true}}`,
 	} {
 		if code := put(body); code != http.StatusBadRequest {
@@ -295,13 +296,13 @@ func TestPreferencesProgressValidationAndRoundTrip(t *testing.T) {
 		}
 	}
 
-	if code := put(`{"progress":{"color":"#A855F7","style":"striped","stripe":6,"keep_amber":false}}`); code != http.StatusOK {
+	if code := put(`{"progress":{"color":"#A855F7","style":"striped","other_style":"gradient","stripe":6,"keep_amber":false}}`); code != http.StatusOK {
 		t.Fatalf("valid save = %d", code)
 	}
 	rec := httptest.NewRecorder()
 	h.handleMe(rec, as("GET", "/api/me", ""))
 	body := rec.Body.String()
-	for _, want := range []string{`"color":"#a855f7"`, `"style":"striped"`, `"stripe":6`, `"keep_amber":false`} {
+	for _, want := range []string{`"color":"#a855f7"`, `"style":"striped"`, `"other_style":"gradient"`, `"stripe":6`, `"keep_amber":false`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s in %s", want, body)
 		}
@@ -322,5 +323,21 @@ func TestPreferencesInvalidStoredProgressMeansDefaults(t *testing.T) {
 	h.handleMe(rec, as("GET", "/api/me", ""))
 	if strings.Contains(rec.Body.String(), "javascript") || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
 		t.Errorf("bad stored colour leaked: %s", rec.Body.String())
+	}
+}
+
+func TestPreferencesOtherStyleIsIndependentAndDefaultsToSolid(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","other_style":"solid","stripe":4,"keep_amber":true}}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"style":"striped"`) || !strings.Contains(rec.Body.String(), `"other_style":"solid"`) {
+		t.Fatalf("independent styles: %d %s", rec.Code, rec.Body.String())
+	}
+	// saved before other_style existed: still valid, and the other bars stay solid
+	rec = httptest.NewRecorder()
+	h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","stripe":4,"keep_amber":true}}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"other_style":"solid"`) {
+		t.Errorf("missing other_style: %d %s", rec.Code, rec.Body.String())
 	}
 }

@@ -1000,17 +1000,21 @@ html.prog-paused-too [data-state="paused"] .progress-fill { --c: var(--prog, var
 .bg-strength .range { max-width: 16rem; }
 .bg-strength output { min-width: 2.2rem; color: var(--text-secondary); font-size: 0.85rem; }
 
-/* ---------- Bar style (per user, web/background.js): applies to every bar ---------- */
-html.bar-gradient .progress-fill, html.bar-gradient .temp-bar i, html.bar-gradient .h-bar u, html.bar-gradient .up-progress i {
+/* ---------- Bar style (per user, web/background.js) ----------
+   Two groups, each solid / gradient / striped: the print progress bar (bar-print-*) and all
+   the other bars (bar-other-*: temperatures, history, upload), each keeping its own colour. */
+html.bar-print-gradient .progress-fill,
+html.bar-other-gradient :is(.temp-bar i, .h-bar u, .up-progress i) {
     background: linear-gradient(90deg, color-mix(in srgb, var(--c), black 25%), var(--c) 60%, color-mix(in srgb, var(--c), white 25%));
 }
-html.bar-striped .progress-fill, html.bar-striped .temp-bar i, html.bar-striped .h-bar u, html.bar-striped .up-progress i {
+html.bar-print-striped .progress-fill,
+html.bar-other-striped :is(.temp-bar i, .h-bar u, .up-progress i) {
     background: repeating-linear-gradient(135deg, var(--c) 0 10px, color-mix(in srgb, var(--c), black var(--stripe-pct, 30%)) 10px 20px);
     background-size: 28.28px 28.28px; /* a whole number of stripe periods, so the slide below loops cleanly */
 }
-html.bar-striped .progress-fill { animation: bar-slide 1.2s linear infinite; }
+html.bar-print-striped .progress-fill { animation: bar-slide 1.2s linear infinite; }
 @keyframes bar-slide { to { background-position: 28.28px 0; } }
-@media (prefers-reduced-motion: reduce) { html.bar-striped .progress-fill { animation: none; } }
+@media (prefers-reduced-motion: reduce) { html.bar-print-striped .progress-fill { animation: none; } }
 
 /* Live preview in Settings > Appearance */
 .bar-preview { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1rem; padding: 0.8rem 0.9rem; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }

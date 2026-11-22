@@ -66,14 +66,14 @@ function cacheBackground(pref) {
 applyBackground(bgPref);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyBackground(bgPref));
 
-// ---- Progress bars: colour of the print-progress bar, and a style for every bar ----
+// ---- Progress bars: colour of the print-progress bar, and a style for it and for the other bars ----
 
 const BAR_SWATCHES = [
     ['Green', ''], ['Blue', '#3b82f6'], ['Cyan', '#06b6d4'], ['Teal', '#14b8a6'], ['Purple', '#a855f7'],
     ['Pink', '#ec4899'], ['Orange', '#f97316'], ['Red', '#ef4444'], ['White', '#e5e7eb'],
 ];
 const BAR_STYLES = [['solid', 'Solid'], ['gradient', 'Gradient'], ['striped', 'Striped']];
-const BAR_DEFAULT = {color: '', style: 'solid', stripe: 4, keep_amber: true};
+const BAR_DEFAULT = {color: '', style: 'solid', other_style: 'solid', stripe: 4, keep_amber: true};
 const STRIPE_MIN = 1, STRIPE_MAX = 8;
 
 let barPref = barSanitize(barCached());
@@ -84,6 +84,7 @@ function barSanitize(p) {
     return {
         color: /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color.toLowerCase() : '',
         style: BAR_STYLES.some(([k]) => k === p.style) ? p.style : BAR_DEFAULT.style,
+        other_style: BAR_STYLES.some(([k]) => k === p.other_style) ? p.other_style : BAR_DEFAULT.other_style,
         stripe: stripe >= STRIPE_MIN && stripe <= STRIPE_MAX ? stripe : BAR_DEFAULT.stripe,
         keep_amber: p.keep_amber !== false,
     };
@@ -103,8 +104,10 @@ function applyBars(pref) {
     if (barPref.color) root.style.setProperty('--prog', barPref.color); else root.style.removeProperty('--prog');
     // the darker stripe is the bar's own colour mixed with black: 1 = faint ... 8 = bold
     root.style.setProperty('--stripe-pct', `${barPref.stripe * 7.5}%`);
-    root.classList.toggle('bar-gradient', barPref.style === 'gradient');
-    root.classList.toggle('bar-striped', barPref.style === 'striped');
+    for (const [group, style] of [['print', barPref.style], ['other', barPref.other_style]]) {
+        root.classList.toggle(`bar-${group}-gradient`, style === 'gradient');
+        root.classList.toggle(`bar-${group}-striped`, style === 'striped');
+    }
     root.classList.toggle('prog-paused-too', !barPref.keep_amber);
 }
 

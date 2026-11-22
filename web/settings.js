@@ -626,15 +626,15 @@ function backgroundCard(saved) {
 function barsCard(saved) {
     const p = barSanitize(saved || BAR_DEFAULT);
     const known = BAR_SWATCHES.some(([, v]) => v === p.color);
-    return setCard('Progress bars', 'The colour is for the print progress bar. The style applies to every bar on the page (temperatures, history, uploads), each in its own colour.', `
+    const styleSeg = (id, current) => `<div class="seg wide" id="${id}">${BAR_STYLES.map(([k, l]) => `<button class="seg-btn ${current === k ? 'active' : ''}" data-value="${k}" onclick="segPick('${id}','${k}',prefsChanged)">${l}</button>`).join('')}</div>`;
+    return setCard('Progress bars', 'The colour is for the print progress bar. Each group below has its own style, so you can turn stripes on for one and off for the other.', `
         <div class="fld"><label>Print progress colour</label>
             <div class="seg wide" id="bar-color">${BAR_SWATCHES.map(([l, v]) => `<button class="seg-btn ${p.color === v ? 'active' : ''}" data-value="${v}" onclick="segPick('bar-color','${v}',barColorPicked)"><i class="swatch-dot" style="background:${v || 'var(--success)'}"></i>${l}</button>`).join('')}
                 <label class="color-pick ${known ? '' : 'on'}" id="bar-custom-wrap">Custom <input type="color" id="bar-custom" value="${p.color || '#3b82f6'}" oninput="barCustomPicked(this.value)"></label></div>
         </div>
-        <div class="fld" style="margin-top:1rem"><label>Style</label>
-            <div class="seg wide" id="bar-style">${BAR_STYLES.map(([k, l]) => `<button class="seg-btn ${p.style === k ? 'active' : ''}" data-value="${k}" onclick="segPick('bar-style','${k}',barStyleChanged)">${l}</button>`).join('')}</div>
-        </div>
-        <div class="fld" id="bar-stripe-wrap" style="margin-top:1rem${p.style === 'striped' ? '' : ';display:none'}"><label for="bar-stripe">Stripe strength</label>
+        <div class="fld" style="margin-top:1rem"><label>Print progress style</label>${styleSeg('bar-style', p.style)}</div>
+        <div class="fld" style="margin-top:1rem"><label>Other bars style <small class="inl">(temperatures, history, uploads: each keeps its own colour)</small></label>${styleSeg('bar-other-style', p.other_style)}</div>
+        <div class="fld" id="bar-stripe-wrap" style="margin-top:1rem${p.style === 'striped' || p.other_style === 'striped' ? '' : ';display:none'}"><label for="bar-stripe">Stripe strength</label>
             <div class="bg-strength"><input class="range" id="bar-stripe" type="range" min="${STRIPE_MIN}" max="${STRIPE_MAX}" step="1" value="${p.stripe}" oninput="prefsChanged()"><output id="bar-stripe-val">${p.stripe}</output></div>
         </div>
         ${swrow('bar-amber', p.keep_amber, 'Keep amber when paused', 'A paused print keeps its amber bar. Turn off to use your colour then too.', 'prefsChanged')}
@@ -650,7 +650,7 @@ function barsCard(saved) {
 function prefsFromControls() {
     return {
         background: {pattern: segValue('bg-pattern') || 'none', strength: parseInt(val('bg-strength'), 10), fade: isOn('bg-fade')},
-        progress: {color: barColorValue(), style: segValue('bar-style') || 'solid', stripe: parseInt(val('bar-stripe'), 10), keep_amber: isOn('bar-amber')},
+        progress: {color: barColorValue(), style: segValue('bar-style') || 'solid', other_style: segValue('bar-other-style') || 'solid', stripe: parseInt(val('bar-stripe'), 10), keep_amber: isOn('bar-amber')},
     };
 }
 
@@ -667,7 +667,7 @@ function prefsChanged() {
     $('bg-strength-val').textContent = p.background.strength;
     $('bg-strength').disabled = p.background.pattern === 'none';
     $('bar-stripe-val').textContent = p.progress.stripe;
-    $('bar-stripe-wrap').style.display = p.progress.style === 'striped' ? '' : 'none';
+    $('bar-stripe-wrap').style.display = p.progress.style === 'striped' || p.progress.other_style === 'striped' ? '' : 'none';
     applyBackground(p.background); cacheBackground(p.background);
     applyBars(p.progress); cacheBars(p.progress);
     $('prefs-status').textContent = '';
@@ -687,8 +687,6 @@ function barCustomPicked(color) {
     $('bar-custom-wrap').classList.add('on');
     prefsChanged();
 }
-
-function barStyleChanged() { prefsChanged(); }
 
 async function prefsSave(p) {
     let ok = false;
@@ -718,6 +716,7 @@ function barsReset() {
     $('bar-custom-wrap').classList.remove('on');
     segPick('bar-color', BAR_DEFAULT.color);
     segPick('bar-style', BAR_DEFAULT.style);
+    segPick('bar-other-style', BAR_DEFAULT.other_style);
     $('bar-stripe').value = BAR_DEFAULT.stripe;
     setSwitch('bar-amber', BAR_DEFAULT.keep_amber);
     prefsChanged();
