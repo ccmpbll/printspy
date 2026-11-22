@@ -574,7 +574,7 @@ header.topbar h1 {
     padding: 0.7rem 1rem 0.8rem 1.25rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    border-radius: 0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px); /* the card's inner corner */
 }
 
 .plug {
@@ -648,6 +648,7 @@ header.topbar h1 {
     color: var(--success);
     font-size: 0.9rem;
 }
+.ingest-banner > span { min-width: 0; overflow-wrap: anywhere; }
 .ingest-banner .msg-error { color: var(--error); font-weight: 600; }
 .ingest-banner.failed { background: var(--error-bg); color: var(--error); }
 .ingest-banner-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
@@ -675,8 +676,11 @@ header.topbar h1 {
     .webcam-wrapper { width: 100%; min-width: 0; }
     .webcam-container { aspect-ratio: 16 / 9; max-height: 220px; }
     .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 0.7rem 1rem; }
+    /* ETA / Remaining / Elapsed without a Layer cell: three across, not two plus an orphan. */
+    .stat-grid:has([data-field="eta"]):not(:has(> :nth-child(4))) { grid-template-columns: repeat(3, 1fr); }
     .printer-actions { width: 100%; justify-content: flex-start; }
-    .fleet { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+    .fleet { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+    .fleet::-webkit-scrollbar { display: none; }
     .fleet-chip { white-space: nowrap; }
     .progress-row { --pc: 1.25rem; }
 }
