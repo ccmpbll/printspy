@@ -52,9 +52,11 @@ function gyroidSlice(size, n, z) {
     return d;
 }
 
-// Cubic: an isometric cube tiling, i.e. hexagons (side L) with a Y inside each.
-function cubicPath(L) {
-    const w = L * Math.sqrt(3), f = v => v.toFixed(2), P = p => f(p[0]) + ' ' + f(p[1]);
+// Cubic: an isometric cube tiling, i.e. hexagons with a Y inside each. The hexagon is L high on
+// its vertical sides and w wide; w is a whole number of pixels (56 against a regular 55.43) so the
+// tile joins land on pixel boundaries and show no seam.
+function cubicPath(L, w) {
+    const f = v => v.toFixed(2), P = p => f(p[0]) + ' ' + f(p[1]);
     let d = '';
     for (let j = -1; j <= 3; j++) for (let i = -1; i <= 2; i++) {
         const cx = i * w + (((j % 2) + 2) % 2 ? w / 2 : 0), cy = 1.5 * L * j;
@@ -105,10 +107,7 @@ function bgCSS(pattern, a) {
             const a1 = bgTile('gyroid-a', () => gyroidSlice(100, 50, 0.4)), a2 = bgTile('gyroid-b', () => gyroidSlice(100, 50, 1.97));
             return {image: svg(100, 100, `<g fill='none' stroke='${c(1.5)}' stroke-width='1.2' stroke-linecap='round'><path d='${a1}'/><path d='${a2}'/></g>`), size: '100px 100px'};
         }
-        case 'cubic': {
-            const w = 32 * Math.sqrt(3);
-            return {image: svg(w, 96, `<path d='${bgTile('cubic', () => cubicPath(32))}' fill='none' stroke='${c(1.4)}' stroke-width='1'/>`), size: `${w.toFixed(2)}px 96px`};
-        }
+        case 'cubic': return {image: svg(56, 96, `<path d='${bgTile('cubic', () => cubicPath(32, 56))}' fill='none' stroke='${c(1.4)}' stroke-width='1'/>`), size: '56px 96px'};
         case 'concentric': return {image: svg(48, 48, `<g fill='none' stroke='${c(1.5)}' stroke-width='1'>${nestedSquares(48, 8)}</g>`), size: '48px 48px'};
         case 'hilbert': return {image: svg(56, 56, `<path d='${bgTile('hilbert', () => hilbertPath(3, 56))}' fill='none' stroke='${c(1.6)}' stroke-width='1.2' stroke-linejoin='round'/>`), size: '56px 56px'};
         case 'plus': return {image: svg(32, 32, `<g stroke='${c(2)}' stroke-width='1'><path d='M16 12V20M12 16H20'/></g>`), size: '32px 32px'};
@@ -187,3 +186,9 @@ function applyBars(pref) {
 }
 
 applyBars(barPref);
+
+// Another tab changed the look: follow it.
+window.addEventListener('storage', e => {
+    if (e.key === 'bg-pref') applyBackground(bgCached());
+    if (e.key === 'bar-pref') applyBars(barCached());
+});

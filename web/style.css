@@ -511,8 +511,10 @@ header.topbar h1 {
     border-radius: 8px;
     transition: width 0.3s ease;
 }
-[data-state="paused"] .progress-fill { --c: var(--warning); }
-html.prog-paused-too [data-state="paused"] .progress-fill { --c: var(--prog, var(--warning)); }
+.printer-card[data-state="paused"] .progress-fill,
+.bar-preview [data-state="paused"] .progress-fill { --c: var(--warning); }
+html.prog-paused-too .printer-card[data-state="paused"] .progress-fill,
+html.prog-paused-too .bar-preview [data-state="paused"] .progress-fill { --c: var(--prog, var(--warning)); }
 .progress-value {
     min-width: 3.4rem;
     text-align: right;
@@ -554,7 +556,8 @@ html.prog-paused-too [data-state="paused"] .progress-fill { --c: var(--prog, var
     overflow: hidden;
 }
 .temp-bar i { --c: var(--warning); display: block; height: 100%; background: var(--c); border-radius: 4px; }
-.at-target .temp-bar i { --c: var(--success); }
+.stat-item.at-target .temp-bar i,
+.bar-preview .at-target .temp-bar i { --c: var(--success); }
 
 /* ---------- Idle / state message ---------- */
 .idle-message {
@@ -1012,7 +1015,8 @@ html.bar-other-striped :is(.temp-bar i, .h-bar u, .up-progress i) {
     background: repeating-linear-gradient(135deg, var(--c) 0 10px, color-mix(in srgb, var(--c), black var(--stripe-pct, 30%)) 10px 20px);
     background-size: 28.28px 28.28px; /* a whole number of stripe periods, so the slide below loops cleanly */
 }
-html.bar-print-striped .progress-fill { animation: bar-slide 1.2s linear infinite; }
+/* steps() holds it to about 20 frames a second, so each printing card repaints a third as often as a smooth slide */
+html.bar-print-striped .progress-fill { animation: bar-slide 1.2s steps(24) infinite; }
 @keyframes bar-slide { to { background-position: 28.28px 0; } }
 @media (prefers-reduced-motion: reduce) { html.bar-print-striped .progress-fill { animation: none; } }
 

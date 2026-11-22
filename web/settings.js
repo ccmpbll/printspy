@@ -680,36 +680,31 @@ function prefsChanged(part) {
 function bgChanged() { prefsChanged('background'); }
 function barsChanged() { prefsChanged('progress'); }
 
-// Send whatever is waiting now. Also called when the page is hidden, so a change made just
-// before switching apps or closing the app is not lost (keepalive lets the request outlive the page).
+// Send whatever is waiting now. Also called when the page is hidden or shown again and when the
+// network returns, so a change made just before switching apps is not lost (keepalive lets the
+// request outlive the page). A save that fails because of the network or the server is put back
+// and tried again; one the server refuses (a 4xx) is not.
 async function prefsFlush() {
     clearTimeout(prefsSaveTimer);
     const body = prefsPending;
     if (!Object.keys(body).length) return;
     prefsPending = {};
-    let ok = false;
+    let ok = false, retry = false;
     try {
         const resp = await fetch('/api/me/preferences', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body), keepalive: true});
         ok = resp.ok;
-    } catch (e) {}
+        retry = !ok && resp.status >= 500;
+    } catch (e) { retry = true; }
+    if (retry) {
+        prefsPending = {...body, ...prefsPending}; // a newer change to the same part wins
+        prefsSaveTimer = setTimeout(prefsFlush, 5000);
+    }
     const el = $('prefs-status');
-    if (el) el.textContent = ok ? 'Saved ✓' : 'Could not save this choice.';
+    if (el) el.textContent = ok ? 'Saved ✓' : retry ? 'Could not save yet, trying again…' : 'Could not save this choice.';
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') prefsFlush(); });
+document.addEventListener('visibilitychange', prefsFlush);
 window.addEventListener('pagehide', prefsFlush);
-
-function barColorPicked() {
-    barCustomColor = null;
-    $('bar-custom-wrap').classList.remove('on');
-    barsChanged();
-}
-
-function barCustomPicked(color) {
-    barCustomColor = color;
-    document.querySelectorAll('#bar-color .seg-btn').forEach(b => b.classList.remove('active'));
-    $('bar-custom-wrap').classList.add('on');
-    barsChanged();
-}
+window.addEventListener('online', prefsFlush);
 
 function setSwitch(id, on) {
     const sw = $(id);

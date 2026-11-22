@@ -43,6 +43,9 @@ type Handler struct {
 	loginFails map[string][]time.Time
 
 	setupMu sync.Mutex
+
+	// prefsMu makes saving preferences (read the stored ones, merge, write) one step per process.
+	prefsMu sync.Mutex
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {

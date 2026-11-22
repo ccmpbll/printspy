@@ -442,6 +442,10 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"username": username, "preferences": loadPrefs(raw)})
 }
 
+// prefsMergeHook runs between reading the stored preferences and writing the merge. Tests use it
+// to widen that window; it is nil in normal use.
+var prefsMergeHook func()
+
 // handleMePreferences saves the signed-in user's preferences. A part the request leaves
 // out is kept as it was, so a page that only knows about one part cannot wipe the other
 // (two devices open at once).
@@ -471,6 +475,10 @@ func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Read, merge and write under one lock, so two partial saves arriving together cannot
+	// both start from the same stored value and lose one of the parts.
+	h.prefsMu.Lock()
+	defer h.prefsMu.Unlock()
 	if req.Background == nil || req.Progress == nil {
 		raw, err := h.db.GetUserPreferences(username)
 		if err != nil {
@@ -478,6 +486,9 @@ func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		kept := loadPrefs(raw)
+		if prefsMergeHook != nil {
+			prefsMergeHook()
+		}
 		if req.Background == nil {
 			req.Background = kept.Background
 		}
@@ -645,6 +656,7 @@ const authPageHead = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PrintSpy</title>
 <link rel="icon" href="/logo.png">
+<script>try { localStorage.removeItem('bg-pref'); localStorage.removeItem('bar-pref'); } catch (e) {}</script>
 <link rel="stylesheet" href="/style.css">
 <style>
 .auth-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1rem; }

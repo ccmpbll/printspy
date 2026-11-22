@@ -8,7 +8,9 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -426,5 +428,86 @@ func TestBackgroundPatternListsMatch(t *testing.T) {
 		if !page[name] {
 			t.Errorf("server allows %q but the page does not offer it", name)
 		}
+	}
+}
+
+// Two devices saving different parts at the same moment must not lose either part.
+func TestPreferencesConcurrentPartialSavesKeepBothParts(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	const seedBody = `{"background":{"pattern":"dots","strength":6,"fade":true},"progress":{"color":"","style":"solid","other_style":"solid","stripe":4,"keep_amber":true}}`
+	// widen the read-to-write window: without protection both saves read the same stored value
+	// and the later write puts the other part back the way it was
+	prefsMergeHook = func() { time.Sleep(20 * time.Millisecond) }
+	defer func() { prefsMergeHook = nil }()
+	for round := 0; round < 3; round++ {
+		seed := httptest.NewRecorder()
+		h.handleMePreferences(seed, as("PUT", "/api/me/preferences", seedBody))
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			h.handleMePreferences(httptest.NewRecorder(), as("PUT", "/api/me/preferences", `{"background":{"pattern":"hex","strength":9,"fade":false}}`))
+		}()
+		go func() {
+			defer wg.Done()
+			h.handleMePreferences(httptest.NewRecorder(), as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","other_style":"solid","stripe":4,"keep_amber":true}}`))
+		}()
+		wg.Wait()
+		rec := httptest.NewRecorder()
+		h.handleMe(rec, as("GET", "/api/me", ""))
+		body := rec.Body.String()
+		if !strings.Contains(body, `"pattern":"hex"`) || !strings.Contains(body, `"style":"striped"`) {
+			t.Fatalf("round %d: a concurrent save was lost: %s", round, body)
+		}
+	}
+}
+
+// The limits are written in Go and in web/background.js; the page silently falls back to its
+// defaults when they disagree, so they must be the same.
+func TestPageLimitsMatchServerLimits(t *testing.T) {
+	src, err := os.ReadFile("../web/background.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	num := func(re string) int {
+		m := regexp.MustCompile(re).FindStringSubmatch(js)
+		if m == nil {
+			t.Fatalf("not found in web/background.js: %s", re)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	for name, pair := range map[string][2]int{
+		"BG_MIN":     {num(`BG_MIN = (\d+)`), minBackgroundStrength},
+		"BG_MAX":     {num(`BG_MAX = (\d+)`), maxBackgroundStrength},
+		"STRIPE_MIN": {num(`STRIPE_MIN = (\d+)`), minStripe},
+		"STRIPE_MAX": {num(`STRIPE_MAX = (\d+)`), maxStripe},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s: page has %d, server has %d", name, pair[0], pair[1])
+		}
+	}
+	block := regexp.MustCompile(`(?s)const BAR_STYLES = \[(.*?)\];`).FindStringSubmatch(js)
+	if block == nil {
+		t.Fatal("BAR_STYLES not found")
+	}
+	page := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\['([a-z]+)',`).FindAllStringSubmatch(block[1], -1) {
+		page[m[1]] = true
+	}
+	for s := range page {
+		if !progressStyles[s] {
+			t.Errorf("page offers style %q but the server rejects it", s)
+		}
+	}
+	for s := range progressStyles {
+		if !page[s] {
+			t.Errorf("server allows style %q but the page does not offer it", s)
+		}
+	}
+	if !strings.Contains(js, `/^#[0-9a-f]{6}$/i`) {
+		t.Error("page colour rule changed; update this test and the server's hexColor together")
 	}
 }

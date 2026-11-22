@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -200,5 +201,48 @@ func TestListPrintHistoryFilteredByResultAndName(t *testing.T) {
 	}
 	if got := names("", "%"); got != "gear100%.bgcode" {
 		t.Errorf("lone %% = %q", got)
+	}
+}
+
+// An install from before per-user preferences has users but no preferences column: the
+// migration must add it without touching the rows, and the new methods must work on them.
+func TestUserPreferencesOnAnExistingDatabase(t *testing.T) {
+	path := t.TempDir() + "/old.db"
+	old, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO users (username, password_hash) VALUES ('alice', 'hash-a'), ('bob', 'hash-b');`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	database, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating an existing database: %v", err)
+	}
+	defer database.Close()
+
+	if got, err := database.GetUserPreferences("alice"); err != nil || got != "" {
+		t.Fatalf("existing user should start with defaults, got %q, %v", got, err)
+	}
+	if err := database.SetUserPreferences("alice", `{"background":{"pattern":"grid"}}`); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := database.GetUserPreferences("alice"); got != `{"background":{"pattern":"grid"}}` {
+		t.Errorf("alice = %q", got)
+	}
+	if got, _ := database.GetUserPreferences("bob"); got != "" {
+		t.Errorf("bob must be untouched, got %q", got)
+	}
+	if u, err := database.GetUserByUsername("bob"); err != nil || u.PasswordHash != "hash-b" {
+		t.Errorf("existing user row changed: %+v, %v", u, err)
+	}
+	if err := database.SetUserPreferences("nobody", "{}"); err != ErrNotFound {
+		t.Errorf("unknown user = %v, want ErrNotFound", err)
+	}
+	if got, err := database.GetUserPreferences("nobody"); err != nil || got != "" {
+		t.Errorf("unknown user read = %q, %v", got, err)
 	}
 }
