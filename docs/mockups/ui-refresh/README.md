@@ -12,7 +12,7 @@ python3 -m http.server 8791 --bind 127.0.0.1
 
 - **Current**: today's dashboard, for comparison.
 - **A · Refined cards**: the chosen direction.
-- **B · Camera tiles (parked)**: a camera-first grid. Not part of this change; kept here as a possible secondary view later.
+- **B · Camera tiles (parked)**: a camera-first grid. Not part of this change; kept here as a possible secondary view later. A frozen copy is saved in `../camera-tiles-snapshot/`.
 - **Files**, **History**, **Settings**: full pages instead of the modals (Settings is reached from the user menu).
 - **States**: every card state the main fleet doesn't show (attention, disconnected, busy, waiting ingest banner).
 - **Login**: login, wrong password, rate limited and first-run setup.
