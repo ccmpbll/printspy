@@ -693,6 +693,10 @@ header.topbar h1 {
     .btn { padding: 0 0.75rem; }
     .printer-name { font-size: 1.1rem; }
     .print-controls { width: 100%; }
+    /* Two or more plugs: they share the rows evenly and the power reading gets its own row,
+       instead of squeezing in beside whichever plug wraps last. */
+    .printer-foot:has(> .plug ~ .plug) .plug { flex: 1 1 auto; }
+    .printer-foot:has(> .plug ~ .plug) .power-pill { flex: 1 1 100%; margin-left: 0; justify-content: center; }
     .print-controls .btn { flex: 1; min-width: 0; }
 }
 
