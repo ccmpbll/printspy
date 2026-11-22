@@ -338,7 +338,7 @@ function drawUploadDialog() {
                 ${file ? `<div class="up-file"><span class="up-fname"><b title="${esc(file.name)}">${esc(file.name)}</b><small>${fmtSize(file.size)}</small></span>${busy ? '' : '<button class="btn" onclick="upload.file=null;upload.status=\'idle\';upload.error=\'\';drawUploadDialog()">Remove</button>'}</div>`
                 : `<div class="up-drop" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="event.preventDefault();this.classList.remove('over');uploadPick(event.dataTransfer.files[0])" onclick="$('u-file').click()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();$('u-file').click()}">
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><polyline points="7 9 12 4 17 9"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
-                    <b>Drop a file here</b><span>or <u>browse</u> &middot; .gcode, .bgcode</span></div>
+                    <b>Drop a file here</b><span>or <u>browse</u> &middot; .gcode, .bgcode, .gco, .g</span></div>
                   <input id="u-file" type="file" accept=".gcode,.bgcode,.gco,.g" hidden onchange="uploadPick(this.files[0])">`}
             </div>
             ${busy ? '<div class="up-progress"><i></i></div>' : ''}

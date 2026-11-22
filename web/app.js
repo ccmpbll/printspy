@@ -419,6 +419,7 @@ function updateDashboard() {
         prevPrinterIDs = currentIDs;
         renderIngestBanners();
         applyFleetFilter();
+        if (document.getElementById('dashboard').hidden) setDashboardActive(false); // rebuilt while hidden: no live streams
     }
 }
 

@@ -76,7 +76,7 @@ const fld = (label, id, value, o = {}) => `
     <div class="fld ${o.wide ? 'wide' : ''}" ${o.attrs || ''}>
         <label for="${id}">${label}</label>
         <div class="inp ${o.unit ? 'has-unit' : ''}">
-            <input id="${id}" type="${o.type || 'text'}" value="${esc(String(value === undefined || value === null ? '' : value))}" placeholder="${esc(o.ph || '')}"${o.min !== undefined ? ` min="${o.min}"` : ''}${o.max !== undefined ? ` max="${o.max}"` : ''}${o.on ? ` oninput="${o.on}"` : ''}${o.req ? ' required' : ''}${o.minlen ? ` minlength="${o.minlen}"` : ''}>
+            <input id="${id}" type="${o.type || 'text'}" value="${esc(String(value === undefined || value === null ? '' : value))}" placeholder="${esc(o.ph || '')}"${o.step ? ` step="${o.step}"` : ''}${o.min !== undefined ? ` min="${o.min}"` : ''}${o.max !== undefined ? ` max="${o.max}"` : ''}${o.on ? ` oninput="${o.on}"` : ''}${o.req ? ' required' : ''}${o.minlen ? ` minlength="${o.minlen}"` : ''}>
             ${o.unit ? `<span class="unit">${o.unit}</span>` : ''}
         </div>
         ${o.hint ? `<small>${o.hint}</small>` : ''}
@@ -675,7 +675,7 @@ async function renderEditPage(kind, idParam, q, token) {
             : `<a class="crumb" href="${back}">Settings &rsaquo; ${info.tabLabel}</a> <span class="sep">&rsaquo;</span> ${esc(page.title)}`;
         document.querySelector('.set-title h2').innerHTML = crumbs;
         $('set-body').classList.add('edit');
-        $('set-body').innerHTML = page.html + `<div class="edit-bar"><button class="btn btn-quiet" onclick="goBack(editQuery,'${back}')">Cancel</button>${page.bar || ''}<button class="btn btn-primary" id="edit-save" onclick="if(editValid())${page.save}">Save</button></div>`;
+        $('set-body').innerHTML = page.html + `<div class="edit-bar"><button class="btn btn-quiet" onclick="goBack(editQuery,'${back}')">Cancel</button>${page.bar || ''}<button class="btn btn-primary" id="edit-save" onclick="if(editValid())saveBusy(this,()=>${page.save})">Save</button></div>`;
         editQuery = q;
         if (page.after) page.after();
     } catch (e) {
@@ -702,11 +702,17 @@ function editValid(root) {
     return true;
 }
 
+// Disable Save while the request runs so a double click or repeated Enter can't create duplicates.
+async function saveBusy(btn, fn) {
+    btn.disabled = true;
+    try { await fn(); } finally { btn.disabled = false; }
+}
+
 // Enter in a text field saves the edit page, like the old modal forms did.
 document.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.target.type === 'file') return;
+    if (e.key !== 'Enter' || e.repeat || e.isComposing || e.target.tagName !== 'INPUT' || e.target.type === 'file') return;
     const save = $('edit-save');
-    if (save && save.closest('#set-body') && e.target.closest('#set-body')) { e.preventDefault(); save.click(); }
+    if (save && !save.disabled && save.closest('#set-body') && e.target.closest('#set-body')) { e.preventDefault(); save.click(); }
 });
 
 const dangerCard = (what, fn) => setCard(`Delete ${what}`, 'This can\'t be undone.', '', `<button class="btn btn-danger" onclick="confirmAction(this, () => ${fn})">Delete ${what}</button>`, 'danger');
@@ -750,14 +756,14 @@ async function buildPrinterEdit(id) {
                     ${fld('URL', 'p-url', cfg.url, {ph: 'http://192.168.1.40', wide: true, req: true})}
                     <div class="fld" id="p-user-wrap" ${pl ? '' : 'hidden'}><label for="p-user">Username</label><div class="inp"><input id="p-user" type="text" value="${esc(cfg.username || 'maker')}" placeholder="maker"></div></div>
                     <div class="fld"><label for="p-key" id="p-key-label">${pl ? 'Password' : 'API Key'}</label><div class="inp"><input id="p-key" type="text" required value="${esc(apiKey)}" placeholder="${pl ? 'Your PrusaLink password' : 'Your OctoPrint API key'}"></div></div>
-                    ${fld('Poll interval (seconds)', 'p-poll', cfg.poll_interval || 10, {type: 'number', min: 5, max: 300, unit: 'seconds'})}
+                    ${fld('Poll interval (seconds)', 'p-poll', cfg.poll_interval || 10, {type: 'number', min: 1, max: 300, unit: 'seconds'})}
                 </div>
                 <div class="test-row"><button class="btn" onclick="testPrinterConnection()">Test connection</button><span id="p-test" class="test-line" role="status"></span></div>`)
             + setCard('Power & safety', 'Only applies if a smart plug is assigned to this printer. Overridden by the global setting if set.', `<div class="grid2">
                 ${fld('Auto-off after idle (minutes)', 'p-idle', cfg.idle_timeout_minutes || 0, {type: 'number', min: 0, max: 1440, ph: '0 = disabled', unit: 'minutes'})}
                 <span></span>
-                ${fld('Thermal runaway: max bed temp (°C)', 'p-max-bed', cfg.max_bed_temp || 0, {type: 'number', min: 0, max: 150, ph: '0 = disabled', unit: '&deg;C'})}
-                ${fld('Thermal runaway: max extruder temp (°C)', 'p-max-ext', cfg.max_extruder_temp || 0, {type: 'number', min: 0, max: 350, ph: '0 = disabled', unit: '&deg;C'})}
+                ${fld('Thermal runaway: max bed temp (°C)', 'p-max-bed', cfg.max_bed_temp || 0, {type: 'number', step: 'any', min: 0, max: 150, ph: '0 = disabled', unit: '&deg;C'})}
+                ${fld('Thermal runaway: max extruder temp (°C)', 'p-max-ext', cfg.max_extruder_temp || 0, {type: 'number', step: 'any', min: 0, max: 350, ph: '0 = disabled', unit: '&deg;C'})}
             </div>`)
             + (id ? dangerCard('printer', `deletePrinter(${id})`) : ''),
     };
