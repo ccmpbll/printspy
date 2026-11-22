@@ -28,19 +28,35 @@ function rowItem(name, meta, chip = '', dot = '', kind = '', idx = 0) {
   return `<div class="set-row">
     ${dot ? `<span class="dotst ${dot}"></span>` : ''}
     <div class="set-row-info"><span class="set-row-name">${name}${chip ? `<span class="chip">${chip}</span>` : ''}</span><span class="set-row-meta">${meta}</span></div>
-    <div class="set-row-actions"><button class="btn btn-sm" onclick="openEdit('${kind}',${idx})">&#9998; Edit</button>${pillBtn('Delete', 'btn-danger')}</div>
+    <div class="set-row-actions"><button class="btn btn-sm" onclick="openEdit('${kind}',${idx})">&#9998; Edit</button><button class="btn btn-sm btn-danger" onclick="confirmBtn(this)">Delete</button></div>
   </div>`;
 }
 
 /* ---- tabs ---- */
+function toggleMaint(i) {
+  const p = DATA[i];
+  if (p.state === 'maintenance') { p.state = p.prevState || 'idle'; }
+  else { p.prevState = p.state; p.state = 'maintenance'; }
+  render();
+}
 function tabPrinters() {
-  const types = { 'Core One': 'PrusaLink', 'MK4S': 'PrusaLink', 'Ender 3': 'OctoPrint', 'Mini+': 'PrusaLink', 'XL': 'PrusaLink', 'Voron 2.4': 'OctoPrint' };
-  const rows = DATA.map((p, i) => `<div class="set-row">
+  if (demo === 'empty') return card('Printers', 'Order here is the order on the dashboard.', '<div class="set-empty">No printers configured yet.</div>', `<button class="btn btn-sm btn-primary" onclick="openEdit('printer',-1)">+ Add printer</button>`);
+  const types = { 'Core One': 'PrusaLink', 'MK4S': 'PrusaLink', 'Ender 3': 'OctoPrint', 'Mini+': 'PrusaLink', 'XL': 'PrusaLink', 'Voron 2.4': 'OctoPrint', 'MK3S': 'PrusaLink' };
+  const rows = DATA.map((p, i) => {
+    const kind = types[p.name] || 'PrusaLink', pl = kind === 'PrusaLink', maint = p.state === 'maintenance';
+    return `<div class="set-row">
       <span class="reorder"><button ${i === 0 ? 'disabled' : ''} title="Move up">&#9650;</button><button ${i === DATA.length - 1 ? 'disabled' : ''} title="Move down">&#9660;</button></span>
       <span class="dotst ${p.state}"></span>
-      <div class="set-row-info"><span class="set-row-name">${p.name}<span class="chip">${types[p.name] || 'PrusaLink'}</span></span><span class="set-row-meta">${p.model} &middot; http://192.168.1.${40 + i}</span></div>
-      <div class="set-row-actions"><button class="btn btn-sm" onclick="openEdit('printer',${i})">&#9998; Edit</button>${pillBtn('Delete', 'btn-danger')}</div>
-    </div>`).join('');
+      <div class="set-row-info"><span class="set-row-name">${p.name}<span class="chip">${kind}</span></span><span class="set-row-meta">${p.model} &middot; http://192.168.1.${40 + i}</span></div>
+      <div class="set-row-actions">
+        <button class="btn btn-sm" onclick="openEdit('printer',${i})">&#9998; Edit</button>
+        ${pl ? `<button class="btn btn-sm" onclick="openRawApi('${p.name}')" title="Raw API debug view">Raw API</button>` : `<button class="btn btn-sm raw-ph" tabindex="-1" aria-hidden="true">Raw API</button>`}
+        <a class="btn btn-sm" href="#" onclick="event.preventDefault()" title="Open ${kind}">${kind} &#8599;</a>
+        <button class="btn btn-sm btn-maintenance ${maint ? 'active' : ''}" onclick="toggleMaint(${i})" title="${maint ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmBtn(this)">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
   return card('Printers', 'Order here is the order on the dashboard.', `<div class="set-list">${rows}</div>`, `<button class="btn btn-sm btn-primary" onclick="openEdit('printer',-1)">+ Add printer</button>`);
 }
 
@@ -175,8 +191,9 @@ function tabIntegrations() {
       </div>
       ${swrow('Publish printer state', 'Publishes each printer\'s state to the topic below.', true)}
       <div class="grid2">${fld('Publish topic', 'printspy/printer/{id}/state', { wide: true })}</div>`, SAVE + pillBtn('Test connection') + pillBtn('Save and test'))
-    + card('Dashboard status API', 'Lets another dashboard read printer status with a key.', `<div class="fld"><label>API key</label>
-        <div class="inline"><div class="inp"><input type="text" value="" placeholder="No key set"></div>${pillBtn('Generate')}</div></div>`, SAVE);
+    + card('Dashboard status API', '', `<div class="fld"><label>API key</label>
+        <div class="inline"><div class="inp"><input type="text" value="" placeholder="Leave blank to disable"></div>${pillBtn('Generate')}</div>
+        <small>Used by external dashboards (e.g. Homepage) to read <code>GET /api/status</code>. Send it as the <code>X-Api-Key</code> header.</small></div>`, SAVE);
 }
 
 function tabAccount() {
@@ -186,10 +203,10 @@ function tabAccount() {
       </div>`, pillBtn('Change password', 'btn-primary'))
     + card('Users', '', `<div class="set-list">
         <div class="set-row"><div class="set-row-info"><span class="set-row-name">admin<span class="chip">you</span></span></div></div>
-        <div class="set-row"><div class="set-row-info"><span class="set-row-name">guest</span></div><div class="set-row-actions">${pillBtn('Delete', 'btn-danger')}</div></div>
+        <div class="set-row"><div class="set-row-info"><span class="set-row-name">guest</span></div><div class="set-row-actions"><button class="btn btn-sm btn-danger" onclick="confirmBtn(this)">Delete</button></div></div>
       </div>
       <div class="grid2" style="margin-top:1rem">${fld('Username', '')}${fld('Password', '', { type: 'password' })}</div>`, pillBtn('+ Add user', 'btn-primary'))
-    + card('Backup', 'Export all printers, plugs, cameras and settings as YAML, or restore from a file.', '', pillBtn('Export YAML') + pillBtn('Import YAML'));
+    + card('Backup', 'Export all printers, plugs, cameras and settings as YAML, or restore from a file.', '', pillBtn('Export YAML') + `<button class="btn btn-sm" onclick="importFlow()">Import YAML</button>`);
 }
 
 const SET_VIEWS = { printers: tabPrinters, devices: tabDevices, general: tabGeneral, notify: tabNotify, integrations: tabIntegrations, account: tabAccount };
@@ -197,12 +214,12 @@ const SET_VIEWS = { printers: tabPrinters, devices: tabDevices, general: tabGene
 function settingsHTML() {
   if (EDIT) return editHTML();
   const nav = SET_TABS.map(([k, l, n]) => `<button class="set-tab ${k === setTab ? 'on' : ''}" onclick="setTab='${k}';render()">${l}${n ? `<span class="cnt">${n}</span>` : ''}</button>`).join('');
-  return `<div class="set-title"><h2>Settings</h2><button class="btn btn-sm" onclick="go('a')">&#8592; Dashboard</button></div>
+  return `<div class="set-title"><h2><button class="crumb" onclick="go('a')">Dashboard</button> <span class="sep">&rsaquo;</span> Settings</h2></div>
     <div class="set-wrap"><nav class="set-nav">${nav}</nav><div class="set-body">${SET_VIEWS[setTab]()}</div></div>`;
 }
 
 /* ================= Edit / add pages (replace the little modals) ================= */
-const PTYPES = { 'Core One': 'prusalink', 'MK4S': 'prusalink', 'Ender 3': 'octoprint', 'Mini+': 'prusalink', 'XL': 'prusalink', 'Voron 2.4': 'octoprint' };
+const PTYPES = { 'MK3S': 'prusalink', 'Core One': 'prusalink', 'MK4S': 'prusalink', 'Ender 3': 'octoprint', 'Mini+': 'prusalink', 'XL': 'prusalink', 'Voron 2.4': 'octoprint' };
 const PLUGS = [
   { label: 'Printer', mode: 'http', ip: '192.168.1.60', topic: '', idx: '1', hide: false, printer: 'Core One' },
   { label: 'Lights', mode: 'http', ip: '192.168.1.60', topic: '', idx: '2', hide: false, printer: 'Core One' },
@@ -217,7 +234,7 @@ const TARGS = [{ label: 'mini', printer: 'Mini+' }];
 const RES = [['10', 'VGA (640x480, fastest stream)'], ['11', 'SVGA (800x600)'], ['12', 'XGA (1024x768)'], ['13', 'HD (1280x720, default)'], ['14', 'SXGA (1280x1024)'], ['15', 'UXGA (1600x1200, slowest stream)']];
 let EDIT = null; // { kind, idx, d: draft }
 
-function openEdit(kind, idx) {
+function openEdit(kind, idx, from) {
   let d;
   if (kind === 'printer') {
     const p = idx >= 0 ? DATA[idx] : null;
@@ -226,9 +243,9 @@ function openEdit(kind, idx) {
   } else if (kind === 'plug') d = idx >= 0 ? { ...PLUGS[idx] } : { label: '', mode: 'http', ip: '', topic: '', idx: '1', hide: false, printer: '' };
   else if (kind === 'camera') d = idx >= 0 ? { ...CAMS[idx] } : { name: '', url: '', printer: '', res: '13', q: 12, hm: false, vf: false };
   else d = idx >= 0 ? { ...TARGS[idx] } : { label: '', printer: 'Mini+' };
-  EDIT = { kind, idx, d }; render(); window.scrollTo(0, 0);
+  EDIT = { kind, idx, d, from }; render(); window.scrollTo(0, 0);
 }
-function closeEdit() { EDIT = null; render(); }
+function closeEdit() { const back = EDIT && EDIT.from === 'card'; EDIT = null; if (back) go('a'); else render(); }
 function ed(k, v, redraw) { EDIT.d[k] = v; if (redraw) render(); }
 
 const selectFld = (label, opts, cur, onchange, hint = '') => `<div class="fld"><label>${label}</label><div class="inp sel"><select onchange="${onchange}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(cur) ? 'selected' : ''}>${l}</option>`).join('')}</select></div>${hint ? `<small>${hint}</small>` : ''}</div>`;
@@ -237,7 +254,7 @@ const segFld = (label, opts, cur, fnName, hint = '') => `<div class="fld"><label
 function seg(label, opts, cur, key, hint) {
   return `<div class="fld"><label>${label}</label><div class="seg-pills">${opts.map(([v, l]) => `<button class="webcam-mode-btn ${cur === v ? 'active' : ''}" onclick="ed('${key}','${v}',true)">${l}</button>`).join('')}</div>${hint ? `<small>${hint}</small>` : ''}</div>`;
 }
-const dangerCard = (what) => `<div class="set-card danger"><div class="set-card-head"><h3>Delete ${what}</h3><p>This can't be undone.</p></div><div class="set-foot" style="border:0;margin:0;padding:0"><button class="btn btn-sm btn-danger">Delete ${what}</button></div></div>`;
+const dangerCard = (what) => `<div class="set-card danger"><div class="set-card-head"><h3>Delete ${what}</h3><p>This can't be undone.</p></div><div class="set-foot" style="border:0;margin:0;padding:0"><button class="btn btn-sm btn-danger" onclick="confirmBtn(this)">Delete ${what}</button></div></div>`;
 const editBar = (extra = '') => `<div class="edit-bar"><button class="btn btn-sm btn-quiet" onclick="closeEdit()">Cancel</button>${extra}<button class="btn btn-sm btn-primary" onclick="closeEdit()">Save</button></div>`;
 
 function editPrinter() {
@@ -251,7 +268,7 @@ function editPrinter() {
       <div class="grid2" style="margin-top:1rem">
         ${fld('URL', d.url, { ph: 'http://192.168.1.40', wide: true })}
         ${pl ? fld('Username', d.user, { ph: 'maker' }) : ''}
-        ${fld(pl ? 'Password / API key' : 'API key', d.key, { ph: pl ? 'Your PrusaLink API key' : 'Your OctoPrint API key', type: 'password' })}
+        ${fld(pl ? 'Password' : 'API Key', d.key, { ph: pl ? 'Your PrusaLink password' : 'Your OctoPrint API key', type: 'password' })}
         ${fld('Poll interval', d.poll, { unit: 'seconds' })}
       </div>
       <div class="test-row"><button class="btn btn-sm" onclick="testConn(this)">Test connection</button><span class="test-out"></span></div>`)
@@ -325,6 +342,9 @@ const EDIT_META = {
 function editHTML() {
   const [tab, tabLabel, title, body] = EDIT_META[EDIT.kind];
   const nav = SET_TABS.map(([k, l]) => `<button class="set-tab ${k === tab ? 'on' : ''}" onclick="EDIT=null;setTab='${k}';render()">${l}</button>`).join('');
-  return `<div class="set-title"><h2><button class="crumb" onclick="closeEdit()">Settings &rsaquo; ${tabLabel}</button> &rsaquo; ${title()}</h2></div>
+  const crumbs = EDIT.from === 'card'
+    ? `<button class="crumb" onclick="closeEdit()">Dashboard</button> &rsaquo; ${title()}`
+    : `<button class="crumb" onclick="closeEdit()">Settings &rsaquo; ${tabLabel}</button> &rsaquo; ${title()}`;
+  return `<div class="set-title"><h2>${crumbs}</h2></div>
     <div class="set-wrap"><nav class="set-nav">${nav}</nav><div class="set-body edit">${body()}${editBar(EDIT.kind === 'printer' ? '' : '')}</div></div>`;
 }
