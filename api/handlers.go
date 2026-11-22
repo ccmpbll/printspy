@@ -496,7 +496,19 @@ func (h *Handler) getPrintHistoryList(w http.ResponseWriter, r *http.Request, id
 		offset = v
 	}
 
-	entries, hasMore, err := h.db.ListPrintHistory(id, limit, offset)
+	result := r.URL.Query().Get("result")
+	switch result {
+	case "", "completed", "failed", "cancelled":
+	default:
+		jsonError(w, "invalid result filter", http.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(query) > 200 {
+		query = query[:200]
+	}
+
+	entries, hasMore, err := h.db.ListPrintHistoryFiltered(id, limit, offset, result, query)
 	if err != nil {
 		jsonError(w, "failed to get history", http.StatusInternalServerError)
 		return

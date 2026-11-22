@@ -25,7 +25,7 @@
                     <button onclick="bulkPower('off')">All printers off</button>
                 </div>
             </span>
-            <button class="btn" onclick="openUploadModal()" title="Upload a file to a printer"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5"/><path d="M5.5 11.5 12 5l6.5 6.5"/></svg> Upload</button>
+            <button class="btn" onclick="openUploadDialog()" title="Upload a file to a printer"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5"/><path d="M5.5 11.5 12 5l6.5 6.5"/></svg> Upload</button>
             <span class="menu-wrap usermenu">
                 <button class="btn um-btn" onclick="toggleMenu(event,'user-menu')" aria-haspopup="true"><span class="avatar" id="user-avatar">?</span><span class="uname" id="user-name"></span><span class="caret">&#9662;</span></button>
                 <div class="menu" id="user-menu">
@@ -53,78 +53,17 @@
     </div>
 
 
-    <!-- Upload File Modal -->
-    <div class="modal-overlay" id="upload-modal">
-        <div class="modal">
-            <h2>Upload file</h2>
-            <form id="upload-form" onsubmit="submitUpload(event)">
-                <div class="form-group">
-                    <label for="upload-printer">Printer</label>
-                    <select id="upload-printer" required></select>
-                </div>
-                <div class="form-group">
-                    <label for="upload-file">File</label>
-                    <input type="file" id="upload-file" accept=".gcode,.bgcode" required>
-                </div>
-                <div class="form-group">
-                    <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                        <input type="checkbox" id="upload-print-now" style="width:auto">
-                        Print immediately
-                    </label>
-                </div>
-                <div class="test-result" id="upload-result"></div>
-                <div class="form-actions">
-                    <button type="button" class="btn" onclick="closeModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Upload</button>
-                </div>
-            </form>
-        </div>
-    </div>
 
 
 
 
-    <!-- File Manager Modal -->
-    <div class="modal-overlay" id="filemanager-modal">
-        <div class="modal modal-files">
-            <h2 id="filemanager-modal-title">Files</h2>
-            <div id="filemanager-list" class="filemanager-list"></div>
-            <div class="form-actions">
-                <button type="button" class="btn" onclick="closeModal()">Close</button>
-            </div>
-        </div>
-    </div>
 
-    <!-- Print History Modal -->
-    <div class="modal-overlay" id="history-modal">
-        <div class="modal modal-files">
-            <h2 id="history-modal-title">History</h2>
-            <div class="history-summary-line" id="history-summary-line"></div>
-            <div id="history-list" class="filemanager-list"></div>
-            <div class="history-pagination">
-                <button type="button" class="btn btn-sm" id="history-prev" onclick="historyPrevPage()">&larr; Prev</button>
-                <span id="history-page-label"></span>
-                <button type="button" class="btn btn-sm" id="history-next" onclick="historyNextPage()">Next &rarr;</button>
-            </div>
-            <div class="form-actions">
-                <button type="button" class="btn" onclick="closeModal()">Close</button>
-            </div>
-        </div>
-    </div>
 
-    <!-- PrusaLink Debug Modal -->
-    <div class="modal-overlay" id="prusalink-debug-modal">
-        <div class="modal modal-files">
-            <h2 id="prusalink-debug-modal-title">Raw API</h2>
-            <div id="prusalink-debug-body" class="filemanager-list"></div>
-            <div class="form-actions">
-                <button type="button" class="btn" onclick="closeModal()">Close</button>
-            </div>
-        </div>
-    </div>
 
 
     <script src="/app.js"></script>
     <script src="/settings.js"></script>
+    <script src="/files.js"></script>
+    <script>route();</script>
 </body>
 </html>

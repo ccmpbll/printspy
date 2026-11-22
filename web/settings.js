@@ -115,10 +115,16 @@ function route() {
     const [path, qs] = h.split('?');
     const parts = path ? path.split('/') : [];
     const q = new URLSearchParams(qs || '');
-    stopPrusalinkDebugPoll();
+    closeRawApi();
     if (parts[0] === 'settings') {
         showPage(true);
         renderSettingsRoute(parts.slice(1), q);
+        return;
+    }
+    if (parts[0] === 'files' || parts[0] === 'history') {
+        showPage(true);
+        const id = parseInt(parts[1], 10);
+        if (parts[0] === 'files') renderFilesRoute(id); else renderHistoryRoute(id);
         return;
     }
     showPage(false);
@@ -168,7 +174,7 @@ async function printersTab() {
             <div class="set-row-info"><span class="set-row-name">${esc(cfg.name)}<span class="chip">${kind}</span></span><span class="set-row-meta">${cfg.model ? esc(cfg.model) + ' &middot; ' : ''}${esc(cfg.url)}</span></div>
             <div class="set-row-actions">
                 <a class="btn" href="#/settings/printer/${cfg.id}">&#9998; Edit</a>
-                ${cfg.type === 'prusalink' ? `<button class="btn" onclick="openPrusalinkDebug(${cfg.id})" title="Raw API debug view">Raw API</button>` : '<button class="btn raw-ph" tabindex="-1" aria-hidden="true">Raw API</button>'}
+                ${cfg.type === 'prusalink' ? `<button class="btn" onclick="openRawApi(${cfg.id})" title="Raw API debug view">Raw API</button>` : '<button class="btn raw-ph" tabindex="-1" aria-hidden="true">Raw API</button>'}
                 <a class="btn link-accent" href="${esc(safeUrl(cfg.url))}" target="_blank" rel="noopener" title="Open ${kind}">${kind} &#8599;</a>
                 <button class="btn btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
                 <button class="btn btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
@@ -950,5 +956,3 @@ async function saveIngestKey(id) {
 }
 
 const EDIT_BUILDERS = {printer: buildPrinterEdit, plug: buildPlugEdit, camera: buildCameraEdit, target: buildTargetEdit};
-
-route();
