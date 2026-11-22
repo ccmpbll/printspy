@@ -43,6 +43,9 @@ type Handler struct {
 	loginFails map[string][]time.Time
 
 	setupMu sync.Mutex
+
+	// prefsMu makes saving preferences (read the stored ones, merge, write) one step per process.
+	prefsMu sync.Mutex
 }
 
 func New(ctx context.Context, database *db.DB, p *poller.Poller) *Handler {
@@ -96,6 +99,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/login", h.handleLogin)
 	mux.HandleFunc("/logout", h.handleLogout)
 	mux.HandleFunc("/api/me", h.handleMe)
+	mux.HandleFunc("/api/me/preferences", h.handleMePreferences)
 	mux.HandleFunc("/api/users", h.handleUsers)
 	mux.HandleFunc("/api/users/", h.handleUserByID)
 	mux.HandleFunc("/api/account/password", h.handleChangePassword)

@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -164,5 +168,346 @@ func TestMeReturnsSignedInUser(t *testing.T) {
 	}
 	if rec := do(h.handleMe, "POST", "/api/me", ""); rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("POST = %d, want 405", rec.Code)
+	}
+}
+
+// signedIn makes a user row plus a session cookie and returns a request builder.
+func signedIn(t *testing.T, d interface {
+	CreateUser(string, string) (int64, error)
+	CreateSession(string, string, time.Time) error
+}, name string) func(method, path, body string) *http.Request {
+	t.Helper()
+	if _, err := d.CreateUser(name, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateSession("tok-"+name, name, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	return func(method, path, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tok-" + name})
+		return req
+	}
+}
+
+func TestPreferencesRejectBadInput(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	for name, body := range map[string]string{
+		"unknown pattern":   `{"background":{"pattern":"glow","strength":6,"fade":true}}`,
+		"strength too low":  `{"background":{"pattern":"grid","strength":1,"fade":true}}`,
+		"strength too high": `{"background":{"pattern":"grid","strength":17,"fade":true}}`,
+		"no pattern":        `{"background":{"strength":6}}`,
+		"not json":          `nope`,
+	} {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, rec.Code)
+		}
+	}
+	// nothing bad was stored
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "background") {
+		t.Errorf("rejected input was stored: %s", rec.Body.String())
+	}
+	// auth and method
+	if rec := do(h.handleMePreferences, "PUT", "/api/me/preferences", `{}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no session = %d, want 401", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.handleMePreferences(rec, as("POST", "/api/me/preferences", `{}`))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", rec.Code)
+	}
+}
+
+func TestPreferencesPerUser(t *testing.T) {
+	h, d := newTestHandler(t)
+	alice := signedIn(t, d, "alice")
+	bob := signedIn(t, d, "bob")
+
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, alice("PUT", "/api/me/preferences", `{"background":{"pattern":"hex","strength":9,"fade":false}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, alice("GET", "/api/me", ""))
+	if !strings.Contains(rec.Body.String(), `"pattern":"hex"`) || !strings.Contains(rec.Body.String(), `"strength":9`) || !strings.Contains(rec.Body.String(), `"fade":false`) {
+		t.Errorf("alice did not get her choice back: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, bob("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "hex") || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+		t.Errorf("bob must keep the defaults: %s", rec.Body.String())
+	}
+}
+
+func TestPreferencesUnreadableStoredValueMeansDefaults(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	for _, stored := range []string{`{broken`, `{"background":{"pattern":"glow","strength":6,"fade":true}}`} {
+		if err := d.SetUserPreferences("alice", stored); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.handleMe(rec, as("GET", "/api/me", ""))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+			t.Errorf("stored %q: %d %s", stored, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPreferencesForMissingUserIs404(t *testing.T) {
+	h, d := newTestHandler(t)
+	// a session for a name that has no users row (deleted account)
+	if err := d.CreateSession("tok", "ghost", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PUT", "/api/me/preferences", strings.NewReader(`{"background":{"pattern":"grid","strength":6,"fade":true}}`))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tok"})
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing user = %d, want 404", rec.Code)
+	}
+}
+
+func TestPreferencesProgressValidationAndRoundTrip(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	put := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		return rec.Code
+	}
+	for name, body := range map[string]string{
+		"bad style":        `{"progress":{"color":"","style":"zigzag","stripe":4,"keep_amber":true}}`,
+		"short hex":        `{"progress":{"color":"#fff","style":"solid","stripe":4,"keep_amber":true}}`,
+		"named colour":     `{"progress":{"color":"red","style":"solid","stripe":4,"keep_amber":true}}`,
+		"css injection":    `{"progress":{"color":"#ffffff;background:url(x)","style":"solid","stripe":4,"keep_amber":true}}`,
+		"stripe too low":   `{"progress":{"color":"","style":"striped","stripe":0,"keep_amber":true}}`,
+		"stripe too high":  `{"progress":{"color":"","style":"striped","stripe":9,"keep_amber":true}}`,
+		"missing style":    `{"progress":{"color":"#aabbcc","stripe":4}}`,
+		"bad other style":  `{"progress":{"color":"","style":"solid","other_style":"zigzag","stripe":4,"keep_amber":true}}`,
+		"bad bg, good bar": `{"background":{"pattern":"glow","strength":6,"fade":true},"progress":{"color":"","style":"solid","stripe":4,"keep_amber":true}}`,
+	} {
+		if code := put(body); code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, code)
+		}
+	}
+
+	if code := put(`{"progress":{"color":"#A855F7","style":"striped","other_style":"gradient","stripe":6,"keep_amber":false}}`); code != http.StatusOK {
+		t.Fatalf("valid save = %d", code)
+	}
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body := rec.Body.String()
+	for _, want := range []string{`"color":"#a855f7"`, `"style":"striped"`, `"other_style":"gradient"`, `"stripe":6`, `"keep_amber":false`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+	// default colour ("" = theme green) is a valid choice
+	if code := put(`{"progress":{"color":"","style":"gradient","stripe":4,"keep_amber":true}}`); code != http.StatusOK {
+		t.Errorf("empty colour = %d, want 200", code)
+	}
+}
+
+func TestPreferencesInvalidStoredProgressMeansDefaults(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	if err := d.SetUserPreferences("alice", `{"progress":{"color":"javascript:x","style":"solid","stripe":4,"keep_amber":true}}`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "javascript") || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+		t.Errorf("bad stored colour leaked: %s", rec.Body.String())
+	}
+}
+
+func TestPreferencesOtherStyleIsIndependentAndDefaultsToSolid(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","other_style":"solid","stripe":4,"keep_amber":true}}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"style":"striped"`) || !strings.Contains(rec.Body.String(), `"other_style":"solid"`) {
+		t.Fatalf("independent styles: %d %s", rec.Code, rec.Body.String())
+	}
+	// saved before other_style existed: still valid, and the other bars stay solid
+	rec = httptest.NewRecorder()
+	h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","stripe":4,"keep_amber":true}}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"other_style":"solid"`) {
+		t.Errorf("missing other_style: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPreferencesAcceptEveryPatternAndNoOthers(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	save := func(pattern string) int {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"background":{"pattern":"`+pattern+`","strength":6,"fade":true}}`))
+		return rec.Code
+	}
+	for _, p := range []string{"none", "dots", "grid", "grid2", "layers", "hatch", "hex", "tri", "plus", "gyroid", "cubic", "concentric", "hilbert"} {
+		if code := save(p); code != http.StatusOK {
+			t.Errorf("%s: got %d, want 200", p, code)
+		}
+	}
+	for _, p := range []string{"lightning", "gyroidwaves", "glow", "dotsglow", ""} {
+		if code := save(p); code != http.StatusBadRequest {
+			t.Errorf("%q: got %d, want 400", p, code)
+		}
+	}
+}
+
+func TestPreferencesPartialSaveKeepsTheOtherPart(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	put(`{"background":{"pattern":"gyroid","strength":9,"fade":false},"progress":{"color":"#aabbcc","style":"striped","other_style":"solid","stripe":5,"keep_amber":false}}`)
+
+	// a device that only knows about the progress bars saves just that
+	put(`{"progress":{"color":"","style":"gradient","other_style":"gradient","stripe":2,"keep_amber":true}}`)
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"pattern":"gyroid"`) || !strings.Contains(body, `"strength":9`) {
+		t.Errorf("background was wiped by a progress-only save: %s", body)
+	}
+	if !strings.Contains(body, `"style":"gradient"`) {
+		t.Errorf("progress change was not saved: %s", body)
+	}
+
+	// and the other way round
+	put(`{"background":{"pattern":"dots","strength":4,"fade":true}}`)
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body = rec.Body.String()
+	if !strings.Contains(body, `"pattern":"dots"`) || !strings.Contains(body, `"other_style":"gradient"`) {
+		t.Errorf("progress was wiped by a background-only save: %s", body)
+	}
+}
+
+// The page's pattern list (web/background.js) and the server's allowed names must match:
+// a pattern the page offers but the server rejects looks fine until the next reload.
+func TestBackgroundPatternListsMatch(t *testing.T) {
+	src, err := os.ReadFile("../web/background.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := regexp.MustCompile(`(?s)const BG_PATTERNS = \[(.*?)\n\];`).FindSubmatch(src)
+	if block == nil {
+		t.Fatal("BG_PATTERNS not found in web/background.js")
+	}
+	page := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\['([a-z0-9]+)',`).FindAllSubmatch(block[1], -1) {
+		page[string(m[1])] = true
+	}
+	if len(page) < 5 {
+		t.Fatalf("parsed only %d patterns from the page: %v", len(page), page)
+	}
+	for name := range page {
+		if !backgroundPatterns[name] {
+			t.Errorf("page offers %q but the server would reject it", name)
+		}
+	}
+	for name := range backgroundPatterns {
+		if !page[name] {
+			t.Errorf("server allows %q but the page does not offer it", name)
+		}
+	}
+}
+
+// Two devices saving different parts at the same moment must not lose either part.
+func TestPreferencesConcurrentPartialSavesKeepBothParts(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	const seedBody = `{"background":{"pattern":"dots","strength":6,"fade":true},"progress":{"color":"","style":"solid","other_style":"solid","stripe":4,"keep_amber":true}}`
+	// widen the read-to-write window: without protection both saves read the same stored value
+	// and the later write puts the other part back the way it was
+	prefsMergeHook = func() { time.Sleep(20 * time.Millisecond) }
+	defer func() { prefsMergeHook = nil }()
+	for round := 0; round < 3; round++ {
+		seed := httptest.NewRecorder()
+		h.handleMePreferences(seed, as("PUT", "/api/me/preferences", seedBody))
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			h.handleMePreferences(httptest.NewRecorder(), as("PUT", "/api/me/preferences", `{"background":{"pattern":"hex","strength":9,"fade":false}}`))
+		}()
+		go func() {
+			defer wg.Done()
+			h.handleMePreferences(httptest.NewRecorder(), as("PUT", "/api/me/preferences", `{"progress":{"color":"","style":"striped","other_style":"solid","stripe":4,"keep_amber":true}}`))
+		}()
+		wg.Wait()
+		rec := httptest.NewRecorder()
+		h.handleMe(rec, as("GET", "/api/me", ""))
+		body := rec.Body.String()
+		if !strings.Contains(body, `"pattern":"hex"`) || !strings.Contains(body, `"style":"striped"`) {
+			t.Fatalf("round %d: a concurrent save was lost: %s", round, body)
+		}
+	}
+}
+
+// The limits are written in Go and in web/background.js; the page silently falls back to its
+// defaults when they disagree, so they must be the same.
+func TestPageLimitsMatchServerLimits(t *testing.T) {
+	src, err := os.ReadFile("../web/background.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	num := func(re string) int {
+		m := regexp.MustCompile(re).FindStringSubmatch(js)
+		if m == nil {
+			t.Fatalf("not found in web/background.js: %s", re)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	for name, pair := range map[string][2]int{
+		"BG_MIN":     {num(`BG_MIN = (\d+)`), minBackgroundStrength},
+		"BG_MAX":     {num(`BG_MAX = (\d+)`), maxBackgroundStrength},
+		"STRIPE_MIN": {num(`STRIPE_MIN = (\d+)`), minStripe},
+		"STRIPE_MAX": {num(`STRIPE_MAX = (\d+)`), maxStripe},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s: page has %d, server has %d", name, pair[0], pair[1])
+		}
+	}
+	block := regexp.MustCompile(`(?s)const BAR_STYLES = \[(.*?)\];`).FindStringSubmatch(js)
+	if block == nil {
+		t.Fatal("BAR_STYLES not found")
+	}
+	page := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\['([a-z]+)',`).FindAllStringSubmatch(block[1], -1) {
+		page[m[1]] = true
+	}
+	for s := range page {
+		if !progressStyles[s] {
+			t.Errorf("page offers style %q but the server rejects it", s)
+		}
+	}
+	for s := range progressStyles {
+		if !page[s] {
+			t.Errorf("server allows style %q but the page does not offer it", s)
+		}
+	}
+	if !strings.Contains(js, `/^#[0-9a-f]{6}$/i`) {
+		t.Error("page colour rule changed; update this test and the server's hexColor together")
 	}
 }

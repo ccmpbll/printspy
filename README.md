@@ -88,6 +88,11 @@ All printer management is done through the web UI — open the settings page to 
 
 First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Account & backup → Users. No roles or permission tiers — every account has full access.
 
+Each user also has their own look, set under Settings → Account & backup and kept across devices:
+
+- **Page background:** a faint pattern (dots, grids, honeycomb, gyroid and others) with its strength and whether it fades toward the bottom.
+- **Progress bars:** a colour for the print progress bar, and a solid, gradient or striped style, set separately for the print progress bar and for the other bars (temperatures, history, uploads).
+
 ### Smart plugs
 
 OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Plugs & cameras → Smart plugs. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.

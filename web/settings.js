@@ -604,11 +604,141 @@ async function saveStatusAPISettings(btn) {
 
 // ---------- tab: account & backup ----------
 
+// --- appearance (per user) ---
+
+function appearanceCards(prefs) {
+    return backgroundCard(prefs && prefs.background) + barsCard(prefs && prefs.progress);
+}
+
+function backgroundCard(saved) {
+    const p = bgSanitize(saved || BG_DEFAULT);
+    return setCard('Appearance', 'Just for you: other users keep their own. Changes show right away and save automatically.', `
+        <div class="fld"><label>Page background</label>
+            <div class="seg wide" id="bg-pattern">${BG_PATTERNS.map(([k, l]) => `<button class="seg-btn ${p.pattern === k ? 'active' : ''}" data-value="${k}" onclick="segPick('bg-pattern','${k}',bgChanged)">${l}</button>`).join('')}</div>
+        </div>
+        <div class="fld" style="margin-top:1rem"><label for="bg-strength">Strength</label>
+            <div class="bg-strength"><input class="range" id="bg-strength" type="range" min="${BG_MIN}" max="${BG_MAX}" step="1" value="${p.strength}"${p.pattern === 'none' ? ' disabled' : ''} oninput="bgChanged()"><output id="bg-strength-val">${p.strength}</output></div>
+        </div>
+        ${swrow('bg-fade', p.fade, 'Fade out toward the bottom', 'The pattern is strongest at the top of the screen and eases away down the page.', 'bgChanged')}`,
+        '<span class="test-line" id="prefs-status" role="status"></span><button class="btn" onclick="bgReset()">Reset</button>');
+}
+
+function barsCard(saved) {
+    const p = barSanitize(saved || BAR_DEFAULT);
+    const known = BAR_SWATCHES.some(([, v]) => v === p.color);
+    const styleSeg = (id, current) => `<div class="seg wide" id="${id}">${BAR_STYLES.map(([k, l]) => `<button class="seg-btn ${current === k ? 'active' : ''}" data-value="${k}" onclick="segPick('${id}','${k}',barsChanged)">${l}</button>`).join('')}</div>`;
+    return setCard('Progress bars', 'The colour is for the print progress bar. Each group below has its own style, so you can turn stripes on for one and off for the other.', `
+        <div class="fld"><label>Print progress colour</label>
+            <div class="seg wide" id="bar-color">${BAR_SWATCHES.map(([l, v]) => `<button class="seg-btn ${p.color === v ? 'active' : ''}" data-value="${v}" onclick="segPick('bar-color','${v}',barColorPicked)"><i class="swatch-dot" style="background:${v || 'var(--success)'}"></i>${l}</button>`).join('')}
+                <label class="color-pick ${known ? '' : 'on'}" id="bar-custom-wrap">Custom <input type="color" id="bar-custom" value="${p.color || '#3b82f6'}" oninput="barCustomPicked(this.value)"></label></div>
+        </div>
+        <div class="fld" style="margin-top:1rem"><label>Print progress style</label>${styleSeg('bar-style', p.style)}</div>
+        <div class="fld" style="margin-top:1rem"><label>Other bars style <small class="inl">(temperatures, history, uploads: each keeps its own colour)</small></label>${styleSeg('bar-other-style', p.other_style)}</div>
+        <div class="fld" id="bar-stripe-wrap" style="margin-top:1rem${p.style === 'striped' || p.other_style === 'striped' ? '' : ';display:none'}"><label for="bar-stripe">Stripe strength</label>
+            <div class="bg-strength"><input class="range" id="bar-stripe" type="range" min="${STRIPE_MIN}" max="${STRIPE_MAX}" step="1" value="${p.stripe}" oninput="barsChanged()"><output id="bar-stripe-val">${p.stripe}</output></div>
+        </div>
+        ${swrow('bar-amber', p.keep_amber, 'Keep amber when paused', 'A paused print keeps its amber bar. Turn off to use your colour then too.', 'barsChanged')}
+        <div class="bar-preview" aria-hidden="true">
+            <div class="progress-row"><span class="pv-label">Printing</span><div class="progress-bar"><div class="progress-fill" style="width:64%"></div></div><span class="progress-value">64%</span></div>
+            <div data-state="paused" class="progress-row"><span class="pv-label">Paused</span><div class="progress-bar"><div class="progress-fill" style="width:41%"></div></div><span class="progress-value">41%</span></div>
+            <div class="progress-row"><span class="pv-label">Hotend</span><span class="temp-bar" style="flex:1;margin:0"><i style="width:55%"></i></span><span class="progress-value"></span></div>
+            <div class="progress-row at-target"><span class="pv-label">At temp</span><span class="temp-bar" style="flex:1;margin:0"><i style="width:100%"></i></span><span class="progress-value"></span></div>
+        </div>`,
+        '<button class="btn" onclick="barsReset()">Reset</button>');
+}
+
+function prefsFromControls() {
+    return {
+        background: {pattern: segValue('bg-pattern') || 'none', strength: parseInt(val('bg-strength'), 10), fade: isOn('bg-fade')},
+        progress: {color: barColorValue(), style: segValue('bar-style') || 'solid', other_style: segValue('bar-other-style') || 'solid', stripe: parseInt(val('bar-stripe'), 10), keep_amber: isOn('bar-amber')},
+    };
+}
+
+// The chosen colour: a swatch, or the custom picker once it has been used.
+let barCustomColor = null;
+function barColorValue() {
+    const sw = document.querySelector('#bar-color .seg-btn.active');
+    return sw ? sw.dataset.value : (barCustomColor || '');
+}
+
+// Only the part that changed is saved (the server keeps the other one), so a second open
+// device with an older copy of the other part cannot overwrite it.
+let prefsPending = {}, prefsSaveTimer = null;
+function prefsChanged(part) {
+    const p = prefsFromControls();
+    $('bg-strength-val').textContent = p.background.strength;
+    $('bg-strength').disabled = p.background.pattern === 'none';
+    $('bar-stripe-val').textContent = p.progress.stripe;
+    $('bar-stripe-wrap').style.display = p.progress.style === 'striped' || p.progress.other_style === 'striped' ? '' : 'none';
+    if (part === 'background') { applyBackground(p.background); cacheBackground(p.background); }
+    else { applyBars(p.progress); cacheBars(p.progress); }
+    prefsPending[part] = p[part];
+    $('prefs-status').textContent = '';
+    clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = setTimeout(prefsFlush, 500);
+}
+function bgChanged() { prefsChanged('background'); }
+function barsChanged() { prefsChanged('progress'); }
+
+// Send whatever is waiting now. Also called when the page is hidden or shown again and when the
+// network returns, so a change made just before switching apps is not lost (keepalive lets the
+// request outlive the page). A save that fails because of the network or the server is put back
+// and tried again; one the server refuses (a 4xx) is not.
+async function prefsFlush() {
+    clearTimeout(prefsSaveTimer);
+    const body = prefsPending;
+    if (!Object.keys(body).length) return;
+    prefsPending = {};
+    let ok = false, retry = false;
+    try {
+        const resp = await fetch('/api/me/preferences', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body), keepalive: true});
+        ok = resp.ok;
+        retry = !ok && resp.status >= 500;
+    } catch (e) { retry = true; }
+    if (retry) {
+        prefsPending = {...body, ...prefsPending}; // a newer change to the same part wins
+        prefsSaveTimer = setTimeout(prefsFlush, 5000);
+    }
+    const el = $('prefs-status');
+    if (el) el.textContent = ok ? 'Saved ✓' : retry ? 'Could not save yet, trying again…' : 'Could not save this choice.';
+}
+document.addEventListener('visibilitychange', prefsFlush);
+window.addEventListener('pagehide', prefsFlush);
+window.addEventListener('online', prefsFlush);
+
+function setSwitch(id, on) {
+    const sw = $(id);
+    sw.classList.toggle('on', on);
+    sw.setAttribute('aria-checked', on);
+}
+
+function bgReset() {
+    segPick('bg-pattern', BG_DEFAULT.pattern);
+    $('bg-strength').value = BG_DEFAULT.strength;
+    setSwitch('bg-fade', BG_DEFAULT.fade);
+    bgChanged();
+}
+
+function barsReset() {
+    barCustomColor = null;
+    $('bar-custom-wrap').classList.remove('on');
+    segPick('bar-color', BAR_DEFAULT.color);
+    segPick('bar-style', BAR_DEFAULT.style);
+    segPick('bar-other-style', BAR_DEFAULT.other_style);
+    $('bar-stripe').value = BAR_DEFAULT.stripe;
+    setSwitch('bar-amber', BAR_DEFAULT.keep_amber);
+    barsChanged();
+}
+
 async function accountTab() {
     const [users, me] = await Promise.all([getJSON('/api/users'), fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null)]);
     const userRows = (users || []).map(u => `<div class="set-row"><div class="set-row-info"><span class="set-row-name">${esc(u.username)}${me && me.username === u.username ? '<span class="chip">you</span>' : ''}</span></div>
         <div class="set-row-actions"><button class="btn btn-danger" onclick="confirmAction(this, () => deleteUser(${u.id}))">Delete</button></div></div>`).join('');
-    return setCard('Your account', '', `<div class="grid2">
+    barCustomColor = null;
+    const pc = me && me.preferences && me.preferences.progress;
+    if (pc && pc.color && !BAR_SWATCHES.some(([, v]) => v === pc.color)) barCustomColor = pc.color;
+    return appearanceCards(me && me.preferences)
+        + setCard('Your account', '', `<div class="grid2">
             ${fld('Current password', 'a-current', '', {type: 'password'})}
             ${fld('New password', 'a-new', '', {type: 'password'})}
         </div>`, '<button class="btn btn-primary" onclick="changePassword(this)">Change password</button>')

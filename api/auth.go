@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -343,7 +344,86 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-// handleMe tells the page who is signed in, for the header's user menu.
+// Per-user page background. The patterns are drawn by the web UI (web/background.js);
+// the server only stores and validates the choice.
+var backgroundPatterns = map[string]bool{
+	"none": true, "dots": true, "grid": true, "grid2": true, "layers": true,
+	"hatch": true, "hex": true, "tri": true, "plus": true,
+	"gyroid": true, "cubic": true, "concentric": true, "hilbert": true,
+}
+
+const (
+	minBackgroundStrength = 2
+	maxBackgroundStrength = 16
+)
+
+type backgroundPref struct {
+	Pattern  string `json:"pattern"`
+	Strength int    `json:"strength"`
+	Fade     bool   `json:"fade"`
+}
+
+// Progress bars: the print-progress colour ("" = the theme's own green), a style for
+// the print progress bar and a separate style for all the other bars (temperatures,
+// history, upload), and one stripe strength for both.
+type progressPref struct {
+	Color      string `json:"color"`
+	Style      string `json:"style"`
+	OtherStyle string `json:"other_style"`
+	Stripe     int    `json:"stripe"`
+	KeepAmber  bool   `json:"keep_amber"`
+}
+
+var (
+	progressStyles = map[string]bool{"solid": true, "gradient": true, "striped": true}
+	hexColor       = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+const (
+	minStripe = 1
+	maxStripe = 8
+)
+
+// normalize fills in what older saves did not have and lowercases the colour.
+func (p *progressPref) normalize() {
+	if p.OtherStyle == "" {
+		p.OtherStyle = "solid" // saved before the other bars had a style of their own
+	}
+	p.Color = strings.ToLower(p.Color)
+}
+
+func (p *progressPref) valid() bool {
+	return (p.Color == "" || hexColor.MatchString(p.Color)) && progressStyles[p.Style] && progressStyles[p.OtherStyle] && p.Stripe >= minStripe && p.Stripe <= maxStripe
+}
+
+type userPrefs struct {
+	Background *backgroundPref `json:"background,omitempty"`
+	Progress   *progressPref   `json:"progress,omitempty"`
+}
+
+func (b *backgroundPref) valid() bool {
+	return backgroundPatterns[b.Pattern] && b.Strength >= minBackgroundStrength && b.Strength <= maxBackgroundStrength
+}
+
+// loadPrefs decodes stored preferences; anything unreadable counts as defaults.
+func loadPrefs(raw string) userPrefs {
+	var p userPrefs
+	if raw != "" && json.Unmarshal([]byte(raw), &p) != nil {
+		return userPrefs{}
+	}
+	if p.Background != nil && !p.Background.valid() {
+		p.Background = nil
+	}
+	if p.Progress != nil {
+		p.Progress.normalize()
+		if !p.Progress.valid() {
+			p.Progress = nil
+		}
+	}
+	return p
+}
+
+// handleMe tells the page who is signed in (for the header's user menu) and their saved preferences.
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -354,7 +434,82 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not signed in", http.StatusUnauthorized)
 		return
 	}
-	jsonResponse(w, map[string]string{"username": username})
+	raw, err := h.db.GetUserPreferences(username)
+	if err != nil {
+		jsonError(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"username": username, "preferences": loadPrefs(raw)})
+}
+
+// prefsMergeHook runs between reading the stored preferences and writing the merge. Tests use it
+// to widen that window; it is nil in normal use.
+var prefsMergeHook func()
+
+// handleMePreferences saves the signed-in user's preferences. A part the request leaves
+// out is kept as it was, so a page that only knows about one part cannot wipe the other
+// (two devices open at once).
+func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := h.currentUser(r)
+	if !ok {
+		jsonError(w, "not signed in", http.StatusUnauthorized)
+		return
+	}
+	var req userPrefs
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Background != nil && !req.Background.valid() {
+		jsonError(w, "invalid background", http.StatusBadRequest)
+		return
+	}
+	if req.Progress != nil {
+		req.Progress.normalize()
+		if !req.Progress.valid() {
+			jsonError(w, "invalid progress bar setting", http.StatusBadRequest)
+			return
+		}
+	}
+	// Read, merge and write under one lock, so two partial saves arriving together cannot
+	// both start from the same stored value and lose one of the parts.
+	h.prefsMu.Lock()
+	defer h.prefsMu.Unlock()
+	if req.Background == nil || req.Progress == nil {
+		raw, err := h.db.GetUserPreferences(username)
+		if err != nil {
+			jsonError(w, "database error", http.StatusInternalServerError)
+			return
+		}
+		kept := loadPrefs(raw)
+		if prefsMergeHook != nil {
+			prefsMergeHook()
+		}
+		if req.Background == nil {
+			req.Background = kept.Background
+		}
+		if req.Progress == nil {
+			req.Progress = kept.Progress
+		}
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.db.SetUserPreferences(username, string(data)); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "user not found", http.StatusNotFound)
+		} else {
+			jsonError(w, "database error", http.StatusInternalServerError)
+		}
+		return
+	}
+	jsonResponse(w, req)
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -501,6 +656,7 @@ const authPageHead = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PrintSpy</title>
 <link rel="icon" href="/logo.png">
+<script>try { localStorage.removeItem('bg-pref'); localStorage.removeItem('bar-pref'); } catch (e) {}</script>
 <link rel="stylesheet" href="/style.css">
 <style>
 .auth-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1rem; }
