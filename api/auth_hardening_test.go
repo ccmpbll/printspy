@@ -341,3 +341,23 @@ func TestPreferencesOtherStyleIsIndependentAndDefaultsToSolid(t *testing.T) {
 		t.Errorf("missing other_style: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPreferencesAcceptEveryPatternAndNoOthers(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	save := func(pattern string) int {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", `{"background":{"pattern":"`+pattern+`","strength":6,"fade":true}}`))
+		return rec.Code
+	}
+	for _, p := range []string{"none", "dots", "grid", "grid2", "layers", "hatch", "hex", "tri", "plus", "gyroid", "cubic", "concentric", "hilbert"} {
+		if code := save(p); code != http.StatusOK {
+			t.Errorf("%s: got %d, want 200", p, code)
+		}
+	}
+	for _, p := range []string{"lightning", "gyroidwaves", "glow", "dotsglow", ""} {
+		if code := save(p); code != http.StatusBadRequest {
+			t.Errorf("%q: got %d, want 400", p, code)
+		}
+	}
+}

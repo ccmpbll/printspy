@@ -350,6 +350,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 var backgroundPatterns = map[string]bool{
 	"none": true, "dots": true, "grid": true, "grid2": true, "layers": true,
 	"hatch": true, "hex": true, "tri": true, "plus": true,
+	"gyroid": true, "cubic": true, "concentric": true, "hilbert": true,
 }
 
 const (
