@@ -58,97 +58,74 @@ body {
     padding: 1.5rem;
 }
 
-header {
+/* ---------- Top bar ---------- */
+header.topbar {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
+    gap: 0.6rem;
+    margin-bottom: 1.25rem;
     flex-wrap: wrap;
 }
 
-header .header-logo {
-    width: 40px;
-    height: 40px;
+header.topbar .header-logo {
+    width: 48px;
+    height: 48px;
 }
 
-header h1 {
-    font-size: 1.5rem;
+header.topbar h1 {
+    font-size: 1.75rem;
     font-weight: 600;
 }
 
-header .app-version {
-    font-size: 0.65rem;
-    color: var(--text-tertiary);
-    align-self: flex-end;
-    margin-bottom: 2px;
-}
+.spacer { flex: 1; }
 
-header .printer-count {
-    font-size: 0.8rem;
-    color: var(--text-secondary);
-    margin-left: auto;
-}
-
+/* ---------- Buttons: one pill style everywhere (32px) ---------- */
 .btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.8rem;
+    justify-content: center;
+    gap: 0.45rem;
+    height: 32px;
+    padding: 0 1rem;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: 999px;
     background: var(--bg-primary);
     color: var(--text-primary);
-    font-size: 0.8rem;
-    line-height: 1.2;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
     cursor: pointer;
     text-decoration: none;
     transition: background 0.15s;
 }
 
-.btn:hover {
-    background: var(--bg-secondary);
-}
+.btn:hover { background: var(--bg-tertiary); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.btn-icon {
-    padding: 0.4rem;
-    line-height: 0;
-}
+.btn-sm { height: 32px; padding: 0 1rem; font-size: 0.85rem; }
 
 .btn-primary {
     background: var(--accent);
-    color: white;
+    color: #fff;
     border-color: var(--accent);
+    font-weight: 600;
 }
+.btn-primary:hover { opacity: 0.9; background: var(--accent); }
 
-.btn-primary:hover {
-    opacity: 0.9;
-    background: var(--accent);
-}
+.btn-danger { color: var(--error); border-color: var(--error); }
+.btn-pause { color: var(--warning); border-color: var(--warning); }
+.btn-pause:hover { background: var(--warning-bg); }
 
-.btn-danger {
-    color: var(--error);
-    border-color: var(--error);
-}
+.btn-maintenance { color: var(--warning); border-color: var(--warning); }
+.btn-maintenance.active { background: var(--warning); border-color: var(--warning); color: #000; }
 
-.btn-maintenance {
-    color: var(--warning);
-    border-color: var(--warning);
-}
+.btn-icon { width: 32px; padding: 0; }
+.btn-more { width: 46px; padding: 0; }
+.btn svg { flex: none; }
 
-.btn-maintenance.active {
-    background: var(--warning);
-    border-color: var(--warning);
-    color: #000;
-}
-
-.btn-sm {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-}
-
-/* CSS-drawn stop icon for Cancel, instead of a Unicode glyph (&#9724;) -
-   iOS Safari/Firefox render that codepoint via the emoji font: fixed
-   black color (ignores .btn-danger's red) and an oversized glyph. */
+/* CSS-drawn stop/play icons: iOS Safari/Firefox render the Unicode glyphs
+   through the emoji font (fixed black colour, oversized). */
 .icon-stop {
     display: inline-block;
     width: 0.6em;
@@ -157,8 +134,6 @@ header .printer-count {
     vertical-align: -0.05em;
 }
 
-/* Same story as .icon-stop, for the webcam live/snapshot toggle's play
-   glyph (&#9654;). */
 .icon-play {
     display: inline-block;
     width: 0;
@@ -169,23 +144,73 @@ header .printer-count {
     vertical-align: -0.1em;
 }
 
-/* Same height as the other header-row buttons (Pause/Cancel/Edit, plain
-   .btn-sm) - just a muted text color to read as secondary next to them. */
-.btn-files, .btn-history {
-    color: var(--text-secondary);
-}
+/* ---------- Dropdown menus (Power, user, card more) ---------- */
+.menu-wrap { position: relative; display: inline-flex; vertical-align: middle; }
 
-/* Connection banner */
+.menu {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 30;
+    min-width: 12rem;
+    padding: 0.3rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.menu.open { display: block; }
+
+.menu button,
+.menu a {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+}
+.menu button:hover,
+.menu a:hover { background: var(--bg-secondary); }
+.menu hr { border: 0; border-top: 1px solid var(--border); margin: 0.3rem 0; }
+.menu form { margin: 0; }
+.menu .ver { padding: 0.4rem 0.65rem; font-size: 0.75rem; color: var(--text-secondary); }
+
+.usermenu .um-btn { padding: 0 0.85rem 0 3px; gap: 0.55rem; }
+.usermenu .avatar {
+    width: 24px;
+    height: 24px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--bg-tertiary);
+    display: grid;
+    place-items: center;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.usermenu .uname { font-size: 0.9rem; }
+.usermenu .caret { color: var(--text-tertiary); font-size: 0.7rem; }
+
+/* ---------- Connection banner ---------- */
 .connection-banner {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 1rem;
+    padding: 0.65rem 1rem;
     margin-bottom: 1rem;
     background: var(--warning-bg);
     border: 1px solid var(--warning);
-    border-radius: var(--radius);
-    font-size: 0.8rem;
+    border-radius: var(--radius-lg);
+    font-size: 0.9rem;
     color: var(--warning);
     font-weight: 500;
 }
@@ -203,73 +228,114 @@ header .printer-count {
     50% { opacity: 0.3; }
 }
 
-/* Printer card */
+/* ---------- Fleet strip ---------- */
+.fleet {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.fleet:empty { display: none; }
+
+.fleet-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+.fleet-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.fleet-chip.printing { color: var(--success); }
+.fleet-chip.paused,
+.fleet-chip.offline,
+.fleet-chip.attention { color: var(--warning); }
+.fleet-chip.error { color: var(--error); }
+.fleet-chip.busy { color: var(--accent); }
+.fleet-chip.on { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--text-tertiary); }
+.fleet-chip.all.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.fleet-next {
+    margin-left: auto;
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.fleet-next b { color: var(--text-primary); }
+
+/* ---------- Printer card ---------- */
 .printer-card {
+    position: relative;
     background: var(--bg-primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 1rem;
     margin-bottom: 0.75rem;
 }
 
-.printer-card.card-error {
-    border-width: 2px;
-    border-color: var(--error);
+.printer-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    background: var(--rail, var(--border));
 }
 
-.printer-card.card-offline {
-    border-width: 2px;
-    border-color: var(--warning);
-    opacity: 0.75;
-}
+.printer-card[data-state="printing"] { --rail: var(--success); }
+.printer-card[data-state="paused"],
+.printer-card[data-state="attention"],
+.printer-card[data-state="offline"] { --rail: var(--warning); }
+.printer-card[data-state="error"] { --rail: var(--error); }
+.printer-card[data-state="busy"] { --rail: var(--accent); }
+.printer-card[data-state="disconnected"],
+.printer-card[data-state="maintenance"] { --rail: var(--text-tertiary); }
+.printer-card[data-state="offline"],
+.printer-card[data-state="disconnected"],
+.printer-card[data-state="maintenance"] { opacity: 0.8; }
 
-.printer-card.card-attention {
-    border-width: 2px;
-    border-color: var(--warning);
-}
-
-.printer-card.card-disconnected {
-    opacity: 0.7;
-}
-
-.printer-card.card-busy {
-    border-width: 2px;
-    border-color: var(--accent);
-}
-
-.printer-card.card-maintenance {
-    opacity: 0.7;
-}
+.printer-card.card-hidden { display: none; }
 
 .printer-header {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    gap: 0.75rem;
     flex-wrap: wrap;
+    padding: 0.8rem 1rem 0.55rem 1.25rem;
 }
 
-.printer-name {
-    font-size: 0.95rem;
-    font-weight: 600;
-}
-
-.printer-model {
-    font-size: 0.75rem;
-    color: var(--text-secondary);
-}
+.printer-name { font-size: 1.25rem; font-weight: 600; }
+.printer-model { font-size: 0.9rem; color: var(--text-secondary); }
 
 .printer-state {
-    font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
     line-height: 1.2;
-    padding: 0.25rem 0.6rem;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    font-weight: 500;
 }
+.printer-state::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.printer-state.state-printing::before { animation: pulse 1.5s ease-in-out infinite; }
 
 .state-printing { background: var(--success-bg); color: var(--success); }
-.state-idle { background: var(--bg-secondary); color: var(--text-secondary); }
+.state-idle { background: var(--bg-tertiary); color: var(--text-secondary); }
 .state-paused { background: var(--warning-bg); color: var(--warning); }
 .state-error { background: var(--error-bg); color: var(--error); }
 .state-attention { background: var(--warning-bg); color: var(--warning); }
@@ -278,111 +344,57 @@ header .printer-count {
 .state-maintenance { background: var(--bg-tertiary); color: var(--text-secondary); }
 .state-busy { background: var(--accent-light); color: var(--accent); }
 
-.print-controls {
+.printer-actions {
     display: inline-flex;
-    gap: 0.3rem;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
-.print-controls .btn {
-    /* Sized to fit "Cancel"/"Resume" - keeps the button from shrinking when
-       confirmAction() swaps the label to the shorter "Sure?" */
-    min-width: 4.75rem;
-    justify-content: center;
-}
-.power-btn-group {
-    display: inline-flex;
-    border-radius: var(--radius);
-    overflow: hidden;
-    border: 1px solid var(--border);
-}
-.power-toggle-btn {
-    padding: 0.25rem 0.5rem;
-    font-size: 0.75rem;
-    line-height: 1.2;
-    border: none;
-    background: var(--bg-primary);
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-weight: 500;
-}
-.power-toggle-btn:hover { background: var(--bg-tertiary); }
-.power-toggle-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-.power-btn-active.power-on { background: var(--success-bg); color: var(--success); }
-.power-btn-active.power-off { background: var(--error-bg); color: var(--error); }
-.power-controls {
-    display: inline-flex;
-    gap: 0.35rem;
-    margin-left: 0.5rem;
-}
-
-.printer-url {
-    font-size: 0.75rem;
-    color: var(--text-tertiary);
-    margin-left: auto;
-}
+.print-controls { display: inline-flex; gap: 0.5rem; }
+.print-controls .btn { min-width: 5.3rem; }
 
 .printer-link {
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
-    font-size: 0.75rem;
+    height: 32px;
+    padding: 0 1rem;
+    font-size: 0.85rem;
     color: var(--accent);
     text-decoration: none;
-    padding: 0.2rem 0.6rem;
     border: 1px solid var(--accent);
-    border-radius: var(--radius);
-    opacity: 0.8;
+    border-radius: 999px;
 }
-
-.printer-link:hover { opacity: 1; }
 
 .printer-body {
     display: flex;
-    gap: 0.75rem;
+    gap: 1rem;
     align-items: stretch;
+    padding: 0.25rem 1rem 1rem 1.25rem;
 }
 
-.ingest-banner {
+.printer-stats {
+    flex: 1;
+    min-width: 0;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-    padding: 0.5rem 0.75rem;
-    border-radius: var(--radius);
-    background: var(--success-bg);
-    color: var(--success);
-    font-size: 0.85rem;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.9rem;
 }
 
-.ingest-banner-actions {
-    display: flex;
-    gap: 0.5rem;
-    flex-shrink: 0;
-}
-
-/* Webcam */
+/* ---------- Webcam column ---------- */
 .webcam-wrapper {
-    min-width: 200px;
-    width: 200px;
-    /* Column layout so .webcam-container can take "the rest of the stretched
-       height minus the mode-button row" via flex:1, instead of height:100%
-       which assumed the container was the wrapper's only child - with the
-       button row added below it, 100% left no room for it and pushed it
-       out past the card's bottom edge. */
+    width: 260px;
+    min-width: 260px;
+    align-self: flex-start;
     display: flex;
     flex-direction: column;
 }
 
 .webcam-container {
     width: 100%;
-    /* auto basis (not the flex:1 shorthand's 0%) so the mobile breakpoint's
-       explicit height:200px still wins as the starting size there (where
-       .webcam-wrapper has no external stretch pressure to grow into) -
-       grow:1 still consumes any real leftover space on desktop regardless. */
-    flex: 1 1 auto;
+    aspect-ratio: 4 / 3;
     background: #111;
     border-radius: var(--radius);
     overflow: hidden;
@@ -404,8 +416,8 @@ header .printer-count {
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #555;
-    font-size: 0.7rem;
+    color: #777;
+    font-size: 0.8rem;
     text-align: center;
 }
 
@@ -415,246 +427,243 @@ header .printer-count {
     object-fit: contain;
 }
 
-/* Snapshot/live/plate mode buttons, under the image (not on it) - one row
-   per printer card, always the same three options regardless of state;
-   LIVE/PLATE just disable themselves when not applicable rather than
-   disappearing, so the row never jumps around. */
+/* Plate / snap / live: pills under the image. LIVE/PLATE disable themselves
+   when not applicable instead of disappearing, so the row never jumps. */
 .webcam-mode-row {
     display: flex;
-    gap: 2px;
-    margin-top: 0.35rem;
-    /* Hard cap at the wrapper's own width regardless of button content -
-       flex items refuse to shrink below their intrinsic content size by
-       default (min-width:auto), which let 3 buttons' text overflow the
-       fixed 200px column on desktop (only ever tested at a narrower,
-       single-column mobile width where this doesn't show up). */
-    overflow: hidden;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
 }
 
 .webcam-mode-btn {
     flex: 1;
     min-width: 0;
-    padding: 0.2rem 0;
-    font-size: 0.6rem;
-    font-weight: 600;
+    height: 32px;
+    padding: 0 0.5rem;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 999px;
     background: var(--bg-primary);
     color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 500;
     cursor: pointer;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: clip;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
-/* hover:hover excludes touch - without it, tapping a mode button on mobile
-   leaves it stuck in the hover state until the user taps elsewhere. */
+/* hover:hover excludes touch, so a tapped button doesn't stay "hovered". */
 @media (hover: hover) and (pointer: fine) {
-    .webcam-mode-btn:hover:not(:disabled) {
-        background: var(--bg-tertiary);
-    }
+    .webcam-mode-btn:hover:not(:disabled) { background: var(--bg-tertiary); }
 }
 
 .webcam-mode-btn.active {
     background: var(--accent);
     color: #fff;
     border-color: var(--accent);
+    font-weight: 600;
 }
+.webcam-mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.webcam-mode-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-}
+.webcam-idle { height: auto; min-height: 0; }
+.webcam-container.webcam-collapsed { display: none; }
 
-/* Collapsed webcam for idle printers */
-.webcam-idle {
-    /* Overrides .webcam-container's flex:1 (which would otherwise still
-       grow to fill the column) so this collapses to its actual content
-       size instead. */
-    flex: 0 0 auto;
-    height: auto;
-    min-height: 0;
-}
-
-/* Collapses just the image box, not the whole .webcam-wrapper - the
-   snap/live/plate mode buttons live below it and need to stay reachable
-   even when the current mode has nothing to show (e.g. plate mode with no
-   thumbnail available), or there'd be no way to switch modes back. Means
-   the 200px column stays reserved even with nothing to show in it, unlike
-   the old full-wrapper collapse that let printer-stats expand to fill it. */
-.webcam-container.webcam-collapsed {
-    display: none;
-}
-
-.printer-stats {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.stat-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-}
-
-/* Filename + progress with thumbnail beside */
-.file-and-thumb {
-    display: flex;
-    gap: 0.75rem;
-}
-
-.file-and-progress {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 0.25rem;
-}
+/* ---------- Printing stats ---------- */
+.file-and-thumb { display: flex; gap: 0.9rem; align-items: center; }
+.file-and-progress { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.6rem; }
 
 .thumb-beside {
     width: 72px;
-    min-width: 72px;
+    height: 54px;
+    flex: none;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-tertiary);
-    border-radius: var(--radius);
+    border-radius: 8px;
     overflow: hidden;
 }
+.thumb-beside img { width: 100%; height: 100%; object-fit: cover; }
 
-.thumb-beside img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-}
-
-/* Filename */
 .print-filename {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-primary);
+    font-size: 1.05rem;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-bottom: 0.25rem;
 }
 
-/* Progress bar */
-.progress-row {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75rem;
-    margin-bottom: 0.25rem;
-}
-
-.progress-label { color: var(--text-secondary); }
-.progress-value { font-weight: 600; }
-
+.progress-row { display: flex; align-items: center; gap: 0.75rem; --pc: 1.5rem; }
 .progress-bar {
-    height: 6px;
+    flex: 1;
+    height: var(--pc);
     background: var(--bg-tertiary);
-    border-radius: 3px;
+    border-radius: 8px;
     overflow: hidden;
 }
-
 .progress-fill {
     height: 100%;
     background: var(--success);
-    border-radius: 3px;
+    border-radius: 8px;
     transition: width 0.3s ease;
 }
+.printer-card[data-state="paused"] .progress-fill { background: var(--warning); }
+.progress-value {
+    min-width: 3.4rem;
+    text-align: right;
+    font-size: var(--pc);
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
 
-/* Stat grid */
 .stat-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.4rem;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.9rem 1.5rem;
 }
-
-.stat-grid-auto {
-    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-}
-
-.stat-box {
-    background: var(--bg-secondary);
-    border-radius: var(--radius);
-    padding: 0.35rem 0.5rem;
-}
-
+.stat-item { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .stat-label {
     font-size: 0.68rem;
+    font-weight: 500;
     color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.25;
 }
-
 .stat-value {
-    font-size: 0.85rem;
+    font-size: 1rem;
     font-weight: 600;
+    line-height: 1.25;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
+.stat-unit { font-size: 0.8rem; font-weight: 400; color: var(--text-secondary); }
 
-.stat-unit {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    font-weight: 400;
+.temp-bar {
+    display: block;
+    height: 8px;
+    margin-top: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    overflow: hidden;
 }
+.temp-bar i { display: block; height: 100%; background: var(--warning); border-radius: 4px; }
+.stat-item.at-target .temp-bar i { background: var(--success); }
 
-/* Idle state */
+/* ---------- Idle / state message ---------- */
 .idle-message {
     background: var(--bg-secondary);
     border-radius: var(--radius);
-    padding: 0.75rem;
+    padding: 0.75rem 0.9rem;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+.idle-message.msg-error { background: var(--error-bg); color: var(--error); }
+.idle-message.msg-attention,
+.idle-message.msg-offline { background: var(--warning-bg); color: var(--warning); }
+.idle-message.msg-disconnected { background: var(--bg-tertiary); color: var(--text-secondary); }
+.idle-message.msg-busy { background: var(--accent-light); color: var(--accent); }
+
+/* ---------- Card footer: plug switches + power ---------- */
+.printer-foot {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8rem;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    padding: 0.7rem 1rem 0.8rem 1.25rem;
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.plug {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.25rem 0.8rem 0.25rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-primary);
     color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
 }
-
-.idle-message.msg-error {
-    background: var(--error-bg);
-    color: var(--error);
-}
-
-.idle-message.msg-attention {
-    background: var(--warning-bg);
-    color: var(--warning);
-}
-
-.idle-message.msg-offline {
-    background: var(--warning-bg);
-    color: var(--warning);
-}
-
-.idle-message.msg-disconnected {
+.plug .knob {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
     background: var(--bg-tertiary);
+    transition: background 0.15s;
+}
+.plug .knob::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-tertiary);
+    transition: all 0.15s;
+}
+.plug.on { color: var(--text-primary); }
+.plug.on .knob { background: var(--success-bg); }
+.plug.on .knob::after { left: 19px; background: var(--success); }
+.plug.locked { cursor: not-allowed; opacity: 0.85; }
+.plug .lock { font-size: 0.8rem; color: var(--text-tertiary); }
+
+.power-pill {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 32px;
+    padding: 0 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-primary);
     color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1;
 }
+.power-pill b { color: var(--text-primary); font-weight: 700; }
+.power-pill[hidden] { display: none; }
 
-.idle-message.msg-busy {
-    background: var(--accent-light);
-    color: var(--accent);
-}
-
-/* Empty state */
-.empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--text-secondary);
-}
-
-.empty-state h2 {
-    font-size: 1.1rem;
-    margin-bottom: 0.5rem;
-    color: var(--text-primary);
-}
-
-.empty-state p {
-    margin-bottom: 1.5rem;
+/* ---------- Slicer ingest banner ---------- */
+.ingest-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin: 0 1rem 0.9rem 1.25rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: var(--radius);
+    background: var(--success-bg);
+    color: var(--success);
     font-size: 0.9rem;
 }
+.ingest-banner .msg-error { color: var(--error); font-weight: 600; }
+.ingest-banner-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+
+/* ---------- Empty state ---------- */
+.empty-state {
+    background: var(--bg-primary);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+    padding: 3.5rem 1rem;
+    text-align: center;
+    color: var(--text-secondary);
+}
+.empty-state h2 { font-size: 1.15rem; margin-bottom: 0.5rem; color: var(--text-primary); }
+.empty-state p { margin-bottom: 1.25rem; font-size: 0.9rem; }
+
+/* Maintenance card has no body controls */
+.printer-card.card-maintenance .printer-body { padding-top: 0; }
+
 
 /* Modal */
 .modal-overlay {
@@ -875,145 +884,38 @@ header .printer-count {
     margin: 0;
 }
 
+
 /* Responsive */
 @media (max-width: 768px) {
-    .container {
-        padding: 1rem;
-    }
-
-    .printer-header {
-        gap: 0.4rem;
-    }
-
-    .printer-url {
-        display: none;
-    }
-
-    .printer-body {
-        flex-direction: column;
-    }
-
-    .webcam-wrapper {
-        width: 100%;
-        min-width: unset;
-    }
-
-    .webcam-container {
-        height: 200px;
-    }
-
-    .file-and-thumb {
-        gap: 0.5rem;
-    }
-
-    .thumb-beside {
-        width: 64px;
-        min-width: 64px;
-    }
-
-    .printer-stats {
-        gap: 0.35rem;
-    }
-
-    .stat-rows {
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.3rem;
-    }
-
-    .stat-rows .stat-grid {
-        display: contents;
-    }
-
-    .stat-grid {
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.3rem;
-    }
-
-    .stat-grid-auto {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.3rem;
-    }
-
-    .connection-banner {
-        font-size: 0.75rem;
-        padding: 0.4rem 0.75rem;
-    }
+    .container { padding: 1rem; }
+    .printer-body { flex-direction: column; }
+    .webcam-wrapper { width: 100%; min-width: 0; }
+    .webcam-container { aspect-ratio: 16 / 9; max-height: 220px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); gap: 0.7rem 1rem; }
+    .printer-actions { width: 100%; justify-content: flex-start; }
+    .fleet { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+    .fleet-chip { white-space: nowrap; }
+    .progress-row { --pc: 1.25rem; }
+    .modal-wide, .modal-files { max-width: 100%; }
+    .recent-item { flex-wrap: wrap; }
+    .recent-actions { width: 100%; justify-content: flex-end; margin-top: 0.25rem; }
 }
 
 @media (max-width: 480px) {
-    header h1 {
-        font-size: 1.1rem;
-    }
-
-    .printer-name {
-        font-size: 0.85rem;
-    }
-
-    .printer-stats {
-        gap: 0.25rem;
-    }
-
-    .stat-rows {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.25rem;
-    }
-
-    .stat-grid {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 0.25rem;
-    }
-
-    .stat-grid-auto {
-        gap: 0.25rem;
-    }
-
-    .webcam-container {
-        height: 180px;
-    }
-
-    .thumb-beside {
-        width: 56px;
-        min-width: 56px;
-    }
-
-    .print-filename {
-        font-size: 0.7rem;
-    }
-
-    .form-actions {
-        flex-direction: column;
-    }
-
-    .form-actions .btn {
-        width: 100%;
-        justify-content: center;
-    }
-
-    .settings-printer-row {
-        flex-wrap: wrap;
-    }
-
-    .settings-printer-actions {
-        width: 100%;
-        justify-content: flex-end;
-        margin-top: 0.25rem;
-    }
-
-    .modal-wide, .modal-files {
-        max-width: 100%;
-    }
-
-    .recent-item {
-        flex-wrap: wrap;
-    }
-
-    .recent-actions {
-        width: 100%;
-        justify-content: flex-end;
-        margin-top: 0.25rem;
-    }
+    header.topbar { gap: 0.4rem; }
+    header.topbar .header-logo { width: 38px; height: 38px; }
+    header.topbar h1 { font-size: 1.35rem; }
+    .btn .lbl, .usermenu .uname, .fleet-next { display: none; }
+    .btn { padding: 0 0.75rem; }
+    .printer-name { font-size: 1.1rem; }
+    .print-controls { width: 100%; }
+    .print-controls .btn { flex: 1; min-width: 0; }
+    .form-actions { flex-direction: column; }
+    .form-actions .btn { width: 100%; justify-content: center; }
+    .settings-printer-row { flex-wrap: wrap; }
+    .settings-printer-actions { width: 100%; justify-content: flex-end; margin-top: 0.25rem; }
 }
+
 
 /* File manager rows (also used inline, no dropdown wrapper anymore) */
 .recent-item {

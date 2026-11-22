@@ -132,16 +132,14 @@ function showConnectionBanner(show) {
 }
 
 function updateHeaderCount() {
-    const count = document.getElementById('printer-count');
+    updateFleet();
+    const control = document.getElementById('power-controls');
     if (!printers || printers.length === 0) {
-        count.textContent = '';
-        document.getElementById('power-controls').style.display = 'none';
+        control.style.display = 'none';
         return;
     }
-    const connected = printers.filter(p => p.status && p.status.state !== 'offline' && p.status.state !== 'disconnected').length;
-    count.textContent = `${connected}/${printers.length} connected`;
     const hasPower = printers.some(p => p.status && p.status.power && p.status.power.length > 0);
-    document.getElementById('power-controls').style.display = hasPower ? 'inline-flex' : 'none';
+    control.style.display = hasPower ? 'inline-flex' : 'none';
 }
 
 // Power control
@@ -705,12 +703,16 @@ function updateDashboard() {
     }
 }
 
+const ICON_PAUSE = '<svg class="ic-pause" width="11" height="11" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="1.4" y="0.8" width="3.3" height="10.4" rx="1.1"/><rect x="7.3" y="0.8" width="3.3" height="10.4" rx="1.1"/></svg>';
+const ICON_MORE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+
 function renderMaintenanceCard(printer) {
     const cfg = printer.config;
     return `
         <div class="printer-card card-maintenance" data-printer-id="${cfg.id}" data-state="maintenance">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
+                ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
                 <span class="printer-state state-maintenance">Maintenance</span>
             </div>
             <div class="printer-body">
@@ -719,12 +721,38 @@ function renderMaintenanceCard(printer) {
         </div>`;
 }
 
+// One plug as a switch. The printer's own plug is locked on while a print is
+// running (turning the printer off mid-print is never what you want).
+function plugHTML(cfg, ps, state, singlePlug) {
+    const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
+    const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
+    const locked = !!(ps.on && isBusy && isPrinterPlug);
+    const title = locked ? 'Cannot turn off printer while printing' : autoOffTooltip(ps.source);
+    const label = ps.label && !ps.hide_label ? esc(ps.label) : '';
+    const sig = `${ps.on}|${locked}|${title}|${label}`;
+    return `<span class="plug ${ps.on ? 'on' : ''} ${locked ? 'locked' : ''}" data-field="power" data-plug-id="${esc(ps.id)}" data-sig="${esc(sig)}"${title ? ` title="${esc(title)}"` : ''} onclick="event.stopPropagation();togglePlug(${cfg.id}, this)"><span class="knob"></span>${label}${locked ? '<span class="lock">&#128274;</span>' : ''}</span>`;
+}
+
+function togglePlug(printerId, el) {
+    if (el.classList.contains('locked')) return;
+    setPower(printerId, el.classList.contains('on') ? 'off' : 'on', el.dataset.plugId);
+}
+
+function powerFootHTML(cfg, status, state) {
+    if (!status || !status.power || status.power.length === 0) return '';
+    const singlePlug = status.power.length === 1;
+    const watts = Math.round(totalWatts(status.power));
+    return `<div class="printer-foot" data-field="foot">
+        ${status.power.map(ps => plugHTML(cfg, ps, state, singlePlug)).join('')}
+        <span class="power-pill" data-field="watts-pill"${watts > 0 ? '' : ' hidden'}>Power <b data-field="watts">${watts}</b> W</span>
+    </div>`;
+}
+
 function renderPrinterCard(printer) {
     const cfg = printer.config;
     if (cfg.maintenance) return renderMaintenanceCard(printer);
     const status = printer.status;
     const state = status ? status.state : 'offline';
-    const stateClass = `state-${state}`;
     let stateLabel;
     if (state === 'error' && status && status.state_message) {
         stateLabel = `Error: ${status.state_message}`;
@@ -763,42 +791,25 @@ function renderPrinterCard(printer) {
     // printer - not a blanket hide for every card regardless of state.
     const sectionHidden = hideWebcamWhenUnreachable && (state === 'offline' || state === 'disconnected');
 
-    let powerHTML = '';
-    if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
-        const singlePlug = status.power.length === 1;
-        powerHTML = status.power.map(ps => {
-            const onClass = ps.on ? 'power-btn-active power-on' : '';
-            const offClass = !ps.on ? 'power-btn-active power-off' : '';
-            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const autoTitle = autoOffTooltip(ps.source);
-            const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : (autoTitle ? `title="${esc(autoTitle)}"` : '');
-            const onTitle = autoTitle ? ` title="${esc(autoTitle)}"` : '';
-            const label = esc(plugLabel(ps));
-            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on',this.closest('[data-plug-id]').dataset.plugId)"${onTitle}>${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off',this.closest('[data-plug-id]').dataset.plugId)" ${offDisabled}>Off</button></span>`;
-        }).join('');
-    }
-
     let controlHTML = '';
     if (state === 'printing') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-pause" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">${ICON_PAUSE} Pause</button><button class="btn btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     } else if (state === 'paused') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))"><span class="icon-play"></span> Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))"><span class="icon-play"></span> Resume</button><button class="btn btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     }
 
-    const filesHTML = `<button class="btn btn-sm btn-files" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
-    const historyHTML = `<button class="btn btn-sm btn-history" onclick="event.stopPropagation();openPrintHistory(${cfg.id})">History</button>`;
+    const filesHTML = `<button class="btn" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
+    const historyHTML = `<button class="btn" onclick="event.stopPropagation();openPrintHistory(${cfg.id})">History</button>`;
+    const menuHTML = `<span class="menu-wrap"><button class="btn btn-more" onclick="toggleMenu(event,'card-menu-${cfg.id}')" title="More" aria-haspopup="true">${ICON_MORE}</button><div class="menu" id="card-menu-${cfg.id}"><button onclick="openEditModal(${cfg.id})">&#9998; Edit printer</button><a href="${esc(safeUrl(cfg.url))}" target="_blank" rel="noopener">&#8599; Open ${esc(printer.display_name || 'printer')}</a></div></span>`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
-                <span class="printer-state ${stateClass}" data-field="state">${esc(stateLabel)}</span>
-                ${powerHTML}
-                ${controlHTML}
-                ${filesHTML}
-                ${historyHTML}
+                <span class="printer-state state-${state}" data-field="state">${esc(stateLabel)}</span>
+                <span class="spacer"></span>
+                <span class="printer-actions">${controlHTML}${filesHTML}${historyHTML}${menuHTML}</span>
             </div>
             <div class="printer-body">
                 ${sectionHidden ? '' : `
@@ -820,60 +831,65 @@ function renderPrinterCard(printer) {
                     ${isPrinting ? renderPrintingStats(cfg, status, !sectionHidden && !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
+            ${powerFootHTML(cfg, status, state)}
         </div>`;
+}
+
+// Temperature cell: label, actual / target, and a bar filling toward target
+// (green once it's there, amber while heating).
+const TEMP_MAX = {hotend: 300, bed: 120, chamber: 60};
+
+function tempFill(field, actual, target) {
+    const t = Math.round(target);
+    const atTarget = t > 0 && actual >= target - 3;
+    const pct = Math.min(100, (t > 0 ? actual / target : (actual / TEMP_MAX[field]) * 0.5) * 100);
+    return {atTarget, pct};
+}
+
+function tempCellHTML(label, field, actual, target) {
+    const {atTarget, pct} = tempFill(field, actual, target);
+    const t = Math.round(target);
+    return `<div class="stat-item ${atTarget ? 'at-target' : ''}" data-cell="${field}">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value" data-field="${field}">${Math.round(actual)}<span class="stat-unit">°C / ${t > 0 ? t + '°C' : 'off'}</span></div>
+        <span class="temp-bar"><i data-field="${field}-bar" style="width:${pct}%"></i></span>
+    </div>`;
+}
+
+function tempCellsHTML(temps) {
+    const cells = [tempCellHTML('Hotend', 'hotend', temps.hotend_actual, temps.hotend_target),
+                   tempCellHTML('Bed', 'bed', temps.bed_actual, temps.bed_target)];
+    if (temps.has_chamber) cells.push(tempCellHTML('Chamber', 'chamber', temps.chamber_actual, temps.chamber_target));
+    return `<div class="stat-grid">${cells.join('')}</div>`;
 }
 
 function renderPrintingStats(cfg, status, hasRealCam) {
     const job = status.job;
     const progress = Math.round(job.progress || 0);
-    const elapsed = formatTime(job.elapsed_secs);
-    const remaining = formatTime(job.remaining_secs);
-    const eta = computeETA(job.remaining_secs);
-    const temps = status.temps;
-
-    const tempCells = [];
-    tempCells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>`);
-    tempCells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>`);
-    if (temps.has_chamber) {
-        tempCells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
-    }
-
-    let layerCell = '';
-    if (job.total_layers > 0) {
-        layerCell = `<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`;
-    }
-
-    if (totalWatts(status.power) > 0) {
-        tempCells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
-    }
+    const layerCell = job.total_layers > 0
+        ? `<div class="stat-item"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`
+        : '';
 
     return `
         <div class="file-and-thumb">
             <div class="file-and-progress">
                 <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
-                <div>
-                    <div class="progress-row">
-                        <span class="progress-label">Progress</span>
-                        <span class="progress-value" data-field="progress-text">${progress}%</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
-                    </div>
+                <div class="progress-row">
+                    <div class="progress-bar"><div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div></div>
+                    <span class="progress-value" data-field="progress-text">${progress}%</span>
                 </div>
             </div>
             ${hasRealCam ? `<div class="thumb-beside">
                 <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
             </div>` : ''}
         </div>
-        <div class="stat-rows">
-            <div class="stat-grid stat-grid-auto">
-                <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
-                <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
-                <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
-                ${layerCell}
-            </div>
-            <div class="stat-grid stat-grid-auto">${tempCells.join('')}</div>
-        </div>`;
+        <div class="stat-grid">
+            <div class="stat-item"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${computeETA(job.remaining_secs)}</div></div>
+            <div class="stat-item"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${formatTime(job.remaining_secs)}</div></div>
+            <div class="stat-item"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${formatTime(job.elapsed_secs)}</div></div>
+            ${layerCell}
+        </div>
+        ${tempCellsHTML(status.temps)}`;
 }
 
 function renderIdleStats(status, state) {
@@ -881,19 +897,7 @@ function renderIdleStats(status, state) {
     const detailMsg = status && status.state_message ? status.state_message : '';
     const stateMsg = stateIdleMsgText(state, detailMsg);
 
-    let tempsHTML = '';
-    if (temps && state !== 'offline' && state !== 'disconnected') {
-        const cells = [];
-        cells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>`);
-        cells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>`);
-        if (temps.has_chamber) {
-            cells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
-        }
-        if (totalWatts(status.power) > 0) {
-            cells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
-        }
-        tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
-    }
+    const tempsHTML = temps && state !== 'offline' && state !== 'disconnected' ? tempCellsHTML(temps) : '';
 
     if (state === 'disconnected') {
         return '';
@@ -950,12 +954,13 @@ function updateCard(card, printer) {
     if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || pausedChanged || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
         renderIngestBanners();
+        applyFleetFilter();
         return;
     }
 
     card.dataset.state = state;
 
-    // Update card border class on state change
+    // Update card class (rail colour comes from data-state) on state change
     if (prevState !== state) {
         card.className = stateCardClass(state);
         const idleMsg = card.querySelector('[data-field="idle-msg"]');
@@ -965,6 +970,7 @@ function updateCard(card, printer) {
             idleMsg.textContent = stateIdleMsgText(state, detailMsg);
         }
         setText(card, 'webcam-placeholder-text', (state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable');
+        applyFleetFilter();
     }
 
     const stateEl = card.querySelector('[data-field="state"]');
@@ -981,30 +987,17 @@ function updateCard(card, printer) {
         stateEl.className = `printer-state state-${state}`;
     }
 
-    // Update power buttons
-    if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
+    // Update plug switches
+    if (hasPower) {
         const singlePlug = status.power.length === 1;
         status.power.forEach(ps => {
             // Same physical plug can appear more than once (e.g. auto-detected
             // by a plugin AND separately assigned as a direct smart plug) --
             // both share the same data-plug-id, so update every match.
-            const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
-            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const label = plugLabel(ps);
-            const autoTitle = autoOffTooltip(ps.source);
-            groups.forEach(group => {
-                const btns = group.querySelectorAll('.power-toggle-btn');
-                if (btns[0]) {
-                    btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
-                    btns[0].textContent = `${label}⚡ On`;
-                    btns[0].title = autoTitle;
-                }
-                if (btns[1]) {
-                    btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
-                    btns[1].disabled = isBusy && isPrinterPlug;
-                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : autoTitle;
-                }
+            card.querySelectorAll(`[data-field="power"][data-plug-id="${CSS.escape(ps.id)}"]`).forEach(el => {
+                const fresh = plugHTML(cfg, ps, state, singlePlug);
+                const sig = fresh.match(/data-sig="([^"]*)"/)[1];
+                if (el.getAttribute('data-sig') !== sig) el.outerHTML = fresh;
             });
         });
     }
@@ -1021,28 +1014,37 @@ function updateCard(card, printer) {
         setText(card, 'elapsed', formatTime(job.elapsed_secs));
         setText(card, 'remaining', formatTime(job.remaining_secs));
         setText(card, 'eta', computeETA(job.remaining_secs));
-        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${Math.round(temps.hotend_target)}°C`);
-        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${Math.round(temps.bed_target)}°C`);
-        if (temps.has_chamber) {
-            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
-        }
+        setTemp(card, 'hotend', temps.hotend_actual, temps.hotend_target);
+        setTemp(card, 'bed', temps.bed_actual, temps.bed_target);
+        if (temps.has_chamber) setTemp(card, 'chamber', temps.chamber_actual, temps.chamber_target);
         if (job.total_layers > 0) {
             setStatValue(card, 'layer', job.current_layer, `/ ${job.total_layers}`);
         }
-        if (totalWatts(status.power) > 0) {
-            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
-        }
     } else if (status && status.temps) {
         const temps = status.temps;
-        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '°C' : 'off'}`);
-        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '°C' : 'off'}`);
-        if (temps.has_chamber) {
-            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
-        }
-        if (totalWatts(status.power) > 0) {
-            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
-        }
+        setTemp(card, 'hotend', temps.hotend_actual, temps.hotend_target);
+        setTemp(card, 'bed', temps.bed_actual, temps.bed_target);
+        if (temps.has_chamber) setTemp(card, 'chamber', temps.chamber_actual, temps.chamber_target);
     }
+    setWatts(card, status);
+}
+
+function setWatts(card, status) {
+    const pill = card.querySelector('[data-field="watts-pill"]');
+    if (!pill) return;
+    const watts = Math.round(totalWatts(status && status.power));
+    pill.hidden = !(watts > 0);
+    setText(card, 'watts', String(watts));
+}
+
+function setTemp(card, field, actual, target) {
+    const t = Math.round(target);
+    setStatValue(card, field, Math.round(actual), `°C / ${t > 0 ? t + '°C' : 'off'}`);
+    const {atTarget, pct} = tempFill(field, actual, target);
+    const bar = card.querySelector(`[data-field="${field}-bar"]`);
+    if (bar) bar.style.width = `${pct}%`;
+    const cell = card.querySelector(`[data-cell="${field}"]`);
+    if (cell) cell.classList.toggle('at-target', atTarget);
 }
 
 function setText(card, field, value) {
@@ -1057,8 +1059,80 @@ function setStatValue(card, field, main, unit) {
     el.appendChild(document.createTextNode(main));
     const span = document.createElement('span');
     span.className = 'stat-unit';
-    span.textContent = unit;
+    span.textContent = (field === 'layer' ? ' ' : '') + unit;
     el.appendChild(span);
+}
+
+// Dropdown menus (Power, user, card "more"): one open at a time, any outside
+// click closes them.
+function toggleMenu(e, id) {
+    e.stopPropagation();
+    const menu = document.getElementById(id);
+    const wasOpen = menu.classList.contains('open');
+    document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+    if (!wasOpen) menu.classList.add('open');
+}
+document.addEventListener('click', () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open')));
+
+// Fleet strip: state chips (click to filter the cards) and the next finish.
+let fleetFilter = 'all';
+let fleetSig = '';
+const FLEET_ORDER = ['printing', 'paused', 'idle', 'busy', 'attention', 'offline', 'maintenance', 'error'];
+
+function printerCardState(p) {
+    return p.config.maintenance ? 'maintenance' : (p.status ? p.status.state : 'offline');
+}
+
+function fleetGroup(state) {
+    return state === 'disconnected' ? 'offline' : state;
+}
+
+function updateFleet() {
+    const el = document.getElementById('fleet');
+    if (!el) return;
+    if (!printers || printers.length === 0) {
+        el.innerHTML = '';
+        fleetSig = '';
+        return;
+    }
+    const counts = {};
+    printers.forEach(p => {
+        const g = fleetGroup(printerCardState(p));
+        counts[g] = (counts[g] || 0) + 1;
+    });
+    if (fleetFilter !== 'all' && !counts[fleetFilter]) fleetFilter = 'all';
+
+    let next = null;
+    printers.forEach(p => {
+        const s = p.status;
+        if (!p.config.maintenance && s && s.state === 'printing' && s.job && s.job.remaining_secs > 0) {
+            if (!next || s.job.remaining_secs < next.job.remaining_secs) next = {name: p.config.name, job: s.job};
+        }
+    });
+
+    const known = FLEET_ORDER.filter(s => counts[s]);
+    const extra = Object.keys(counts).filter(s => !FLEET_ORDER.includes(s));
+    const chip = (key, label, n) => `<button class="fleet-chip ${key} ${fleetFilter === key ? 'on' : ''}" onclick="setFleetFilter('${key}')"><span class="dot"></span>${n} ${label}</button>`;
+    const html = `<button class="fleet-chip all ${fleetFilter === 'all' ? 'on' : ''}" onclick="setFleetFilter('all')">All ${printers.length}</button>`
+        + known.concat(extra).map(s => chip(s, s, counts[s])).join('')
+        + (next ? `<span class="fleet-next">Next finish: <b>${esc(next.name)}</b> at <b>${computeETA(next.job.remaining_secs)}</b></span>` : '');
+    if (html !== fleetSig) {
+        fleetSig = html;
+        el.innerHTML = html;
+    }
+    applyFleetFilter();
+}
+
+function setFleetFilter(f) {
+    fleetFilter = f;
+    fleetSig = '';
+    updateFleet();
+}
+
+function applyFleetFilter() {
+    document.querySelectorAll('.printer-card[data-printer-id]').forEach(card => {
+        card.classList.toggle('card-hidden', fleetFilter !== 'all' && fleetGroup(card.dataset.state) !== fleetFilter);
+    });
 }
 
 // Settings modal with printer management
@@ -2240,14 +2314,14 @@ function renderIngestBanners() {
 
         for (const job of jobs) {
             const banner = document.createElement('div');
-            banner.className = 'ingest-banner';
+            banner.className = job.error ? 'ingest-banner failed' : 'ingest-banner';
             banner.innerHTML = `
                 <span>&#128196; ${esc(job.filename)} ${job.error ? `failed to relay — <span class="msg-error">${esc(job.error)}</span>` : `waiting for ${esc(cfg.name)} to come online`}</span>
                 <div class="ingest-banner-actions">
                     ${job.error ? `<button class="btn btn-sm btn-primary" onclick="retryIngestJob(${job.id})">Retry</button>` : ''}
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>
                 </div>`;
-            card.appendChild(banner);
+            card.insertBefore(banner, card.querySelector('.printer-body'));
         }
     }
 }
@@ -2287,7 +2361,13 @@ fetch('/api/settings').then(r => r.json()).then(settings => {
 
 fetch('/api/version').then(r => r.json()).then(data => {
     const el = document.getElementById('app-version');
-    if (el && data.version) el.textContent = 'v' + data.version;
+    if (el && data.version) el.textContent = 'PrintSpy v' + data.version;
+}).catch(() => {});
+
+fetch('/api/me').then(r => r.ok ? r.json() : null).then(me => {
+    if (!me || !me.username) return;
+    document.getElementById('user-avatar').textContent = me.username.charAt(0).toUpperCase();
+    document.getElementById('user-name').textContent = me.username;
 }).catch(() => {});
 
 connectSSE();

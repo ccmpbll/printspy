@@ -95,6 +95,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/setup", h.handleSetup)
 	mux.HandleFunc("/login", h.handleLogin)
 	mux.HandleFunc("/logout", h.handleLogout)
+	mux.HandleFunc("/api/me", h.handleMe)
 	mux.HandleFunc("/api/users", h.handleUsers)
 	mux.HandleFunc("/api/users/", h.handleUserByID)
 	mux.HandleFunc("/api/account/password", h.handleChangePassword)

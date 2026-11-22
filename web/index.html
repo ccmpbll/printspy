@@ -15,35 +15,36 @@
 </head>
 <body>
     <div class="container">
-        <header>
+        <header class="topbar">
             <img src="/logo.png" alt="PrintSpy" class="header-logo">
             <h1>PrintSpy</h1>
-            <span class="app-version" id="app-version"></span>
-            <span class="printer-count" id="printer-count"></span>
-            <span class="power-controls" id="power-controls" style="display:none">
-                <button class="btn btn-sm" onclick="bulkPower('on')" title="Turn all printers on">&#9889; All On</button>
-                <button class="btn btn-sm" onclick="bulkPower('off')" title="Turn all printers off">&#9889; All Off</button>
+            <span class="spacer"></span>
+            <span class="menu-wrap" id="power-controls" style="display:none">
+                <button class="btn" onclick="toggleMenu(event,'power-menu')" aria-haspopup="true">&#9889;<span class="lbl"> Power</span> &#9662;</button>
+                <div class="menu" id="power-menu">
+                    <button onclick="bulkPower('on')">All printers on</button>
+                    <button onclick="bulkPower('off')">All printers off</button>
+                </div>
             </span>
-            <button class="btn btn-sm" onclick="openUploadModal()" title="Upload a file to a printer">&#8593; Upload</button>
-            <button class="btn btn-icon" onclick="openSettings()" title="Settings">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-                </svg>
-            </button>
-            <form method="POST" action="/logout" style="display:inline"><button class="btn btn-icon" type="submit" title="Log out">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                    <polyline points="16 17 21 12 16 7"></polyline>
-                    <line x1="21" y1="12" x2="9" y2="12"></line>
-                </svg>
-            </button></form>
+            <button class="btn" onclick="openUploadModal()" title="Upload a file to a printer"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20V5"/><path d="M5.5 11.5 12 5l6.5 6.5"/></svg> Upload</button>
+            <span class="menu-wrap usermenu">
+                <button class="btn um-btn" onclick="toggleMenu(event,'user-menu')" aria-haspopup="true"><span class="avatar" id="user-avatar">?</span><span class="uname" id="user-name"></span><span class="caret">&#9662;</span></button>
+                <div class="menu" id="user-menu">
+                    <button onclick="openSettings()">&#9881; Settings</button>
+                    <hr>
+                    <form method="POST" action="/logout"><button type="submit">Log out</button></form>
+                    <hr>
+                    <div class="ver" id="app-version"></div>
+                </div>
+            </span>
         </header>
 
         <div class="connection-banner" id="connection-banner" style="display:none">
             <span class="banner-dot"></span>
             <span id="banner-text">Connection lost — reconnecting...</span>
         </div>
+
+        <div class="fleet" id="fleet"></div>
 
         <div id="printer-list"></div>
     </div>
