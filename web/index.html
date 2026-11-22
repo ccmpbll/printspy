@@ -29,6 +29,7 @@
             <span class="menu-wrap usermenu">
                 <button class="btn um-btn" onclick="toggleMenu(event,'user-menu')" aria-haspopup="true"><span class="avatar" id="user-avatar">?</span><span class="uname" id="user-name"></span><span class="caret">&#9662;</span></button>
                 <div class="menu" id="user-menu">
+                    <button onclick="location.reload()">&#8635; Refresh</button>
                     <button onclick="openSettings()">&#9881; Settings</button>
                     <hr>
                     <form method="POST" action="/logout"><button type="submit">Log out</button></form>
@@ -38,7 +39,7 @@
             </span>
         </header>
 
-        <div class="connection-banner" id="connection-banner" style="display:none">
+        <div class="connection-banner" id="connection-banner" style="display:none" onclick="resumeConnection()" title="Tap to reconnect now">
             <span class="banner-dot"></span>
             <span id="banner-text">Connection lost — reconnecting...</span>
         </div>
