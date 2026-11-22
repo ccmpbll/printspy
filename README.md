@@ -11,18 +11,6 @@ This was built for my own personal use and the way I want to interact with my pr
 
 Each printer gets a row in the dashboard: webcam/snapshot, progress/ETA, temps, and smart plug power state/control. Updates push live via SSE. Everything's configured through the settings page — no config files, no restart needed.
 
-## Screenshots
-
-![Dashboard](docs/screenshots/printspy-dashboard.png)
-
-<details>
-<summary>File Manager &amp; Print History</summary>
-
-![File Manager](docs/screenshots/printspy-files.png)
-![Print History](docs/screenshots/printspy-history.png)
-
-</details>
-
 ## Supported platforms
 
 - **PrusaLink** — supported, but only tested on MK4S and Core One
