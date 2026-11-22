@@ -1088,7 +1088,7 @@ function renderIngestBanners() {
             const banner = document.createElement('div');
             banner.className = job.error ? 'ingest-banner failed' : 'ingest-banner';
             banner.innerHTML = `
-                <span>&#128196; ${esc(job.filename)} ${job.error ? `failed to relay — <span class="msg-error">${esc(job.error)}</span>` : `waiting for ${esc(cfg.name)} to come online`}</span>
+                <span>${esc(job.filename)} ${job.error ? `failed to relay — <span class="msg-error">${esc(job.error)}</span>` : `waiting for ${esc(cfg.name)} to come online`}</span>
                 <div class="ingest-banner-actions">
                     ${job.error ? `<button class="btn btn-sm btn-primary" onclick="retryIngestJob(${job.id})">Retry</button>` : ''}
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>
