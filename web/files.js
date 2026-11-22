@@ -4,7 +4,8 @@
 const HISTORY_PAGE_SIZE = 20;
 
 let filesState = {printerId: null, files: [], filter: 'all', sort: 'new', query: ''};
-let historyState = {printerId: null, page: 0, result: '', query: '', req: 0};
+let historyState = {printerId: null, page: 0, result: '', query: ''};
+let historyReq = 0; // module-level so a printer switch can't reuse an in-flight request's number
 let filesReq = 0;
 
 function pageTitle(name, label) {
@@ -190,7 +191,7 @@ async function renderHistoryRoute(printerId) {
     if (!printers.length) await fetchPrinters();
     const printer = printers.find(p => p.config.id === printerId);
     if (!printer) { $('page').innerHTML = '<div class="empty-state"><h2>Printer not found</h2><p><a class="crumb" href="#/">Back to the dashboard</a></p></div>'; return; }
-    if (historyState.printerId !== printerId) historyState = {printerId, page: 0, result: '', query: '', req: 0};
+    if (historyState.printerId !== printerId) historyState = {printerId, page: 0, result: '', query: ''};
     $('page').innerHTML = pageTitle(printer.config.name, 'History') + printerChips('history', printerId) + `
         <div class="h-stats" id="h-stats"></div>
         <div class="f-toolbar">
@@ -235,7 +236,7 @@ function historyPage(delta) { historyState.page = Math.max(0, historyState.page 
 async function loadHistoryPage(token) {
     const body = $('h-body');
     if (!body) return;
-    const req = ++historyState.req; // latest request wins
+    const req = ++historyReq; // latest request wins
     const st = historyState;
     const params = new URLSearchParams({limit: HISTORY_PAGE_SIZE, offset: st.page * HISTORY_PAGE_SIZE});
     if (st.result) params.set('result', st.result);
@@ -243,7 +244,7 @@ async function loadHistoryPage(token) {
     try {
         const resp = await fetch(`/api/printers/${st.printerId}/history/list?${params}`);
         const data = await resp.json();
-        if (req !== historyState.req || (token !== undefined && token !== pageToken) || !$('h-body')) return;
+        if (req !== historyReq || (token !== undefined && token !== pageToken) || !$('h-body')) return;
         if (!resp.ok) { body.innerHTML = `<div class="f-empty"><b>Failed to load history</b><span>${esc(data.error || '')}</span></div>`; return; }
         const entries = data.entries || [];
         if (!entries.length) {
@@ -255,7 +256,7 @@ async function loadHistoryPage(token) {
             <div class="h-pager"><button class="btn" ${st.page === 0 ? 'disabled' : ''} onclick="historyPage(-1)">&larr; Prev</button><span>Page ${st.page + 1}</span><button class="btn" ${data.has_more ? '' : 'disabled'} onclick="historyPage(1)">Next &rarr;</button></div>`;
         observeLazyThumbs(body);
     } catch (e) {
-        if (req === historyState.req && $('h-body')) body.innerHTML = '<div class="f-empty"><b>Failed to load history</b></div>';
+        if (req === historyReq && $('h-body')) body.innerHTML = '<div class="f-empty"><b>Failed to load history</b></div>';
     }
 }
 
@@ -284,7 +285,14 @@ let upload = null; // {printerId, file, printNow, status: 'idle'|'uploading'|'er
 
 function uploadPrinters() { return printers.filter(p => p.config.type === 'prusalink'); }
 
+let dialogOpener = null; // element to refocus when the upload / raw-API dialog closes
+function restoreDialogFocus() {
+    if (dialogOpener && dialogOpener.isConnected) dialogOpener.focus();
+    dialogOpener = null;
+}
+
 function openUploadDialog(printerId) {
+    dialogOpener = document.activeElement;
     const list = uploadPrinters();
     const preferred = list.find(p => p.config.id === printerId) || list.find(p => p.config.id === filesState.printerId && location.hash.startsWith('#/files/')) || list[0];
     upload = {printerId: preferred ? preferred.config.id : null, file: null, printNow: false, status: 'idle', error: ''};
@@ -294,7 +302,7 @@ function openUploadDialog(printerId) {
 function closeUploadDialog() {
     upload = null;
     const root = $('upload-root');
-    if (root) root.remove();
+    if (root) { root.remove(); restoreDialogFocus(); }
 }
 
 function fmtSize(bytes) {
@@ -303,8 +311,8 @@ function fmtSize(bytes) {
 
 function uploadPick(file) {
     if (!file) return;
-    if (!/\.(b?gcode)$/i.test(file.name)) {
-        upload.file = null; upload.status = 'error'; upload.error = 'Only .gcode and .bgcode files can be uploaded.';
+    if (!/\.(b?gcode|gco|g)$/i.test(file.name)) {
+        upload.file = null; upload.status = 'error'; upload.error = 'Only .gcode, .bgcode, .gco and .g files can be uploaded.';
     } else {
         upload.file = file; upload.status = 'idle'; upload.error = '';
     }
@@ -331,7 +339,7 @@ function drawUploadDialog() {
                 : `<div class="up-drop" ondragover="event.preventDefault();this.classList.add('over')" ondragleave="this.classList.remove('over')" ondrop="event.preventDefault();this.classList.remove('over');uploadPick(event.dataTransfer.files[0])" onclick="$('u-file').click()" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();$('u-file').click()}">
                     <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><polyline points="7 9 12 4 17 9"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
                     <b>Drop a file here</b><span>or <u>browse</u> &middot; .gcode, .bgcode</span></div>
-                  <input id="u-file" type="file" accept=".gcode,.bgcode" hidden onchange="uploadPick(this.files[0])">`}
+                  <input id="u-file" type="file" accept=".gcode,.bgcode,.gco,.g" hidden onchange="uploadPick(this.files[0])">`}
             </div>
             ${busy ? '<div class="up-progress"><i></i></div>' : ''}
             <div class="swrow flat"><span class="swtext"><b>Print immediately</b></span><span class="sw ${upload.printNow ? 'on' : ''}" role="switch" tabindex="0" aria-checked="${upload.printNow}" onclick="upload.printNow=!upload.printNow;this.classList.toggle('on')"></span></div>
@@ -374,6 +382,7 @@ const RAW_POLL_MS = 5000;
 
 function openRawApi(printerId) {
     closeRawApi();
+    dialogOpener = document.activeElement;
     let root = document.createElement('div');
     root.id = 'raw-root';
     root.innerHTML = `<div class="dialog-overlay" onclick="if(event.target===this)closeRawApi()">
@@ -391,7 +400,7 @@ function openRawApi(printerId) {
 function closeRawApi() {
     if (rawTimer) { clearInterval(rawTimer); rawTimer = null; }
     const root = $('raw-root');
-    if (root) root.remove();
+    if (root) { root.remove(); restoreDialogFocus(); }
 }
 
 async function loadRawApi(printerId) {
@@ -413,6 +422,17 @@ async function loadRawApi(printerId) {
 }
 
 document.addEventListener('keydown', e => {
+    if (e.key === 'Tab') {
+        // Keep Tab inside the open upload / raw-API dialog.
+        const root = $('upload-root') || $('raw-root');
+        if (!root || !root.firstElementChild) return;
+        const f = [...root.querySelectorAll('button, [href], input:not([hidden]), select, textarea, [tabindex="0"]')].filter(x => !x.disabled);
+        if (!f.length) return;
+        const i = f.indexOf(document.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+        return;
+    }
     if (e.key !== 'Escape') return;
     if (upload) closeUploadDialog();
     closeRawApi();

@@ -76,7 +76,7 @@ const fld = (label, id, value, o = {}) => `
     <div class="fld ${o.wide ? 'wide' : ''}" ${o.attrs || ''}>
         <label for="${id}">${label}</label>
         <div class="inp ${o.unit ? 'has-unit' : ''}">
-            <input id="${id}" type="${o.type || 'text'}" value="${esc(String(value === undefined || value === null ? '' : value))}" placeholder="${esc(o.ph || '')}"${o.min !== undefined ? ` min="${o.min}"` : ''}${o.max !== undefined ? ` max="${o.max}"` : ''}${o.on ? ` oninput="${o.on}"` : ''}>
+            <input id="${id}" type="${o.type || 'text'}" value="${esc(String(value === undefined || value === null ? '' : value))}" placeholder="${esc(o.ph || '')}"${o.min !== undefined ? ` min="${o.min}"` : ''}${o.max !== undefined ? ` max="${o.max}"` : ''}${o.on ? ` oninput="${o.on}"` : ''}${o.req ? ' required' : ''}${o.minlen ? ` minlength="${o.minlen}"` : ''}>
             ${o.unit ? `<span class="unit">${o.unit}</span>` : ''}
         </div>
         ${o.hint ? `<small>${o.hint}</small>` : ''}
@@ -105,7 +105,11 @@ const resultLine = (id) => `<div class="test-line" id="${id}" role="status"></di
 
 // ---------- router ----------
 
+let dashScroll = 0;
+
 function showPage(on) {
+    if (on && !$('dashboard').hidden) dashScroll = window.scrollY; // remember where the dashboard was
+    if ($('dashboard').hidden !== on) setDashboardActive(!on);
     $('dashboard').hidden = on;
     $('page').hidden = !on;
 }
@@ -131,9 +135,19 @@ function route() {
     pageToken++;
 }
 
-window.addEventListener('hashchange', () => { route(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => {
+    const wasDash = !$('dashboard').hidden;
+    route();
+    window.scrollTo(0, !wasDash && !$('dashboard').hidden ? dashScroll : 0);
+});
 
 function openSettings() { location.hash = '#/settings/printers'; }
+// After deleting from an edit page the record is gone: go to the list, don't re-render it.
+function afterDelete(editPrefix, list) {
+    if (location.hash.startsWith(editPrefix)) location.hash = list;
+    else route();
+}
+
 function goBack(q, fallback) { location.hash = q && q.get('from') === 'card' ? '#/' : fallback; }
 
 function setShell(tab, crumbs, body) {
@@ -264,14 +278,14 @@ async function devicesTab() {
 async function deleteSmartPlug(id) {
     try {
         const resp = await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
-        if (await checkOk(resp, 'Failed to delete smart plug.')) route();
+        if (await checkOk(resp, 'Failed to delete smart plug.')) afterDelete('#/settings/plug/', '#/settings/devices');
     } catch (e) { netFail('Failed to delete smart plug.'); }
 }
 
 async function deleteCamera(id) {
     try {
         const resp = await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
-        if (await checkOk(resp, 'Failed to delete camera.')) route();
+        if (await checkOk(resp, 'Failed to delete camera.')) afterDelete('#/settings/camera/', '#/settings/devices');
     } catch (e) { netFail('Failed to delete camera.'); }
 }
 
@@ -280,7 +294,7 @@ async function deleteIngestKey(id) {
         const resp = await fetch(`/api/ingest-keys/${id}`, {method: 'DELETE'});
         if (await checkOk(resp, 'Failed to delete slicer target.')) {
             loadIngestJobs();
-            route();
+            afterDelete('#/settings/target/', '#/settings/devices');
         }
     } catch (e) { netFail('Failed to delete slicer target.'); }
 }
@@ -599,7 +613,7 @@ async function accountTab() {
             ${fld('New password', 'a-new', '', {type: 'password'})}
         </div>`, '<button class="btn btn-primary" onclick="changePassword(this)">Change password</button>')
         + setCard('Users', '', `<div class="set-list">${userRows}</div>
-            <div class="grid2" style="margin-top:1rem">${fld('Username', 'a-new-user', '')}${fld('Password', 'a-new-pass', '', {type: 'password', min: 8})}</div>`,
+            <div class="grid2" style="margin-top:1rem">${fld('Username', 'a-new-user', '', {req: true})}${fld('Password', 'a-new-pass', '', {type: 'password', req: true, minlen: 8})}</div>`,
             '<button class="btn btn-primary" onclick="addUser(this)">+ Add</button>')
         + setCard('Backup', 'Export or import your printer configuration and settings as YAML.', '',
             `<button class="btn" onclick="exportConfig()">Export YAML</button><button class="btn" onclick="$('import-file').click()">Import YAML</button><input type="file" id="import-file" accept=".yaml,.yml" hidden onchange="importConfig(this)">`);
@@ -621,6 +635,7 @@ async function changePassword(btn) {
 }
 
 async function addUser(btn) {
+    if (!editValid(btn.closest('.set-card') || undefined)) return;
     try {
         const resp = await fetch('/api/users', {
             method: 'POST',
@@ -660,7 +675,7 @@ async function renderEditPage(kind, idParam, q, token) {
             : `<a class="crumb" href="${back}">Settings &rsaquo; ${info.tabLabel}</a> <span class="sep">&rsaquo;</span> ${esc(page.title)}`;
         document.querySelector('.set-title h2').innerHTML = crumbs;
         $('set-body').classList.add('edit');
-        $('set-body').innerHTML = page.html + `<div class="edit-bar"><button class="btn btn-quiet" onclick="goBack(editQuery,'${back}')">Cancel</button>${page.bar || ''}<button class="btn btn-primary" id="edit-save" onclick="${page.save}">Save</button></div>`;
+        $('set-body').innerHTML = page.html + `<div class="edit-bar"><button class="btn btn-quiet" onclick="goBack(editQuery,'${back}')">Cancel</button>${page.bar || ''}<button class="btn btn-primary" id="edit-save" onclick="if(editValid())${page.save}">Save</button></div>`;
         editQuery = q;
         if (page.after) page.after();
     } catch (e) {
@@ -668,6 +683,31 @@ async function renderEditPage(kind, idParam, q, token) {
     }
 }
 let editQuery = new URLSearchParams();
+
+// Native validation (required / type=url / minlength) for the visible inputs
+// of an edit page: the pages are not <form>s, so check by hand.
+function editValid(root) {
+    for (const inp of (root || $('set-body')).querySelectorAll('input')) {
+        if (inp.closest('[hidden]')) continue;
+        // minlength is only enforced by browsers for user-typed values; check it by hand.
+        if (inp.minLength > 0 && inp.value && inp.value.length < inp.minLength) {
+            inp.setCustomValidity(`Use at least ${inp.minLength} characters.`);
+        }
+        if (!inp.checkValidity()) {
+            inp.reportValidity();
+            inp.addEventListener('input', () => inp.setCustomValidity(''), {once: true});
+            return false;
+        }
+    }
+    return true;
+}
+
+// Enter in a text field saves the edit page, like the old modal forms did.
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT' || e.target.type === 'file') return;
+    const save = $('edit-save');
+    if (save && save.closest('#set-body') && e.target.closest('#set-body')) { e.preventDefault(); save.click(); }
+});
 
 const dangerCard = (what, fn) => setCard(`Delete ${what}`, 'This can\'t be undone.', '', `<button class="btn btn-danger" onclick="confirmAction(this, () => ${fn})">Delete ${what}</button>`, 'danger');
 
@@ -702,14 +742,14 @@ async function buildPrinterEdit(id) {
         bar: '',
         html: `<input type="hidden" id="p-id" value="${id || ''}">`
             + setCard('Printer', '', `<div class="grid2">
-                ${fld('Name', 'p-name', cfg.name, {ph: 'My Printer'})}
+                ${fld('Name', 'p-name', cfg.name, {ph: 'My Printer', req: true})}
                 ${fld('Model', 'p-model', cfg.model || '', {ph: 'e.g. Core One, MK4S (optional)'})}
             </div>${swrow('p-hide-model', !!cfg.hide_model, 'Hide model on dashboard card')}`)
             + setCard('Connection', '', `${segField('Type', 'p-type', [['octoprint', 'OctoPrint'], ['prusalink', 'PrusaLink']], cfg.type, 'printerTypeChanged')}
                 <div class="grid2" style="margin-top:1rem">
-                    ${fld('URL', 'p-url', cfg.url, {ph: 'http://192.168.1.40', wide: true})}
+                    ${fld('URL', 'p-url', cfg.url, {ph: 'http://192.168.1.40', wide: true, req: true})}
                     <div class="fld" id="p-user-wrap" ${pl ? '' : 'hidden'}><label for="p-user">Username</label><div class="inp"><input id="p-user" type="text" value="${esc(cfg.username || 'maker')}" placeholder="maker"></div></div>
-                    <div class="fld"><label for="p-key" id="p-key-label">${pl ? 'Password' : 'API Key'}</label><div class="inp"><input id="p-key" type="text" value="${esc(apiKey)}" placeholder="${pl ? 'Your PrusaLink password' : 'Your OctoPrint API key'}"></div></div>
+                    <div class="fld"><label for="p-key" id="p-key-label">${pl ? 'Password' : 'API Key'}</label><div class="inp"><input id="p-key" type="text" required value="${esc(apiKey)}" placeholder="${pl ? 'Your PrusaLink password' : 'Your OctoPrint API key'}"></div></div>
                     ${fld('Poll interval (seconds)', 'p-poll', cfg.poll_interval || 10, {type: 'number', min: 5, max: 300, unit: 'seconds'})}
                 </div>
                 <div class="test-row"><button class="btn" onclick="testPrinterConnection()">Test connection</button><span id="p-test" class="test-line" role="status"></span></div>`)
@@ -793,8 +833,8 @@ async function buildPlugEdit(id) {
         save: `saveSmartPlug(${id || 'null'})`,
         html: setCard('Smart plug (Tasmota)', '', `${segField('Connection', 'pl-mode', [['http', 'Direct HTTP'], ['mqtt', 'MQTT']], mqtt ? 'mqtt' : 'http', 'plugModeChanged')}
                 <div class="grid2" style="margin-top:1rem">
-                    ${fld('IP', 'pl-ip', plug.ip, {ph: '192.168.1.60', wide: true, attrs: `id="pl-ip-wrap" ${mqtt ? 'hidden' : ''}`})}
-                    ${fld('MQTT topic', 'pl-topic', plug.mqtt_topic || '', {ph: 'tasmota_ABC123', wide: true, attrs: `id="pl-topic-wrap" ${mqtt ? '' : 'hidden'}`, hint: 'The device\'s Topic, as configured in its own Tasmota console (Configuration → MQTT).'})}
+                    ${fld('IP', 'pl-ip', plug.ip, {ph: '192.168.1.60', wide: true, req: true, attrs: `id="pl-ip-wrap" ${mqtt ? 'hidden' : ''}`})}
+                    ${fld('MQTT topic', 'pl-topic', plug.mqtt_topic || '', {ph: 'tasmota_ABC123', wide: true, req: true, attrs: `id="pl-topic-wrap" ${mqtt ? '' : 'hidden'}`, hint: 'The device\'s Topic, as configured in its own Tasmota console (Configuration → MQTT).'})}
                     ${fld('Relay index', 'pl-idx', plug.idx || '1', {hint: 'Which relay to control on multi-relay Tasmota devices. Leave as 1 for a normal single-outlet plug.'})}
                     ${fld('Label', 'pl-label', plug.label || '', {ph: 'Printer', on: 'plugPreview()'})}
                 </div>${swrow('pl-hide-label', !!plug.hide_label, 'Hide label on dashboard power button', '', 'plugPreview')}`)
@@ -852,7 +892,7 @@ async function buildCameraEdit(id) {
         title: id ? (cam.name || cam.url) : 'Add camera',
         save: `saveCamera(${id || 'null'})`,
         html: setCard('Camera (printspy-cam)', '', `<div class="grid2">
-                ${fld('URL', 'c-url', cam.url, {type: 'url', ph: 'http://printspy-cam-abcdef.local', wide: true})}
+                ${fld('URL', 'c-url', cam.url, {type: 'url', ph: 'http://printspy-cam-abcdef.local', wide: true, req: true})}
                 ${fld('Name', 'c-name', cam.name || '', {ph: 'Printer'})}
                 ${selectFld('Assigned printer', 'c-printer', printerOptions(true), cam.printer_id || '', {hint: 'Overrides that printer\'s own webcam, if any.'})}
             </div>`)
@@ -868,12 +908,16 @@ async function buildCameraEdit(id) {
                 ${cam.printer_id ? `<div class="cam-prev"><div class="ev-prev-label">Preview</div><div class="cam-img"><img id="c-preview" src="/api/snapshot/${cam.printer_id}?t=${Date.now()}" alt=""></div></div>` : ''}
             </div>`) : '')
             + (id ? dangerCard('camera', `deleteCamera(${id})`) : ''),
-        after: () => { if (id) camTransformChanged(); },
+        after: () => { if (id) camPreviewTransform(); },
     };
 }
 
 function camTransformChanged() {
     saveCameraOrientation();
+    camPreviewTransform();
+}
+
+function camPreviewTransform() {
     const img = $('c-preview');
     if (img) img.style.transform = `${isOn('c-hmirror') ? 'scaleX(-1) ' : ''}${isOn('c-vflip') ? 'scaleY(-1)' : ''}` || 'none';
 }

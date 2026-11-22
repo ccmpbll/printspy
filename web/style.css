@@ -587,6 +587,8 @@ header.topbar h1 {
     color: var(--text-secondary);
     font-size: 0.85rem;
     font-weight: 500;
+    font-family: inherit;
+    line-height: inherit;
     cursor: pointer;
 }
 .plug .knob {
@@ -665,46 +667,6 @@ header.topbar h1 {
 .printer-card.card-maintenance .printer-body { padding-top: 0; }
 .printer-card.card-maintenance .idle-message { flex: 1; }
 
-.form-group {
-    margin-bottom: 1rem;
-}
-
-.form-group label {
-    display: block;
-    font-size: 0.8rem;
-    font-weight: 500;
-    margin-bottom: 0.3rem;
-    color: var(--text-secondary);
-}
-
-.form-group input:not([type="range"]),
-.form-group select {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 0.85rem;
-}
-
-.form-group input:not([type="range"]):focus,
-.form-group select:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
-.form-group input[type="range"] {
-    width: 100%;
-}
-
-.form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 1.25rem;
-}
-
 /* Responsive */
 @media (max-width: 768px) {
     .container { padding: 1rem; }
@@ -727,8 +689,6 @@ header.topbar h1 {
     .printer-name { font-size: 1.1rem; }
     .print-controls { width: 100%; }
     .print-controls .btn { flex: 1; min-width: 0; }
-    .form-actions { flex-direction: column; }
-    .form-actions .btn { width: 100%; justify-content: center; }
 }
 
 /* ---------- Brand link ---------- */

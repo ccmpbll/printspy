@@ -218,7 +218,22 @@ async function bulkPower(action) {
     } catch (e) { netFail('Failed to change power state.'); }
 }
 
+// The dashboard stays in the DOM under Settings/Files/History: stop pulling
+// camera frames while it is hidden, and close live streams (reopened on return).
+function setDashboardActive(active) {
+    document.querySelectorAll('.webcam-img').forEach(img => {
+        if (!active && img.src.includes('/api/webcam/')) {
+            img.dataset.liveSrc = img.getAttribute('src');
+            img.removeAttribute('src');
+        } else if (active && img.dataset.liveSrc) {
+            img.src = img.dataset.liveSrc;
+            delete img.dataset.liveSrc;
+        }
+    });
+}
+
 function refreshSnapshots() {
+    if (document.getElementById('dashboard').hidden) return;
     pollCounter++;
     document.querySelectorAll('.webcam-img').forEach(img => {
         const id = img.closest('[data-printer-id]')?.dataset.printerId;
@@ -403,6 +418,7 @@ function updateDashboard() {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
         renderIngestBanners();
+        applyFleetFilter();
     }
 }
 
@@ -426,14 +442,18 @@ function renderMaintenanceCard(printer) {
 
 // One plug as a switch. The printer's own plug is locked on while a print is
 // running (turning the printer off mid-print is never what you want).
-function plugHTML(cfg, ps, state, singlePlug) {
+function plugInfo(ps, state, singlePlug) {
     const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
     const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
     const locked = !!(ps.on && isBusy && isPrinterPlug);
     const title = locked ? 'Cannot turn off printer while printing' : autoOffTooltip(ps.source);
-    const label = ps.label && !ps.hide_label ? esc(ps.label) : '';
-    const sig = `${ps.on}|${locked}|${title}|${label}`;
-    return `<span class="plug ${ps.on ? 'on' : ''} ${locked ? 'locked' : ''}" data-field="power" data-plug-id="${esc(ps.id)}" data-sig="${esc(sig)}"${title ? ` title="${esc(title)}"` : ''} onclick="event.stopPropagation();togglePlug(${cfg.id}, this)"><span class="knob"></span>${label}${locked ? '<span class="lock">&#128274;</span>' : ''}</span>`;
+    const label = ps.label && !ps.hide_label ? ps.label : '';
+    return {locked, title, label, sig: `${ps.on}|${locked}|${title}|${label}`};
+}
+
+function plugHTML(cfg, ps, state, singlePlug) {
+    const {locked, title, label, sig} = plugInfo(ps, state, singlePlug);
+    return `<button type="button" role="switch" aria-checked="${!!ps.on}"${locked ? ' aria-disabled="true"' : ''} class="plug ${ps.on ? 'on' : ''} ${locked ? 'locked' : ''}" data-field="power" data-plug-id="${esc(ps.id)}" data-sig="${esc(sig)}"${title ? ` title="${esc(title)}"` : ''} onclick="event.stopPropagation();togglePlug(${cfg.id}, this)"><span class="knob"></span>${esc(label)}${locked ? '<span class="lock">&#128274;</span>' : ''}</button>`;
 }
 
 function togglePlug(printerId, el) {
@@ -698,9 +718,7 @@ function updateCard(card, printer) {
             // by a plugin AND separately assigned as a direct smart plug) --
             // both share the same data-plug-id, so update every match.
             card.querySelectorAll(`[data-field="power"][data-plug-id="${CSS.escape(ps.id)}"]`).forEach(el => {
-                const fresh = plugHTML(cfg, ps, state, singlePlug);
-                const sig = fresh.match(/data-sig="([^"]*)"/)[1];
-                if (el.getAttribute('data-sig') !== sig) el.outerHTML = fresh;
+                if (el.getAttribute('data-sig') !== plugInfo(ps, state, singlePlug).sig) el.outerHTML = plugHTML(cfg, ps, state, singlePlug);
             });
         });
     }
@@ -847,8 +865,20 @@ function appDialog(title, bodyHTML, buttons) {
         root.innerHTML = `<div class="dialog" role="alertdialog" aria-modal="true" aria-label="${esc(title)}">
             <h2>${esc(title)}</h2>${bodyHTML}
             <div class="dialog-foot">${buttons.map((b, i) => `<button class="btn ${b.cls || ''}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
-        const done = v => { root.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
-        const onKey = e => { if (e.key === 'Escape') done(null); };
+        const opener = document.activeElement;
+        const done = v => {
+            root.remove(); document.removeEventListener('keydown', onKey); resolve(v);
+            if (opener && opener.isConnected && opener.focus) opener.focus();
+        };
+        const onKey = e => {
+            if (e.key === 'Escape') { done(null); return; }
+            if (e.key !== 'Tab') return;
+            const f = [...root.querySelectorAll('button, [href], input, select, textarea')].filter(x => !x.disabled);
+            if (!f.length) return;
+            const i = f.indexOf(document.activeElement);
+            if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+            else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+        };
         root.querySelectorAll('button').forEach(btn => { btn.onclick = () => done(buttons[btn.dataset.i].value); });
         root.addEventListener('click', e => { if (e.target === root) done(null); });
         document.addEventListener('keydown', onKey);
@@ -1088,7 +1118,7 @@ fetch('/api/version').then(r => r.json()).then(data => {
 
 fetch('/api/me').then(r => r.ok ? r.json() : null).then(me => {
     if (!me || !me.username) return;
-    document.getElementById('user-avatar').textContent = me.username.charAt(0).toUpperCase();
+    document.getElementById('user-avatar').textContent = (Array.from(me.username)[0] || '?').toUpperCase();
     document.getElementById('user-name').textContent = me.username;
 }).catch(() => {});
 
