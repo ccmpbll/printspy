@@ -718,7 +718,6 @@ header.topbar h1 {
 .set-tab:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .set-tab.on { background: var(--bg-primary); border-color: var(--border); color: var(--text-primary); font-weight: 600; }
 .set-body { display: flex; flex-direction: column; gap: 0.9rem; min-width: 0; }
-.set-body.edit { max-width: 46rem; }
 
 .set-card { background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 1.1rem 1.25rem; }
 .set-card.danger { border-color: var(--error); }
