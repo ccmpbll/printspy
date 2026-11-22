@@ -1,0 +1,17 @@
+.bg-bar { display: flex; align-items: center; gap: .6rem 1rem; flex-wrap: wrap; padding: .5rem 1rem; background: var(--bg-primary); border-bottom: 1px solid var(--border); font-size: .78rem; color: var(--text-secondary); position: sticky; top: 0; z-index: 50; }
+.bg-bar label { display: inline-flex; align-items: center; gap: .4rem; }
+.bg-bar input[type=range] { width: 110px; }
+/* Fade: the cards sit on a gradient that hides the pattern further down the page. */
+html.bg-fade body { -webkit-mask-image: none; }
+html.bg-fade body::after { content: ""; position: fixed; inset: 0; pointer-events: none; background: linear-gradient(transparent 35%, var(--bg-secondary) 100%); z-index: 0; }
+.container { position: relative; z-index: 1; }
+.mock-switch { position: static !important; }
+
+/* Progress bar colour override (real app: .progress-fill; mockup: .a-prog .bar i) */
+html.prog-custom .a-prog .bar i,
+html.prog-custom .progress-fill { background: var(--prog-bg); }
+html.prog-custom:not(.prog-paused-too) .a-card[data-state=paused] .a-prog .bar i { background: var(--warning); }
+html.prog-striped .a-prog .bar i { background-size: 28px 28px; animation: prog-slide 1.2s linear infinite; }
+@keyframes prog-slide { to { background-position: 28px 0; } }
+.sw-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: .35rem; vertical-align: -1px; }
+#pcustom { width: 32px; height: 22px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; }
