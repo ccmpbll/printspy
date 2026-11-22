@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -358,6 +360,71 @@ func TestPreferencesAcceptEveryPatternAndNoOthers(t *testing.T) {
 	for _, p := range []string{"lightning", "gyroidwaves", "glow", "dotsglow", ""} {
 		if code := save(p); code != http.StatusBadRequest {
 			t.Errorf("%q: got %d, want 400", p, code)
+		}
+	}
+}
+
+func TestPreferencesPartialSaveKeepsTheOtherPart(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	put := func(body string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	put(`{"background":{"pattern":"gyroid","strength":9,"fade":false},"progress":{"color":"#aabbcc","style":"striped","other_style":"solid","stripe":5,"keep_amber":false}}`)
+
+	// a device that only knows about the progress bars saves just that
+	put(`{"progress":{"color":"","style":"gradient","other_style":"gradient","stripe":2,"keep_amber":true}}`)
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body := rec.Body.String()
+	if !strings.Contains(body, `"pattern":"gyroid"`) || !strings.Contains(body, `"strength":9`) {
+		t.Errorf("background was wiped by a progress-only save: %s", body)
+	}
+	if !strings.Contains(body, `"style":"gradient"`) {
+		t.Errorf("progress change was not saved: %s", body)
+	}
+
+	// and the other way round
+	put(`{"background":{"pattern":"dots","strength":4,"fade":true}}`)
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body = rec.Body.String()
+	if !strings.Contains(body, `"pattern":"dots"`) || !strings.Contains(body, `"other_style":"gradient"`) {
+		t.Errorf("progress was wiped by a background-only save: %s", body)
+	}
+}
+
+// The page's pattern list (web/background.js) and the server's allowed names must match:
+// a pattern the page offers but the server rejects looks fine until the next reload.
+func TestBackgroundPatternListsMatch(t *testing.T) {
+	src, err := os.ReadFile("../web/background.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := regexp.MustCompile(`(?s)const BG_PATTERNS = \[(.*?)\n\];`).FindSubmatch(src)
+	if block == nil {
+		t.Fatal("BG_PATTERNS not found in web/background.js")
+	}
+	page := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\['([a-z0-9]+)',`).FindAllSubmatch(block[1], -1) {
+		page[string(m[1])] = true
+	}
+	if len(page) < 5 {
+		t.Fatalf("parsed only %d patterns from the page: %v", len(page), page)
+	}
+	for name := range page {
+		if !backgroundPatterns[name] {
+			t.Errorf("page offers %q but the server would reject it", name)
+		}
+	}
+	for name := range backgroundPatterns {
+		if !page[name] {
+			t.Errorf("server allows %q but the page does not offer it", name)
 		}
 	}
 }

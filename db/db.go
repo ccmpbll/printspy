@@ -230,13 +230,14 @@ func (db *DB) migrate() error {
 		return err
 	}
 
-	// Migration: multi-tool support - a print using 2+ tools (MMU
-	// multi-material, or a real tool changer) previously only recorded the
-	// first tool's data.
 	// Migration: per-user UI preferences (a JSON object, '' = defaults).
 	if err := db.addColumn("users", "preferences", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
+
+	// Migration: multi-tool support - a print using 2+ tools (MMU
+	// multi-material, or a real tool changer) previously only recorded the
+	// first tool's data.
 	if err := db.addColumn("print_history", "tool_changes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}

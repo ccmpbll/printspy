@@ -344,7 +344,6 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
-// handleMe tells the page who is signed in, for the header's user menu.
 // Per-user page background. The patterns are drawn by the web UI (web/background.js);
 // the server only stores and validates the choice.
 var backgroundPatterns = map[string]bool{
@@ -385,10 +384,15 @@ const (
 	maxStripe = 8
 )
 
-func (p *progressPref) valid() bool {
+// normalize fills in what older saves did not have and lowercases the colour.
+func (p *progressPref) normalize() {
 	if p.OtherStyle == "" {
 		p.OtherStyle = "solid" // saved before the other bars had a style of their own
 	}
+	p.Color = strings.ToLower(p.Color)
+}
+
+func (p *progressPref) valid() bool {
 	return (p.Color == "" || hexColor.MatchString(p.Color)) && progressStyles[p.Style] && progressStyles[p.OtherStyle] && p.Stripe >= minStripe && p.Stripe <= maxStripe
 }
 
@@ -410,12 +414,16 @@ func loadPrefs(raw string) userPrefs {
 	if p.Background != nil && !p.Background.valid() {
 		p.Background = nil
 	}
-	if p.Progress != nil && !p.Progress.valid() {
-		p.Progress = nil
+	if p.Progress != nil {
+		p.Progress.normalize()
+		if !p.Progress.valid() {
+			p.Progress = nil
+		}
 	}
 	return p
 }
 
+// handleMe tells the page who is signed in (for the header's user menu) and their saved preferences.
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -434,7 +442,9 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"username": username, "preferences": loadPrefs(raw)})
 }
 
-// handleMePreferences replaces the signed-in user's preferences.
+// handleMePreferences saves the signed-in user's preferences. A part the request leaves
+// out is kept as it was, so a page that only knows about one part cannot wipe the other
+// (two devices open at once).
 func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -455,11 +465,25 @@ func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Progress != nil {
+		req.Progress.normalize()
 		if !req.Progress.valid() {
 			jsonError(w, "invalid progress bar setting", http.StatusBadRequest)
 			return
 		}
-		req.Progress.Color = strings.ToLower(req.Progress.Color)
+	}
+	if req.Background == nil || req.Progress == nil {
+		raw, err := h.db.GetUserPreferences(username)
+		if err != nil {
+			jsonError(w, "database error", http.StatusInternalServerError)
+			return
+		}
+		kept := loadPrefs(raw)
+		if req.Background == nil {
+			req.Background = kept.Background
+		}
+		if req.Progress == nil {
+			req.Progress = kept.Progress
+		}
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
