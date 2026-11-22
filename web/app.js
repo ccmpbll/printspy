@@ -106,6 +106,25 @@ function connectSSE() {
     });
 }
 
+// A phone suspends a backgrounded page and silently kills its SSE connection,
+// and EventSource may still report OPEN when the app comes back. Whenever the
+// page returns to the foreground (or the network comes back), reconnect: the
+// 'init' event re-sends the full state, so nothing needs a manual refresh.
+let hiddenAt = 0;
+function resumeConnection() {
+    sseRetryDelay = 2000;
+    connectSSE();
+    refreshSnapshots();
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 3000) resumeConnection();
+    hiddenAt = 0;
+});
+// Restored from the back/forward cache (iOS does this for PWAs too).
+window.addEventListener('pageshow', e => { if (e.persisted) resumeConnection(); });
+window.addEventListener('online', resumeConnection);
+
 // Applies a fresh PrinterStatus to printers[]/statusCache and patches the
 // card - shared by the SSE 'status' listener and any action (print/pause/
 // cancel/resume) whose own response already carries the post-repoll status,

@@ -200,6 +200,7 @@ header.topbar h1 {
 
 /* ---------- Connection banner ---------- */
 .connection-banner {
+    cursor: pointer;
     display: flex;
     align-items: center;
     gap: 0.5rem;
