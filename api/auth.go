@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -362,8 +363,32 @@ type backgroundPref struct {
 	Fade     bool   `json:"fade"`
 }
 
+// Progress bars: the print-progress colour ("" = the theme's own green), plus a
+// style that applies to every bar on the page.
+type progressPref struct {
+	Color     string `json:"color"`
+	Style     string `json:"style"`
+	Stripe    int    `json:"stripe"`
+	KeepAmber bool   `json:"keep_amber"`
+}
+
+var (
+	progressStyles = map[string]bool{"solid": true, "gradient": true, "striped": true}
+	hexColor       = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+)
+
+const (
+	minStripe = 1
+	maxStripe = 8
+)
+
+func (p *progressPref) valid() bool {
+	return (p.Color == "" || hexColor.MatchString(p.Color)) && progressStyles[p.Style] && p.Stripe >= minStripe && p.Stripe <= maxStripe
+}
+
 type userPrefs struct {
 	Background *backgroundPref `json:"background,omitempty"`
+	Progress   *progressPref   `json:"progress,omitempty"`
 }
 
 func (b *backgroundPref) valid() bool {
@@ -378,6 +403,9 @@ func loadPrefs(raw string) userPrefs {
 	}
 	if p.Background != nil && !p.Background.valid() {
 		p.Background = nil
+	}
+	if p.Progress != nil && !p.Progress.valid() {
+		p.Progress = nil
 	}
 	return p
 }
@@ -419,6 +447,13 @@ func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
 	if req.Background != nil && !req.Background.valid() {
 		jsonError(w, "invalid background", http.StatusBadRequest)
 		return
+	}
+	if req.Progress != nil {
+		if !req.Progress.valid() {
+			jsonError(w, "invalid progress bar setting", http.StatusBadRequest)
+			return
+		}
+		req.Progress.Color = strings.ToLower(req.Progress.Color)
 	}
 	data, err := json.Marshal(req)
 	if err != nil {

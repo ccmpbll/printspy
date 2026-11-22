@@ -271,3 +271,56 @@ func TestPreferencesForMissingUserIs404(t *testing.T) {
 		t.Errorf("missing user = %d, want 404", rec.Code)
 	}
 }
+
+func TestPreferencesProgressValidationAndRoundTrip(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	put := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		return rec.Code
+	}
+	for name, body := range map[string]string{
+		"bad style":        `{"progress":{"color":"","style":"zigzag","stripe":4,"keep_amber":true}}`,
+		"short hex":        `{"progress":{"color":"#fff","style":"solid","stripe":4,"keep_amber":true}}`,
+		"named colour":     `{"progress":{"color":"red","style":"solid","stripe":4,"keep_amber":true}}`,
+		"css injection":    `{"progress":{"color":"#ffffff;background:url(x)","style":"solid","stripe":4,"keep_amber":true}}`,
+		"stripe too low":   `{"progress":{"color":"","style":"striped","stripe":0,"keep_amber":true}}`,
+		"stripe too high":  `{"progress":{"color":"","style":"striped","stripe":9,"keep_amber":true}}`,
+		"missing style":    `{"progress":{"color":"#aabbcc","stripe":4}}`,
+		"bad bg, good bar": `{"background":{"pattern":"glow","strength":6,"fade":true},"progress":{"color":"","style":"solid","stripe":4,"keep_amber":true}}`,
+	} {
+		if code := put(body); code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, code)
+		}
+	}
+
+	if code := put(`{"progress":{"color":"#A855F7","style":"striped","stripe":6,"keep_amber":false}}`); code != http.StatusOK {
+		t.Fatalf("valid save = %d", code)
+	}
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	body := rec.Body.String()
+	for _, want := range []string{`"color":"#a855f7"`, `"style":"striped"`, `"stripe":6`, `"keep_amber":false`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+	// default colour ("" = theme green) is a valid choice
+	if code := put(`{"progress":{"color":"","style":"gradient","stripe":4,"keep_amber":true}}`); code != http.StatusOK {
+		t.Errorf("empty colour = %d, want 200", code)
+	}
+}
+
+func TestPreferencesInvalidStoredProgressMeansDefaults(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	if err := d.SetUserPreferences("alice", `{"progress":{"color":"javascript:x","style":"solid","stripe":4,"keep_amber":true}}`); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "javascript") || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+		t.Errorf("bad stored colour leaked: %s", rec.Body.String())
+	}
+}

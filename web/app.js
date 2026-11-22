@@ -1144,6 +1144,9 @@ fetch('/api/me').then(r => r.ok ? r.json() : null).then(me => {
     const bg = me.preferences && me.preferences.background;
     cacheBackground(bg || BG_DEFAULT);
     applyBackground(bg || BG_DEFAULT);
+    const bar = me.preferences && me.preferences.progress;
+    cacheBars(bar || BAR_DEFAULT);
+    applyBars(bar || BAR_DEFAULT);
 }).catch(() => {});
 
 connectSSE();

@@ -1,7 +1,7 @@
 // Per-user page background: a faint pattern behind the dashboard. The choice is stored
 // per user on the server (/api/me/preferences) and cached in localStorage so the page
 // does not flash the plain background before /api/me answers. Chosen in
-// Settings > Account & backup > Appearance.
+// Settings > Account & backup > Appearance. The same preferences hold the bar style.
 
 const BG_PATTERNS = [
     ['none', 'None'], ['dots', 'Dots'], ['grid', 'Build plate grid'], ['grid2', 'Grid, major lines'],
@@ -65,3 +65,47 @@ function cacheBackground(pref) {
 
 applyBackground(bgPref);
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyBackground(bgPref));
+
+// ---- Progress bars: colour of the print-progress bar, and a style for every bar ----
+
+const BAR_SWATCHES = [
+    ['Green', ''], ['Blue', '#3b82f6'], ['Cyan', '#06b6d4'], ['Teal', '#14b8a6'], ['Purple', '#a855f7'],
+    ['Pink', '#ec4899'], ['Orange', '#f97316'], ['Red', '#ef4444'], ['White', '#e5e7eb'],
+];
+const BAR_STYLES = [['solid', 'Solid'], ['gradient', 'Gradient'], ['striped', 'Striped']];
+const BAR_DEFAULT = {color: '', style: 'solid', stripe: 4, keep_amber: true};
+const STRIPE_MIN = 1, STRIPE_MAX = 8;
+
+let barPref = barSanitize(barCached());
+
+function barSanitize(p) {
+    if (!p) return {...BAR_DEFAULT};
+    const stripe = Math.round(Number(p.stripe));
+    return {
+        color: /^#[0-9a-f]{6}$/i.test(p.color || '') ? p.color.toLowerCase() : '',
+        style: BAR_STYLES.some(([k]) => k === p.style) ? p.style : BAR_DEFAULT.style,
+        stripe: stripe >= STRIPE_MIN && stripe <= STRIPE_MAX ? stripe : BAR_DEFAULT.stripe,
+        keep_amber: p.keep_amber !== false,
+    };
+}
+
+function barCached() {
+    try { return JSON.parse(localStorage.getItem('bar-pref')); } catch (e) { return null; }
+}
+
+function cacheBars(pref) {
+    try { localStorage.setItem('bar-pref', JSON.stringify(barSanitize(pref))); } catch (e) {}
+}
+
+function applyBars(pref) {
+    barPref = barSanitize(pref);
+    const root = document.documentElement;
+    if (barPref.color) root.style.setProperty('--prog', barPref.color); else root.style.removeProperty('--prog');
+    // the darker stripe is the bar's own colour mixed with black: 1 = faint ... 8 = bold
+    root.style.setProperty('--stripe-pct', `${barPref.stripe * 7.5}%`);
+    root.classList.toggle('bar-gradient', barPref.style === 'gradient');
+    root.classList.toggle('bar-striped', barPref.style === 'striped');
+    root.classList.toggle('prog-paused-too', !barPref.keep_amber);
+}
+
+applyBars(barPref);
