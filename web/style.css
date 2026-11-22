@@ -279,14 +279,15 @@ header.topbar h1 {
 }
 
 .printer-card::before {
+    /* The rail is the left 4px of a box with the card's own inner corner radius,
+       so it follows the curve instead of poking out of it. */
     content: "";
     position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    inset: 0;
+    border-radius: calc(var(--radius-lg) - 1px);
     background: var(--rail, var(--border));
+    clip-path: inset(0 calc(100% - 4px) 0 0);
+    pointer-events: none;
 }
 
 .printer-card[data-state="printing"] { --rail: var(--success); }
