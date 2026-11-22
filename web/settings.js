@@ -706,6 +706,21 @@ document.addEventListener('visibilitychange', prefsFlush);
 window.addEventListener('pagehide', prefsFlush);
 window.addEventListener('online', prefsFlush);
 
+// A swatch was picked: stop using the custom colour.
+function barColorPicked() {
+    barCustomColor = null;
+    $('bar-custom-wrap').classList.remove('on');
+    barsChanged();
+}
+
+// The custom colour input changed (fires continuously while dragging): use it instead of a swatch.
+function barCustomPicked(color) {
+    barCustomColor = color;
+    document.querySelectorAll('#bar-color .seg-btn').forEach(b => b.classList.remove('active'));
+    $('bar-custom-wrap').classList.add('on');
+    barsChanged();
+}
+
 function setSwitch(id, on) {
     const sw = $(id);
     sw.classList.toggle('on', on);
