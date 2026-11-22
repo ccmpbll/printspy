@@ -132,301 +132,14 @@ function showConnectionBanner(show) {
 }
 
 function updateHeaderCount() {
-    const count = document.getElementById('printer-count');
+    updateFleet();
+    const control = document.getElementById('power-controls');
     if (!printers || printers.length === 0) {
-        count.textContent = '';
-        document.getElementById('power-controls').style.display = 'none';
+        control.style.display = 'none';
         return;
     }
-    const connected = printers.filter(p => p.status && p.status.state !== 'offline' && p.status.state !== 'disconnected').length;
-    count.textContent = `${connected}/${printers.length} connected`;
     const hasPower = printers.some(p => p.status && p.status.power && p.status.power.length > 0);
-    document.getElementById('power-controls').style.display = hasPower ? 'inline-flex' : 'none';
-}
-
-// Power control
-
-async function startReprint(btn) {
-    const printerId = btn.dataset.printer;
-    const origin = btn.dataset.origin;
-    const path = btn.dataset.path;
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/print`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({origin, path}),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (resp.ok) {
-            if (data.status) applyStatusUpdate(parseInt(printerId), data.status);
-        } else {
-            alert(data.error || 'Failed to start print.');
-        }
-    } catch (e) { netFail('Failed to start print.'); }
-}
-
-// File manager - replaces the old per-card "Recent files" dropdown. Same
-// row look (thumbnail, print-history status badge), but every file, and
-// reachable regardless of printer state.
-let fileManagerPrinterId = null;
-
-async function openFileManager(printerId) {
-    fileManagerPrinterId = printerId;
-    document.getElementById('filemanager-modal-title').textContent = `Files — ${esc(printerName(printerId))}`;
-    document.getElementById('filemanager-modal').classList.add('active');
-    await loadFileManagerFiles(printerId);
-}
-
-function refreshFileManagerIfShowing(printerId) {
-    if (fileManagerPrinterId === printerId && document.getElementById('filemanager-modal').classList.contains('active')) {
-        loadFileManagerFiles(printerId);
-    }
-}
-
-let fileManagerReq = 0;
-
-async function loadFileManagerFiles(printerId) {
-    const list = document.getElementById('filemanager-list');
-    const req = ++fileManagerReq; // a slower earlier response must not overwrite a newer one
-    list.innerHTML = '<div class="settings-empty">Loading…</div>';
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/recent?all=1`);
-        const files = await resp.json();
-        if (req !== fileManagerReq) return;
-        if (!resp.ok) {
-            list.innerHTML = `<div class="settings-empty">${esc((files && files.error) || 'Failed to load files.')}</div>`;
-            return;
-        }
-        if (!files || !files.length) {
-            list.innerHTML = '<div class="settings-empty">No files found.</div>';
-            return;
-        }
-        list.innerHTML = files.map(f => {
-            // Every file gets a thumbnail attempt now, not just ones PrusaLink
-            // already renders a live thumb for (f.thumbnail_path) - cached
-            // .gcode thumbnails have nothing to show there but still resolve
-            // via the cache. Files with genuinely nothing still 404 and hide
-            // via onerror, same as before.
-            const thumb = `<img class="recent-thumb lazy-thumb" data-src="/api/file-thumbnail/${printerId}?path=${encodeURIComponent(f.path)}&uploaded_at=${f.uploaded_at}${f.thumbnail_path ? '&thumb=' + encodeURIComponent(f.thumbnail_path) : ''}" alt="" onerror="this.style.display='none'">`;
-            const toolsHTML = f.tools && f.tools.length > 0 ? ` &middot; <span class="recent-tools">${toolsJoin(f.tools)}</span>` : '';
-            let status = 'New';
-            let statusClass = 'recent-status-new';
-            if (f.success_count > 0 && f.last_success !== false) {
-                status = `${f.success_count}x printed`;
-                statusClass = 'recent-status-success';
-            } else if (f.last_success === false) {
-                status = 'Failed';
-                statusClass = 'recent-status-failed';
-            }
-            const btnLabel = f.success_count > 0 ? '&#8634; Reprint' : '<span class="icon-play"></span> Print';
-            return `<div class="recent-item">
-                ${thumb}
-                <div class="recent-item-info">
-                    <span class="recent-name" title="${esc(f.file_name)}">${esc(f.file_name)}</span>
-                    <span class="recent-meta"><span class="${statusClass}">${status}</span> &middot; ${formatDate(f.uploaded_at)}${toolsHTML}</span>
-                </div>
-                <div class="recent-actions">
-                    <button class="btn btn-sm btn-reprint" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => startReprint(this))" title="Print">${btnLabel}</button>
-                    <a class="btn btn-sm" href="/api/printers/${printerId}/download?origin=${encodeURIComponent(f.origin)}&path=${encodeURIComponent(f.path)}&filename=${encodeURIComponent(f.file_name)}" title="Download">&#8595; Download</a>
-                    <button class="btn btn-sm btn-danger" data-printer="${printerId}" data-origin="${esc(f.origin)}" data-path="${esc(f.path)}" onclick="confirmAction(this, () => deleteManagedFile(this))">Delete</button>
-                </div>
-            </div>`;
-        }).join('');
-        observeLazyThumbs(list, fileManagerThumbObserver);
-    } catch (e) {
-        list.innerHTML = '<div class="settings-empty">Failed to load files.</div>';
-    }
-}
-
-// Loads thumbnails only as they scroll into view, instead of firing every
-// row's thumbnail request the instant a modal opens - matters once a list
-// has more than a handful of entries. root is the list's own scroll
-// container (not the viewport/null), since both File Manager and History
-// scroll internally within a fixed-height modal - each needs its own
-// observer instance since IntersectionObserver's root is fixed at
-// construction time.
-function makeLazyThumbObserver(rootId) {
-    const observer = new IntersectionObserver(entries => {
-        for (const entry of entries) {
-            if (!entry.isIntersecting) continue;
-            const img = entry.target;
-            img.src = img.dataset.src;
-            observer.unobserve(img);
-        }
-    }, {root: document.getElementById(rootId), rootMargin: '200px'});
-    return observer;
-}
-const fileManagerThumbObserver = makeLazyThumbObserver('filemanager-list');
-const historyThumbObserver = makeLazyThumbObserver('history-list');
-
-function observeLazyThumbs(container, observer) {
-    container.querySelectorAll('.lazy-thumb').forEach(img => observer.observe(img));
-}
-
-// PrusaLink raw API debug view - every raw endpoint response, refreshed by
-// plain polling while the modal's open (no standing state to push via SSE
-// for a view nobody has open most of the time).
-let prusalinkDebugTimer = null;
-const PRUSALINK_DEBUG_POLL_MS = 5000;
-
-async function openPrusalinkDebug(printerId) {
-    document.getElementById('prusalink-debug-modal-title').textContent = `Raw API — ${esc(printerName(printerId))}`;
-    document.getElementById('prusalink-debug-modal').classList.add('active');
-    await loadPrusalinkDebug(printerId);
-    if (prusalinkDebugTimer) clearInterval(prusalinkDebugTimer);
-    prusalinkDebugTimer = setInterval(() => loadPrusalinkDebug(printerId), PRUSALINK_DEBUG_POLL_MS);
-}
-
-function stopPrusalinkDebugPoll() {
-    if (prusalinkDebugTimer) {
-        clearInterval(prusalinkDebugTimer);
-        prusalinkDebugTimer = null;
-    }
-}
-
-async function loadPrusalinkDebug(printerId) {
-    const body = document.getElementById('prusalink-debug-body');
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/debug`);
-        if (!resp.ok) {
-            body.innerHTML = `<div class="settings-empty">${esc((await resp.json().catch(() => ({}))).error || 'Failed to load.')}</div>`;
-            return;
-        }
-        const dump = await resp.json();
-        body.innerHTML = Object.keys(dump).sort().map(key => `
-            <div class="prusalink-debug-section">
-                <h3>${esc(key)}</h3>
-                <pre>${esc(JSON.stringify(dump[key], null, 2))}</pre>
-            </div>`).join('');
-    } catch (e) {
-        body.innerHTML = '<div class="settings-empty">Failed to load.</div>';
-    }
-}
-
-// Print history - separate from the file manager (that's what's on the
-// printer now; this is what's ever been printed, one row per completed job).
-let historyPrinterId = null;
-let historyPage = 0;
-let historyHasMore = false;
-let historyReq = 0;
-const HISTORY_PAGE_SIZE = 20;
-
-async function openPrintHistory(printerId) {
-    historyPrinterId = printerId;
-    historyPage = 0;
-    document.getElementById('history-modal-title').textContent = `History — ${esc(printerName(printerId))}`;
-    document.getElementById('history-modal').classList.add('active');
-    loadHistorySummaryLine(printerId);
-    await loadHistoryPage();
-}
-
-async function loadHistorySummaryLine(printerId) {
-    const line = document.getElementById('history-summary-line');
-    line.textContent = '';
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/history`);
-        if (!resp.ok) return;
-        const summary = await resp.json();
-        if (!summary || summary.count === 0) return;
-        line.textContent = `${summary.total_hours.toFixed(1)}h printed · ${summary.success_rate}% success`;
-    } catch (e) {}
-}
-
-function historyPrevPage() {
-    if (historyPage === 0) return;
-    historyPage--;
-    loadHistoryPage();
-}
-
-function historyNextPage() {
-    if (!historyHasMore) return;
-    historyPage++;
-    loadHistoryPage();
-}
-
-async function loadHistoryPage() {
-    const list = document.getElementById('history-list');
-    const prevBtn = document.getElementById('history-prev');
-    const nextBtn = document.getElementById('history-next');
-    const label = document.getElementById('history-page-label');
-    list.innerHTML = '<div class="settings-empty">Loading…</div>';
-    prevBtn.disabled = true;
-    nextBtn.disabled = true;
-    const req = ++historyReq; // latest request wins
-    try {
-        const offset = historyPage * HISTORY_PAGE_SIZE;
-        const resp = await fetch(`/api/printers/${historyPrinterId}/history/list?limit=${HISTORY_PAGE_SIZE}&offset=${offset}`);
-        const data = await resp.json();
-        if (req !== historyReq) return;
-        const entries = data.entries || [];
-        if (!entries.length) {
-            list.innerHTML = `<div class="settings-empty">${historyPage === 0 ? 'No print history yet.' : 'No more entries.'}</div>`;
-        } else {
-            list.innerHTML = entries.map(historyRowHTML).join('');
-            observeLazyThumbs(list, historyThumbObserver);
-        }
-        historyHasMore = !!data.has_more;
-        label.textContent = `Page ${historyPage + 1}`;
-        prevBtn.disabled = historyPage === 0;
-        nextBtn.disabled = !historyHasMore;
-    } catch (e) {
-        list.innerHTML = '<div class="settings-empty">Failed to load history.</div>';
-    }
-}
-
-// toolsJoin renders "{material} (T{n})" pairs, comma-separated - shared by
-// History (always shown, even for a single tool) and File Manager (only
-// shown for 2+ tools, gated by the caller).
-function toolsJoin(tools) {
-    return tools.map(t => `${esc(t.material)} (T${t.tool_index + 1})`).join(', ');
-}
-
-function historyRowHTML(h) {
-    let status = 'Completed';
-    let statusClass = 'recent-status-success';
-    if (h.result === 'failed') {
-        status = 'Failed';
-        statusClass = 'recent-status-failed';
-    } else if (h.result === 'cancelled') {
-        status = 'Cancelled';
-        statusClass = 'recent-status-cancelled';
-    }
-
-    const filament = h.filament_used_g
-        ? (h.filament_cost ? `${h.filament_used_g.toFixed(0)}g ($${h.filament_cost.toFixed(2)})` : `${h.filament_used_g.toFixed(0)}g`)
-        : '';
-    const durationStr = formatDuration(h.duration_secs);
-    const estStr = h.estimated_secs ? ` <span class="history-est">(est. ${formatDuration(h.estimated_secs)})</span>` : '';
-
-    // Material always reads "{material} (T{n})" whether it's a single-tool
-    // or multi-tool print - h.tools (only present for 2+ tools) just adds
-    // more of the same pairing, not a different format.
-    const tools = (h.tools && h.tools.length) ? h.tools : (h.material ? [{material: h.material, tool_index: h.tool_index}] : []);
-    const materialStr = tools.length ? toolsJoin(tools) : '';
-
-    const details = [
-        materialStr ? `Material: ${materialStr}` : '',
-        h.layer_height_mm ? `Layer: ${h.layer_height_mm}mm` : '',
-        h.fill_density ? `Fill: ${esc(h.fill_density)}` : '',
-        filament ? `Filament: ${filament}` : '',
-        h.tool_changes ? `${h.tool_changes} tool changes` : '',
-    ].filter(Boolean).join(' - ');
-
-    // Own copy, stored directly on this history row - looked up by the
-    // row's own id alone, independent of whatever's still on the printer.
-    // Omitted entirely when has_thumbnail is false (no MetadataDownloader
-    // support, the file had no embedded thumbnail, or this row predates
-    // the thumbnail column).
-    const thumb = h.has_thumbnail ? `<img class="recent-thumb lazy-thumb" data-src="/api/history-thumbnail/${h.id}" alt="" onerror="this.style.display='none'">` : '';
-
-    return `<div class="recent-item history-item">
-        ${thumb}
-        <div class="recent-item-info">
-            <span class="recent-name" title="${esc(h.filename)}">${esc(h.filename)}</span>
-            <span class="recent-meta"><span class="${statusClass}">${status}</span> - ${formatHistoryDate(h.completed_at)} - Duration: ${durationStr}${estStr}</span>
-            ${details ? `<span class="recent-meta">${details}</span>` : ''}
-        </div>
-    </div>`;
+    control.style.display = hasPower ? 'inline-flex' : 'none';
 }
 
 function formatHistoryDate(isoStr) {
@@ -440,18 +153,6 @@ function formatDuration(secs) {
     const h = Math.floor(secs / 3600);
     const m = Math.round((secs % 3600) / 60);
     return h > 0 ? `${h}h${m}m` : `${m}m`;
-}
-
-async function deleteManagedFile(btn) {
-    const printerId = btn.dataset.printer;
-    const origin = btn.dataset.origin;
-    const path = btn.dataset.path;
-    try {
-        const resp = await fetch(`/api/printers/${printerId}/recent?origin=${encodeURIComponent(origin)}&path=${encodeURIComponent(path)}`, {
-            method: 'DELETE',
-        });
-        if (await checkOk(resp, 'Failed to delete file.')) loadFileManagerFiles(printerId);
-    } catch (e) { netFail('Failed to delete file.'); }
 }
 
 function totalWatts(power) {
@@ -517,7 +218,22 @@ async function bulkPower(action) {
     } catch (e) { netFail('Failed to change power state.'); }
 }
 
+// The dashboard stays in the DOM under Settings/Files/History: stop pulling
+// camera frames while it is hidden, and close live streams (reopened on return).
+function setDashboardActive(active) {
+    document.querySelectorAll('.webcam-img').forEach(img => {
+        if (!active && img.src.includes('/api/webcam/')) {
+            img.dataset.liveSrc = img.getAttribute('src');
+            img.removeAttribute('src');
+        } else if (active && img.dataset.liveSrc) {
+            img.src = img.dataset.liveSrc;
+            delete img.dataset.liveSrc;
+        }
+    });
+}
+
 function refreshSnapshots() {
+    if (document.getElementById('dashboard').hidden) return;
     pollCounter++;
     document.querySelectorAll('.webcam-img').forEach(img => {
         const id = img.closest('[data-printer-id]')?.dataset.printerId;
@@ -702,8 +418,13 @@ function updateDashboard() {
         list.innerHTML = printers.map(p => renderPrinterCard(p)).join('');
         prevPrinterIDs = currentIDs;
         renderIngestBanners();
+        applyFleetFilter();
+        if (document.getElementById('dashboard').hidden) setDashboardActive(false); // rebuilt while hidden: no live streams
     }
 }
+
+const ICON_PAUSE = '<svg class="ic-pause" width="11" height="11" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true"><rect x="1.4" y="0.8" width="3.3" height="10.4" rx="1.1"/><rect x="7.3" y="0.8" width="3.3" height="10.4" rx="1.1"/></svg>';
+const ICON_MORE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
 
 function renderMaintenanceCard(printer) {
     const cfg = printer.config;
@@ -711,6 +432,7 @@ function renderMaintenanceCard(printer) {
         <div class="printer-card card-maintenance" data-printer-id="${cfg.id}" data-state="maintenance">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
+                ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
                 <span class="printer-state state-maintenance">Maintenance</span>
             </div>
             <div class="printer-body">
@@ -719,12 +441,42 @@ function renderMaintenanceCard(printer) {
         </div>`;
 }
 
+// One plug as a switch. The printer's own plug is locked on while a print is
+// running (turning the printer off mid-print is never what you want).
+function plugInfo(ps, state, singlePlug) {
+    const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
+    const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
+    const locked = !!(ps.on && isBusy && isPrinterPlug);
+    const title = locked ? 'Cannot turn off printer while printing' : autoOffTooltip(ps.source);
+    const label = ps.label && !ps.hide_label ? ps.label : '';
+    return {locked, title, label, sig: `${ps.on}|${locked}|${title}|${label}`};
+}
+
+function plugHTML(cfg, ps, state, singlePlug) {
+    const {locked, title, label, sig} = plugInfo(ps, state, singlePlug);
+    return `<button type="button" role="switch" aria-checked="${!!ps.on}"${locked ? ' aria-disabled="true"' : ''} class="plug ${ps.on ? 'on' : ''} ${locked ? 'locked' : ''}" data-field="power" data-plug-id="${esc(ps.id)}" data-sig="${esc(sig)}"${title ? ` title="${esc(title)}"` : ''} onclick="event.stopPropagation();togglePlug(${cfg.id}, this)"><span class="knob"></span>${esc(label)}${locked ? '<span class="lock">&#128274;</span>' : ''}</button>`;
+}
+
+function togglePlug(printerId, el) {
+    if (el.classList.contains('locked')) return;
+    setPower(printerId, el.classList.contains('on') ? 'off' : 'on', el.dataset.plugId);
+}
+
+function powerFootHTML(cfg, status, state) {
+    if (!status || !status.power || status.power.length === 0) return '';
+    const singlePlug = status.power.length === 1;
+    const watts = Math.round(totalWatts(status.power));
+    return `<div class="printer-foot" data-field="foot">
+        ${status.power.map(ps => plugHTML(cfg, ps, state, singlePlug)).join('')}
+        <span class="power-pill" data-field="watts-pill"${watts > 0 ? '' : ' hidden'}>Power <b data-field="watts">${watts}</b> W</span>
+    </div>`;
+}
+
 function renderPrinterCard(printer) {
     const cfg = printer.config;
     if (cfg.maintenance) return renderMaintenanceCard(printer);
     const status = printer.status;
     const state = status ? status.state : 'offline';
-    const stateClass = `state-${state}`;
     let stateLabel;
     if (state === 'error' && status && status.state_message) {
         stateLabel = `Error: ${status.state_message}`;
@@ -763,42 +515,25 @@ function renderPrinterCard(printer) {
     // printer - not a blanket hide for every card regardless of state.
     const sectionHidden = hideWebcamWhenUnreachable && (state === 'offline' || state === 'disconnected');
 
-    let powerHTML = '';
-    if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
-        const singlePlug = status.power.length === 1;
-        powerHTML = status.power.map(ps => {
-            const onClass = ps.on ? 'power-btn-active power-on' : '';
-            const offClass = !ps.on ? 'power-btn-active power-off' : '';
-            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const autoTitle = autoOffTooltip(ps.source);
-            const offDisabled = isBusy && isPrinterPlug ? 'disabled title="Cannot turn off printer while printing"' : (autoTitle ? `title="${esc(autoTitle)}"` : '');
-            const onTitle = autoTitle ? ` title="${esc(autoTitle)}"` : '';
-            const label = esc(plugLabel(ps));
-            return `<span class="power-btn-group" data-field="power" data-plug-id="${esc(ps.id)}"><button class="power-toggle-btn ${onClass}" onclick="event.stopPropagation();setPower(${cfg.id},'on',this.closest('[data-plug-id]').dataset.plugId)"${onTitle}>${label}&#9889; On</button><button class="power-toggle-btn ${offClass}" onclick="event.stopPropagation();setPower(${cfg.id},'off',this.closest('[data-plug-id]').dataset.plugId)" ${offDisabled}>Off</button></span>`;
-        }).join('');
-    }
-
     let controlHTML = '';
     if (state === 'printing') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">&#10074;&#10074; Pause</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-pause" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'pause'))">${ICON_PAUSE} Pause</button><button class="btn btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     } else if (state === 'paused') {
-        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-sm btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))"><span class="icon-play"></span> Resume</button><button class="btn btn-sm btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
+        controlHTML = `<span class="print-controls" data-field="print-controls"><button class="btn btn-primary" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'resume'))"><span class="icon-play"></span> Resume</button><button class="btn btn-danger" onclick="event.stopPropagation();confirmAction(this, () => controlPrint(${cfg.id},'cancel'))"><span class="icon-stop"></span> Cancel</button></span>`;
     }
 
-    const filesHTML = `<button class="btn btn-sm btn-files" onclick="event.stopPropagation();openFileManager(${cfg.id})">Files</button>`;
-    const historyHTML = `<button class="btn btn-sm btn-history" onclick="event.stopPropagation();openPrintHistory(${cfg.id})">History</button>`;
+    const filesHTML = `<button class="btn" onclick="event.stopPropagation();location.hash='#/files/${cfg.id}'">Files</button>`;
+    const historyHTML = `<button class="btn" onclick="event.stopPropagation();location.hash='#/history/${cfg.id}'">History</button>`;
+    const menuHTML = `<span class="menu-wrap"><button class="btn btn-more" onclick="toggleMenu(event,'card-menu-${cfg.id}')" title="More" aria-haspopup="true">${ICON_MORE}</button><div class="menu" id="card-menu-${cfg.id}"><a href="#/settings/printer/${cfg.id}?from=card">&#9998; Edit printer</a><a href="${esc(safeUrl(cfg.url))}" target="_blank" rel="noopener">&#8599; Open ${esc(printer.display_name || 'printer')}</a></div></span>`;
 
     return `
         <div class="${cardClass}" data-printer-id="${cfg.id}" data-state="${state}">
             <div class="printer-header">
                 <span class="printer-name">${esc(cfg.name)}</span>
                 ${cfg.model && !cfg.hide_model ? `<span class="printer-model">${esc(cfg.model)}</span>` : ''}
-                <span class="printer-state ${stateClass}" data-field="state">${esc(stateLabel)}</span>
-                ${powerHTML}
-                ${controlHTML}
-                ${filesHTML}
-                ${historyHTML}
+                <span class="printer-state state-${state}" data-field="state">${esc(stateLabel)}</span>
+                <span class="spacer"></span>
+                <span class="printer-actions">${controlHTML}${filesHTML}${historyHTML}${menuHTML}</span>
             </div>
             <div class="printer-body">
                 ${sectionHidden ? '' : `
@@ -820,60 +555,65 @@ function renderPrinterCard(printer) {
                     ${isPrinting ? renderPrintingStats(cfg, status, !sectionHidden && !isPlate && !!(printer.has_camera || printer.has_webcam)) : renderIdleStats(status, state)}
                 </div>
             </div>
+            ${powerFootHTML(cfg, status, state)}
         </div>`;
+}
+
+// Temperature cell: label, actual / target, and a bar filling toward target
+// (green once it's there, amber while heating).
+const TEMP_MAX = {hotend: 300, bed: 120, chamber: 60};
+
+function tempFill(field, actual, target) {
+    const t = Math.round(target);
+    const atTarget = t > 0 && actual >= target - 3;
+    const pct = Math.min(100, (t > 0 ? actual / target : (actual / TEMP_MAX[field]) * 0.5) * 100);
+    return {atTarget, pct};
+}
+
+function tempCellHTML(label, field, actual, target) {
+    const {atTarget, pct} = tempFill(field, actual, target);
+    const t = Math.round(target);
+    return `<div class="stat-item ${atTarget ? 'at-target' : ''}" data-cell="${field}">
+        <div class="stat-label">${label}</div>
+        <div class="stat-value" data-field="${field}">${Math.round(actual)}<span class="stat-unit">°C / ${t > 0 ? t + '°C' : 'off'}</span></div>
+        <span class="temp-bar"><i data-field="${field}-bar" style="width:${pct}%"></i></span>
+    </div>`;
+}
+
+function tempCellsHTML(temps) {
+    const cells = [tempCellHTML('Hotend', 'hotend', temps.hotend_actual, temps.hotend_target),
+                   tempCellHTML('Bed', 'bed', temps.bed_actual, temps.bed_target)];
+    if (temps.has_chamber) cells.push(tempCellHTML('Chamber', 'chamber', temps.chamber_actual, temps.chamber_target));
+    return `<div class="stat-grid">${cells.join('')}</div>`;
 }
 
 function renderPrintingStats(cfg, status, hasRealCam) {
     const job = status.job;
     const progress = Math.round(job.progress || 0);
-    const elapsed = formatTime(job.elapsed_secs);
-    const remaining = formatTime(job.remaining_secs);
-    const eta = computeETA(job.remaining_secs);
-    const temps = status.temps;
-
-    const tempCells = [];
-    tempCells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.hotend_target)}&deg;C</span></div></div>`);
-    tempCells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${Math.round(temps.bed_target)}&deg;C</span></div></div>`);
-    if (temps.has_chamber) {
-        tempCells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
-    }
-
-    let layerCell = '';
-    if (job.total_layers > 0) {
-        layerCell = `<div class="stat-box"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`;
-    }
-
-    if (totalWatts(status.power) > 0) {
-        tempCells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
-    }
+    const layerCell = job.total_layers > 0
+        ? `<div class="stat-item"><div class="stat-label">Layer</div><div class="stat-value" data-field="layer">${job.current_layer} <span class="stat-unit">/ ${job.total_layers}</span></div></div>`
+        : '';
 
     return `
         <div class="file-and-thumb">
             <div class="file-and-progress">
                 <div class="print-filename" data-field="filename" title="${esc(job.file_name)}">${esc(job.file_name)}</div>
-                <div>
-                    <div class="progress-row">
-                        <span class="progress-label">Progress</span>
-                        <span class="progress-value" data-field="progress-text">${progress}%</span>
-                    </div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div>
-                    </div>
+                <div class="progress-row">
+                    <div class="progress-bar"><div class="progress-fill" data-field="progress-bar" style="width: ${progress}%"></div></div>
+                    <span class="progress-value" data-field="progress-text">${progress}%</span>
                 </div>
             </div>
             ${hasRealCam ? `<div class="thumb-beside">
                 <img src="/api/thumbnail/${cfg.id}?t=${pollCounter}" alt="Thumbnail" onerror="this.parentElement.style.display='none'">
             </div>` : ''}
         </div>
-        <div class="stat-rows">
-            <div class="stat-grid stat-grid-auto">
-                <div class="stat-box"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${elapsed}</div></div>
-                <div class="stat-box"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${remaining}</div></div>
-                <div class="stat-box"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${eta}</div></div>
-                ${layerCell}
-            </div>
-            <div class="stat-grid stat-grid-auto">${tempCells.join('')}</div>
-        </div>`;
+        <div class="stat-grid">
+            <div class="stat-item"><div class="stat-label">ETA</div><div class="stat-value" data-field="eta">${computeETA(job.remaining_secs)}</div></div>
+            <div class="stat-item"><div class="stat-label">Remaining</div><div class="stat-value" data-field="remaining">${formatTime(job.remaining_secs)}</div></div>
+            <div class="stat-item"><div class="stat-label">Elapsed</div><div class="stat-value" data-field="elapsed">${formatTime(job.elapsed_secs)}</div></div>
+            ${layerCell}
+        </div>
+        ${tempCellsHTML(status.temps)}`;
 }
 
 function renderIdleStats(status, state) {
@@ -881,19 +621,7 @@ function renderIdleStats(status, state) {
     const detailMsg = status && status.state_message ? status.state_message : '';
     const stateMsg = stateIdleMsgText(state, detailMsg);
 
-    let tempsHTML = '';
-    if (temps && state !== 'offline' && state !== 'disconnected') {
-        const cells = [];
-        cells.push(`<div class="stat-box"><div class="stat-label">Hotend</div><div class="stat-value" data-field="hotend">${Math.round(temps.hotend_actual)}<span class="stat-unit">&deg;C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '&deg;C' : 'off'}</span></div></div>`);
-        cells.push(`<div class="stat-box"><div class="stat-label">Bed</div><div class="stat-value" data-field="bed">${Math.round(temps.bed_actual)}<span class="stat-unit">&deg;C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '&deg;C' : 'off'}</span></div></div>`);
-        if (temps.has_chamber) {
-            cells.push(`<div class="stat-box"><div class="stat-label">Chamber</div><div class="stat-value" data-field="chamber">${Math.round(temps.chamber_actual)}<span class="stat-unit">&deg;C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '&deg;C' : 'off'}</span></div></div>`);
-        }
-        if (totalWatts(status.power) > 0) {
-            cells.push(`<div class="stat-box"><div class="stat-label">Power</div><div class="stat-value" data-field="watts">${Math.round(totalWatts(status.power))}<span class="stat-unit">W</span></div></div>`);
-        }
-        tempsHTML = `<div class="stat-grid stat-grid-auto">${cells.join('')}</div>`;
-    }
+    const tempsHTML = temps && state !== 'offline' && state !== 'disconnected' ? tempCellsHTML(temps) : '';
 
     if (state === 'disconnected') {
         return '';
@@ -950,12 +678,13 @@ function updateCard(card, printer) {
     if ((isPrinting && !wasPrinting) || (!isPrinting && wasPrinting) || pausedChanged || downTransitionNeedsRebuild || (hasPower && !hadPower) || (wasThumbEligible !== isThumbEligible)) {
         card.outerHTML = renderPrinterCard(printer);
         renderIngestBanners();
+        applyFleetFilter();
         return;
     }
 
     card.dataset.state = state;
 
-    // Update card border class on state change
+    // Update card class (rail colour comes from data-state) on state change
     if (prevState !== state) {
         card.className = stateCardClass(state);
         const idleMsg = card.querySelector('[data-field="idle-msg"]');
@@ -965,6 +694,7 @@ function updateCard(card, printer) {
             idleMsg.textContent = stateIdleMsgText(state, detailMsg);
         }
         setText(card, 'webcam-placeholder-text', (state === 'offline' && !printer.has_camera) ? 'No camera' : 'Camera Unreachable');
+        applyFleetFilter();
     }
 
     const stateEl = card.querySelector('[data-field="state"]');
@@ -981,30 +711,15 @@ function updateCard(card, printer) {
         stateEl.className = `printer-state state-${state}`;
     }
 
-    // Update power buttons
-    if (status && status.power && status.power.length > 0) {
-        const isBusy = state === 'printing' || state === 'paused' || state === 'busy';
+    // Update plug switches
+    if (hasPower) {
         const singlePlug = status.power.length === 1;
         status.power.forEach(ps => {
             // Same physical plug can appear more than once (e.g. auto-detected
             // by a plugin AND separately assigned as a direct smart plug) --
             // both share the same data-plug-id, so update every match.
-            const groups = card.querySelectorAll(`[data-field="power"][data-plug-id="${ps.id}"]`);
-            const isPrinterPlug = singlePlug || (ps.label && ps.label.toLowerCase().includes('printer'));
-            const label = plugLabel(ps);
-            const autoTitle = autoOffTooltip(ps.source);
-            groups.forEach(group => {
-                const btns = group.querySelectorAll('.power-toggle-btn');
-                if (btns[0]) {
-                    btns[0].className = `power-toggle-btn ${ps.on ? 'power-btn-active power-on' : ''}`;
-                    btns[0].textContent = `${label}⚡ On`;
-                    btns[0].title = autoTitle;
-                }
-                if (btns[1]) {
-                    btns[1].className = `power-toggle-btn ${!ps.on ? 'power-btn-active power-off' : ''}`;
-                    btns[1].disabled = isBusy && isPrinterPlug;
-                    btns[1].title = isBusy && isPrinterPlug ? 'Cannot turn off printer while printing' : autoTitle;
-                }
+            card.querySelectorAll(`[data-field="power"][data-plug-id="${CSS.escape(ps.id)}"]`).forEach(el => {
+                if (el.getAttribute('data-sig') !== plugInfo(ps, state, singlePlug).sig) el.outerHTML = plugHTML(cfg, ps, state, singlePlug);
             });
         });
     }
@@ -1021,28 +736,37 @@ function updateCard(card, printer) {
         setText(card, 'elapsed', formatTime(job.elapsed_secs));
         setText(card, 'remaining', formatTime(job.remaining_secs));
         setText(card, 'eta', computeETA(job.remaining_secs));
-        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${Math.round(temps.hotend_target)}°C`);
-        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${Math.round(temps.bed_target)}°C`);
-        if (temps.has_chamber) {
-            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
-        }
+        setTemp(card, 'hotend', temps.hotend_actual, temps.hotend_target);
+        setTemp(card, 'bed', temps.bed_actual, temps.bed_target);
+        if (temps.has_chamber) setTemp(card, 'chamber', temps.chamber_actual, temps.chamber_target);
         if (job.total_layers > 0) {
             setStatValue(card, 'layer', job.current_layer, `/ ${job.total_layers}`);
         }
-        if (totalWatts(status.power) > 0) {
-            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
-        }
     } else if (status && status.temps) {
         const temps = status.temps;
-        setStatValue(card, 'hotend', Math.round(temps.hotend_actual), `°C / ${temps.hotend_target > 0 ? Math.round(temps.hotend_target) + '°C' : 'off'}`);
-        setStatValue(card, 'bed', Math.round(temps.bed_actual), `°C / ${temps.bed_target > 0 ? Math.round(temps.bed_target) + '°C' : 'off'}`);
-        if (temps.has_chamber) {
-            setStatValue(card, 'chamber', Math.round(temps.chamber_actual), `°C / ${temps.chamber_target > 0 ? Math.round(temps.chamber_target) + '°C' : 'off'}`);
-        }
-        if (totalWatts(status.power) > 0) {
-            setStatValue(card, 'watts', Math.round(totalWatts(status.power)), 'W');
-        }
+        setTemp(card, 'hotend', temps.hotend_actual, temps.hotend_target);
+        setTemp(card, 'bed', temps.bed_actual, temps.bed_target);
+        if (temps.has_chamber) setTemp(card, 'chamber', temps.chamber_actual, temps.chamber_target);
     }
+    setWatts(card, status);
+}
+
+function setWatts(card, status) {
+    const pill = card.querySelector('[data-field="watts-pill"]');
+    if (!pill) return;
+    const watts = Math.round(totalWatts(status && status.power));
+    pill.hidden = !(watts > 0);
+    setText(card, 'watts', String(watts));
+}
+
+function setTemp(card, field, actual, target) {
+    const t = Math.round(target);
+    setStatValue(card, field, Math.round(actual), `°C / ${t > 0 ? t + '°C' : 'off'}`);
+    const {atTarget, pct} = tempFill(field, actual, target);
+    const bar = card.querySelector(`[data-field="${field}-bar"]`);
+    if (bar) bar.style.width = `${pct}%`;
+    const cell = card.querySelector(`[data-cell="${field}"]`);
+    if (cell) cell.classList.toggle('at-target', atTarget);
 }
 
 function setText(card, field, value) {
@@ -1057,688 +781,123 @@ function setStatValue(card, field, main, unit) {
     el.appendChild(document.createTextNode(main));
     const span = document.createElement('span');
     span.className = 'stat-unit';
-    span.textContent = unit;
+    span.textContent = (field === 'layer' ? ' ' : '') + unit;
     el.appendChild(span);
 }
 
-// Settings modal with printer management
+// Dropdown menus (Power, user, card "more"): one open at a time, any outside
+// click closes them.
+function toggleMenu(e, id) {
+    e.stopPropagation();
+    const menu = document.getElementById(id);
+    const wasOpen = menu.classList.contains('open');
+    document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open'));
+    if (!wasOpen) menu.classList.add('open');
+}
+document.addEventListener('click', () => document.querySelectorAll('.menu.open').forEach(m => m.classList.remove('open')));
 
-const NOTIFY_TYPES = ['start', 'complete', 'failed', 'error', 'checkpoint1', 'checkpoint2'];
-const PUSHOVER_SOUNDS = ['pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic', 'falling', 'gamelan',
-    'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien',
-    'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none'];
+// Fleet strip: state chips (click to filter the cards) and the next finish.
+let fleetFilter = 'all';
+let fleetSig = '';
+const FLEET_ORDER = ['printing', 'paused', 'idle', 'busy', 'attention', 'offline', 'maintenance', 'error'];
 
-// Per-type placeholder/hint text for the Customize panel. 'start' is the
-// only type that defaults to a thumbnail-only image (see poller.go's
-// sendNotification) - everything else defaults to camera-with-fallback.
-const NOTIFY_CUSTOMIZE = {
-    start:       {titlePh: 'Print started', messagePh: '{printer}: {file}', hint: 'Placeholders: {printer} {file}', imageDefault: 'Default (thumbnail)'},
-    complete:    {titlePh: 'Print complete', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
-    failed:      {titlePh: 'Print failed', messagePh: '{printer}: {file} ({material}, {filament_g}g) - {duration}', hint: 'Placeholders: {printer} {file} {material} {filament_g} {duration}', imageDefault: 'Default (camera, fallback to thumbnail)'},
-    error:       {titlePh: '{printer}: error', messagePh: '{message}', hint: 'Placeholders: {printer} {message}', imageDefault: 'Default (camera, fallback to thumbnail)'},
-    checkpoint1: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
-    checkpoint2: {titlePh: 'Print checkpoint', messagePh: '{printer}: {file} reached {percent}%', hint: 'Placeholders: {printer} {file} {percent}', imageDefault: 'Default (camera, fallback to thumbnail)'},
-};
-
-function notifySoundOptionsHTML() {
-    return '<option value="">App default</option>' +
-        PUSHOVER_SOUNDS.map(s => `<option value="${s}">${s}</option>`).join('');
+function printerCardState(p) {
+    return p.config.maintenance ? 'maintenance' : (p.status ? p.status.state : 'offline');
 }
 
-function notifyCustomizeHTML(t) {
-    const c = NOTIFY_CUSTOMIZE[t];
-    return `
-        <details style="margin-left:1.75rem;margin-top:0.25rem">
-            <summary>Customize</summary>
-            <div class="form-group">
-                <label for="setting-notify-${t}-title">Title</label>
-                <input type="text" id="setting-notify-${t}-title" placeholder="${esc(c.titlePh)}">
-            </div>
-            <div class="form-group">
-                <label for="setting-notify-${t}-message">Message</label>
-                <input type="text" id="setting-notify-${t}-message" placeholder="${esc(c.messagePh)}">
-            </div>
-            <div class="form-hint">${esc(c.hint)}</div>
-            <div class="form-group">
-                <label for="setting-notify-${t}-sound">Sound</label>
-                <select id="setting-notify-${t}-sound">${notifySoundOptionsHTML()}</select>
-            </div>
-            <div class="form-group">
-                <label for="setting-notify-${t}-image">Image</label>
-                <select id="setting-notify-${t}-image">
-                    <option value="">${esc(c.imageDefault)}</option>
-                    <option value="camera">Camera (fallback to thumbnail)</option>
-                    <option value="thumbnail">Thumbnail only</option>
-                    <option value="none">None</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label style="display:flex;align-items:center;gap:0.5rem;font-weight:normal">
-                    <input type="checkbox" id="setting-notify-${t}-high-priority" style="width:auto">
-                    High priority
-                </label>
-            </div>
-        </details>`;
+function fleetGroup(state) {
+    return state === 'disconnected' ? 'offline' : state;
 }
 
-document.querySelectorAll('.notify-customize').forEach(el => {
-    el.innerHTML = notifyCustomizeHTML(el.dataset.type);
-});
+function updateFleet() {
+    const el = document.getElementById('fleet');
+    if (!el) return;
+    if (!printers || printers.length === 0) {
+        el.innerHTML = '';
+        fleetSig = '';
+        return;
+    }
+    const counts = {};
+    printers.forEach(p => {
+        const g = fleetGroup(printerCardState(p));
+        counts[g] = (counts[g] || 0) + 1;
+    });
+    if (fleetFilter !== 'all' && !counts[fleetFilter]) fleetFilter = 'all';
 
-function openSettings() {
-    fetch('/api/settings').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(settings => {
-        document.getElementById('setting-snapshot-interval').value = settings.snapshot_interval || '10';
-        document.getElementById('setting-hide-webcam').checked = settings.hide_webcam_when_unreachable === '1';
-        document.getElementById('setting-poll-interval').value = settings.poll_interval || '';
-        document.getElementById('setting-history-retention').value = settings.history_retention_days || '';
-        document.getElementById('setting-print-control-timeout').value = settings.print_control_timeout_secs || '15';
-        document.getElementById('setting-prusalink-ping-interval').value = settings.prusalink_ping_interval || '';
-        document.getElementById('setting-auto-off-idle').value = settings.auto_off_idle_minutes || '';
-        document.getElementById('setting-auto-off-cooldown').value = settings.auto_off_cooldown_temp || '40';
-        document.getElementById('setting-thermal-max-bed').value = settings.thermal_max_bed_temp || '';
-        document.getElementById('setting-thermal-max-extruder').value = settings.thermal_max_extruder_temp || '';
-        document.getElementById('setting-debug-logging').checked = settings.debug_logging === '1';
-        document.getElementById('setting-pushover-user-key').value = settings.pushover_user_key || '';
-        document.getElementById('setting-pushover-app-token').value = settings.pushover_app_token || '';
-        const mqttURL = settings.mqtt_broker_url || '';
-        document.getElementById('setting-mqtt-tls').checked = mqttURL.startsWith('ssl://');
-        document.getElementById('setting-mqtt-broker-url').value = mqttURL.replace(/^(tcp|ssl):\/\//, '');
-        document.getElementById('setting-mqtt-username').value = settings.mqtt_username || '';
-        document.getElementById('setting-mqtt-password').value = settings.mqtt_password || '';
-        document.getElementById('setting-mqtt-publish-enabled').checked = settings.mqtt_publish_enabled === '1';
-        document.getElementById('setting-mqtt-publish-topic').value = settings.mqtt_publish_topic || '';
-        document.getElementById('setting-status-api-key').value = settings.status_api_key || '';
-        document.getElementById('setting-notify-start').checked = settings.notify_on_start === '1';
-        document.getElementById('setting-notify-complete').checked = settings.notify_on_complete === '1';
-        document.getElementById('setting-notify-failed').checked = settings.notify_on_failed === '1';
-        document.getElementById('setting-notify-error').checked = settings.notify_on_error === '1';
-        document.getElementById('setting-notify-checkpoint1-enabled').checked = settings.notify_checkpoint1_enabled === '1';
-        document.getElementById('setting-notify-checkpoint1-percent').value = settings.notify_checkpoint1_percent || '5';
-        document.getElementById('setting-notify-checkpoint2-enabled').checked = settings.notify_checkpoint2_enabled === '1';
-        document.getElementById('setting-notify-checkpoint2-percent').value = settings.notify_checkpoint2_percent || '50';
-        NOTIFY_TYPES.forEach(t => {
-            document.getElementById(`setting-notify-${t}-title`).value = settings[`notify_${t}_title`] || '';
-            document.getElementById(`setting-notify-${t}-message`).value = settings[`notify_${t}_message`] || '';
-            document.getElementById(`setting-notify-${t}-sound`).value = settings[`notify_${t}_sound`] || '';
-            document.getElementById(`setting-notify-${t}-image`).value = settings[`notify_${t}_image`] || '';
-            document.getElementById(`setting-notify-${t}-high-priority`).checked = settings[`notify_${t}_high_priority`] === '1';
-        });
-        renderSettingsPrinterList();
-        loadUsers();
-        loadSmartPlugs();
-        loadCameras();
-        loadIngestKeys();
-        document.getElementById('settings-modal').classList.add('active');
-    }).catch(() => {
-        // Opening with the form's HTML defaults would let a Save overwrite the real config.
-        alert('Failed to load settings.');
+    let next = null;
+    printers.forEach(p => {
+        const s = p.status;
+        if (!p.config.maintenance && s && s.state === 'printing' && s.job && s.job.remaining_secs > 0) {
+            if (!next || s.job.remaining_secs < next.job.remaining_secs) next = {name: p.config.name, job: s.job};
+        }
+    });
+
+    const known = FLEET_ORDER.filter(s => counts[s]);
+    const extra = Object.keys(counts).filter(s => !FLEET_ORDER.includes(s));
+    const chip = (key, label, n) => `<button class="fleet-chip ${key} ${fleetFilter === key ? 'on' : ''}" onclick="setFleetFilter('${key}')"><span class="dot"></span>${n} ${label}</button>`;
+    const html = `<button class="fleet-chip all ${fleetFilter === 'all' ? 'on' : ''}" onclick="setFleetFilter('all')">All ${printers.length}</button>`
+        + known.concat(extra).map(s => chip(s, s, counts[s])).join('')
+        + (next ? `<span class="fleet-next">Next finish: <b>${esc(next.name)}</b> at <b>${computeETA(next.job.remaining_secs)}</b></span>` : '');
+    if (html !== fleetSig) {
+        fleetSig = html;
+        el.innerHTML = html;
+    }
+    applyFleetFilter();
+}
+
+function setFleetFilter(f) {
+    fleetFilter = f;
+    fleetSig = '';
+    updateFleet();
+}
+
+function applyFleetFilter() {
+    document.querySelectorAll('.printer-card[data-printer-id]').forEach(card => {
+        card.classList.toggle('card-hidden', fleetFilter !== 'all' && fleetGroup(card.dataset.state) !== fleetFilter);
     });
 }
 
-// Smart plugs (direct Tasmota, managed independently of printers)
+// Dialogs: in-page replacements for the browser's confirm()/alert() popups.
 
-let smartPlugs = [];
-
-async function loadSmartPlugs() {
-    try {
-        const resp = await fetch('/api/smartplugs');
-        if (!resp.ok) return;
-        smartPlugs = (await resp.json()) || [];
-        renderSettingsSmartPlugList(smartPlugs);
-    } catch (e) {}
+function appDialog(title, bodyHTML, buttons) {
+    return new Promise(resolve => {
+        const root = document.createElement('div');
+        root.className = 'dialog-overlay';
+        root.innerHTML = `<div class="dialog" role="alertdialog" aria-modal="true" aria-label="${esc(title)}">
+            <h2>${esc(title)}</h2>${bodyHTML}
+            <div class="dialog-foot">${buttons.map((b, i) => `<button class="btn ${b.cls || ''}" data-i="${i}">${esc(b.label)}</button>`).join('')}</div></div>`;
+        const opener = document.activeElement;
+        const done = v => {
+            root.remove(); document.removeEventListener('keydown', onKey); resolve(v);
+            if (opener && opener.isConnected && opener.focus) opener.focus();
+        };
+        const onKey = e => {
+            if (e.key === 'Escape') { done(null); return; }
+            if (e.key !== 'Tab') return;
+            const f = [...root.querySelectorAll('button, [href], input, select, textarea')].filter(x => !x.disabled);
+            if (!f.length) return;
+            const i = f.indexOf(document.activeElement);
+            if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+            else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+        };
+        root.querySelectorAll('button').forEach(btn => { btn.onclick = () => done(buttons[btn.dataset.i].value); });
+        root.addEventListener('click', e => { if (e.target === root) done(null); });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(root);
+        const primary = root.querySelector('.btn-primary');
+        if (primary) primary.focus();
+    });
 }
 
-function renderSettingsSmartPlugList(plugs) {
-    const list = document.getElementById('settings-smartplug-list');
-    if (!plugs.length) {
-        list.innerHTML = '<div class="settings-empty">No smart plugs configured yet.</div>';
-        return;
-    }
-    list.innerHTML = plugs.map(p => {
-        const conn = p.mqtt_topic ? `MQTT: ${esc(p.mqtt_topic)}:${esc(p.idx)}` : `${esc(p.ip)}:${esc(p.idx)}`;
-        return `
-        <div class="settings-printer-row">
-            <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(p.label || p.ip || p.mqtt_topic)}</span>
-                <span class="settings-printer-url">${conn} — ${p.printer_name ? esc(p.printer_name) : 'Unassigned'}${p.hide_label ? ' — label hidden' : ''}</span>
-            </div>
-            <div class="settings-printer-actions">
-                <button class="btn btn-sm" onclick="closeModal();openEditSmartPlugModal(${p.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteSmartPlug(${p.id}))">Delete</button>
-            </div>
-        </div>`;
-    }).join('');
+async function appConfirm(title, message, okLabel) {
+    const v = await appDialog(title, `<p class="dialog-text">${esc(message)}</p>`,
+        [{label: 'Cancel', cls: 'btn-quiet', value: false}, {label: okLabel || 'OK', cls: 'btn-primary', value: true}]);
+    return v === true;
 }
 
-function togglePlugMode() {
-    const mqtt = document.getElementById('plug-mode').value === 'mqtt';
-    document.getElementById('plug-ip-group').style.display = mqtt ? 'none' : '';
-    document.getElementById('plug-mqtt-topic-group').style.display = mqtt ? '' : 'none';
-    document.getElementById('plug-ip').required = !mqtt;
-}
-
-function populatePlugPrinterOptions(selectedId) {
-    const select = document.getElementById('plug-printer');
-    select.innerHTML = '<option value="">Unassigned</option>' + printers
-        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
-        .join('');
-}
-
-function openAddSmartPlugModal() {
-    document.getElementById('smartplug-modal-title').textContent = 'Add smart plug';
-    document.getElementById('plug-id').value = '';
-    document.getElementById('plug-mode').value = 'http';
-    document.getElementById('plug-ip').value = '';
-    document.getElementById('plug-mqtt-topic').value = '';
-    document.getElementById('plug-idx').value = '1';
-    document.getElementById('plug-label').value = '';
-    document.getElementById('plug-hide-label').checked = false;
-    togglePlugMode();
-    populatePlugPrinterOptions(null);
-    document.getElementById('smartplug-modal').classList.add('active');
-}
-
-function openEditSmartPlugModal(id) {
-    const plug = smartPlugs.find(p => p.id === id);
-    if (!plug) return;
-    document.getElementById('smartplug-modal-title').textContent = 'Edit smart plug';
-    document.getElementById('plug-id').value = plug.id;
-    document.getElementById('plug-mode').value = plug.mqtt_topic ? 'mqtt' : 'http';
-    document.getElementById('plug-ip').value = plug.ip;
-    document.getElementById('plug-mqtt-topic').value = plug.mqtt_topic || '';
-    document.getElementById('plug-idx').value = plug.idx;
-    document.getElementById('plug-label').value = plug.label;
-    document.getElementById('plug-hide-label').checked = !!plug.hide_label;
-    togglePlugMode();
-    populatePlugPrinterOptions(plug.printer_id);
-    document.getElementById('smartplug-modal').classList.add('active');
-}
-
-async function saveSmartPlug(e) {
-    e.preventDefault();
-    const id = document.getElementById('plug-id').value;
-    const printerIdStr = document.getElementById('plug-printer').value;
-    const mqtt = document.getElementById('plug-mode').value === 'mqtt';
-    const data = {
-        ip: mqtt ? '' : document.getElementById('plug-ip').value,
-        mqtt_topic: mqtt ? document.getElementById('plug-mqtt-topic').value : '',
-        idx: document.getElementById('plug-idx').value || '1',
-        label: document.getElementById('plug-label').value,
-        hide_label: document.getElementById('plug-hide-label').checked,
-        printer_id: printerIdStr ? parseInt(printerIdStr) : null,
-    };
-
-    try {
-        const resp = id
-            ? await fetch(`/api/smartplugs/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
-            : await fetch('/api/smartplugs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (await checkOk(resp, 'Failed to save smart plug.')) {
-            closeModal();
-            await loadSmartPlugs();
-            openSettings();
-        }
-    } catch (e) { netFail('Failed to save smart plug.'); }
-}
-
-async function deleteSmartPlug(id) {
-    try {
-        const resp = await fetch(`/api/smartplugs/${id}`, {method: 'DELETE'});
-        await checkOk(resp, 'Failed to delete smart plug.');
-        loadSmartPlugs();
-    } catch (e) { netFail('Failed to delete smart plug.'); }
-}
-
-// Slicer print-host targets (ingest keys) — one per printer model bucket
-
-let ingestKeys = [];
-
-async function loadIngestKeys() {
-    try {
-        const resp = await fetch('/api/ingest-keys');
-        if (!resp.ok) return;
-        ingestKeys = (await resp.json()) || [];
-        renderSettingsIngestKeyList(ingestKeys);
-    } catch (e) {}
-}
-
-function renderSettingsIngestKeyList(targets) {
-    const list = document.getElementById('settings-ingestkey-list');
-    if (!targets.length) {
-        list.innerHTML = '<div class="settings-empty">No slicer print targets configured yet.</div>';
-        return;
-    }
-    list.innerHTML = targets.map(t => `
-        <div class="settings-printer-row">
-            <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(t.label || printerName(t.printer_id) || 'Untitled')}</span>
-                <span class="settings-printer-url">Printer: ${esc(printerName(t.printer_id) || `#${t.printer_id}`)} — Host: ${esc(location.origin)}/ingest/${esc(t.label || t.id)}</span>
-            </div>
-            <div class="settings-printer-actions">
-                <button class="btn btn-sm" onclick="closeModal();openEditIngestKeyModal(${t.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteIngestKey(${t.id}))">Delete</button>
-            </div>
-        </div>`).join('');
-}
-
-function printerName(printerID) {
-    const p = printers.find(p => p.config.id === printerID);
-    return p ? p.config.name : '';
-}
-
-function populateIngestKeyPrinterOptions(selectedId) {
-    const select = document.getElementById('ingestkey-printer');
-    select.innerHTML = printers
-        .filter(p => p.config.type === 'prusalink')
-        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
-        .join('');
-}
-
-function openAddIngestKeyModal() {
-    document.getElementById('ingestkey-modal-title').textContent = 'Add slicer print target';
-    document.getElementById('ingestkey-id').value = '';
-    populateIngestKeyPrinterOptions(null);
-    document.getElementById('ingestkey-label').value = '';
-    const result = document.getElementById('ingestkey-result');
-    result.style.display = 'none';
-    result.textContent = '';
-    document.getElementById('ingestkey-modal').classList.add('active');
-}
-
-function openEditIngestKeyModal(id) {
-    const target = ingestKeys.find(t => t.id === id);
-    if (!target) return;
-    document.getElementById('ingestkey-modal-title').textContent = 'Edit slicer print target';
-    document.getElementById('ingestkey-id').value = target.id;
-    populateIngestKeyPrinterOptions(target.printer_id || null);
-    document.getElementById('ingestkey-label').value = target.label;
-    const result = document.getElementById('ingestkey-result');
-    result.className = 'test-result success';
-    result.style.display = 'block';
-    result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${esc(target.label || target.id)}</code><br>API key: <code>${esc(target.api_key)}</code>`;
-    document.getElementById('ingestkey-modal').classList.add('active');
-}
-
-async function saveIngestKey(e) {
-    e.preventDefault();
-    const id = document.getElementById('ingestkey-id').value;
-    const data = {
-        printer_id: parseInt(document.getElementById('ingestkey-printer').value),
-        label: document.getElementById('ingestkey-label').value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
-    };
-    try {
-        const resp = id
-            ? await fetch(`/api/ingest-keys/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
-            : await fetch('/api/ingest-keys', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({}));
-            const result = document.getElementById('ingestkey-result');
-            result.className = 'test-result error';
-            result.style.display = 'block';
-            result.textContent = err.error || 'Failed to save.';
-            return;
-        }
-        await loadIngestKeys();
-        if (!id) {
-            const created = await resp.json();
-            const result = document.getElementById('ingestkey-result');
-            result.className = 'test-result success';
-            result.style.display = 'block';
-            result.innerHTML = `Host: <code>${esc(location.origin)}/ingest/${esc(data.label || created.id)}</code><br>API key: <code>${esc(created.api_key)}</code><br>Paste these into the slicer's Physical Printer dialog (PrusaLink, API key auth).`;
-            document.getElementById('ingestkey-id').value = created.id;
-            return;
-        }
-        closeModal();
-        openSettings();
-    } catch (e) {}
-}
-
-async function deleteIngestKey(id) {
-    try {
-        const resp = await fetch(`/api/ingest-keys/${id}`, {method: 'DELETE'});
-        await checkOk(resp, 'Failed to delete ingest key.');
-        loadIngestKeys();
-    } catch (e) { netFail('Failed to delete ingest key.'); }
-}
-
-// Cameras (printspy-cam, managed independently of printers)
-
-let cameras = [];
-
-async function loadCameras() {
-    try {
-        const resp = await fetch('/api/cameras');
-        if (!resp.ok) return;
-        cameras = (await resp.json()) || [];
-        renderSettingsCameraList(cameras);
-    } catch (e) {}
-}
-
-function renderSettingsCameraList(cams) {
-    const list = document.getElementById('settings-camera-list');
-    if (!cams.length) {
-        list.innerHTML = '<div class="settings-empty">No cameras configured yet.</div>';
-        return;
-    }
-    list.innerHTML = cams.map(c => `
-        <div class="settings-printer-row">
-            <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(c.name || c.url)}</span>
-                <span class="settings-printer-url">${esc(c.url)} — ${c.printer_name ? esc(c.printer_name) : 'Unassigned'}</span>
-            </div>
-            <div class="settings-printer-actions">
-                <button class="btn btn-sm" onclick="closeModal();openEditCameraModal(${c.id})" title="Edit">&#9998; Edit</button>
-                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteCamera(${c.id}))">Delete</button>
-            </div>
-        </div>`).join('');
-}
-
-function populateCameraPrinterOptions(selectedId) {
-    const select = document.getElementById('camera-printer');
-    select.innerHTML = '<option value="">Unassigned</option>' + printers
-        .map(p => `<option value="${p.config.id}" ${p.config.id === selectedId ? 'selected' : ''}>${esc(p.config.name)}</option>`)
-        .join('');
-}
-
-function openAddCameraModal() {
-    document.getElementById('camera-modal-title').textContent = 'Add camera';
-    document.getElementById('camera-id').value = '';
-    document.getElementById('camera-url').value = '';
-    document.getElementById('camera-name').value = '';
-    document.getElementById('camera-orientation-group').style.display = 'none';
-    populateCameraPrinterOptions(null);
-    document.getElementById('camera-modal').classList.add('active');
-}
-
-function openEditCameraModal(id) {
-    const cam = cameras.find(c => c.id === id);
-    if (!cam) return;
-    document.getElementById('camera-modal-title').textContent = 'Edit camera';
-    document.getElementById('camera-id').value = cam.id;
-    document.getElementById('camera-url').value = cam.url;
-    document.getElementById('camera-name').value = cam.name;
-    populateCameraPrinterOptions(cam.printer_id);
-    document.getElementById('camera-orientation-group').style.display = 'block';
-    document.getElementById('camera-web-link').href = safeUrl(cam.url);
-    document.getElementById('camera-hmirror').checked = false;
-    document.getElementById('camera-vflip').checked = false;
-    fetch(`/api/cameras/${id}/settings`).then(r => r.ok ? r.json() : null).then(s => {
-        if (!s) return;
-        document.getElementById('camera-hmirror').checked = !!s.hmirror;
-        document.getElementById('camera-vflip').checked = !!s.vflip;
-        if (s.resolution !== undefined) document.getElementById('camera-resolution').value = s.resolution;
-        if (s.quality !== undefined) {
-            document.getElementById('camera-quality').value = s.quality;
-            document.getElementById('camera-quality-val').textContent = s.quality;
-        }
-    }).catch(() => {});
-    document.getElementById('camera-modal').classList.add('active');
-}
-
-async function saveCamera(e) {
-    e.preventDefault();
-    const id = document.getElementById('camera-id').value;
-    const printerIdStr = document.getElementById('camera-printer').value;
-    const data = {
-        url: document.getElementById('camera-url').value,
-        name: document.getElementById('camera-name').value,
-        printer_id: printerIdStr ? parseInt(printerIdStr) : null,
-    };
-
-    try {
-        const resp = id
-            ? await fetch(`/api/cameras/${id}`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})
-            : await fetch('/api/cameras', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        if (await checkOk(resp, 'Failed to save camera.')) {
-            closeModal();
-            await loadCameras();
-            openSettings();
-        }
-    } catch (e) { netFail('Failed to save camera.'); }
-}
-
-async function saveCameraOrientation() {
-    const id = document.getElementById('camera-id').value;
-    if (!id) return;
-    const data = {
-        hmirror: document.getElementById('camera-hmirror').checked,
-        vflip: document.getElementById('camera-vflip').checked,
-        resolution: parseInt(document.getElementById('camera-resolution').value, 10),
-        quality: parseInt(document.getElementById('camera-quality').value, 10),
-    };
-    try {
-        const resp = await fetch(`/api/cameras/${id}/settings`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)});
-        await checkOk(resp, 'Failed to save camera settings.');
-    } catch (e) { netFail('Failed to save camera settings.'); }
-}
-
-async function deleteCamera(id) {
-    try {
-        const resp = await fetch(`/api/cameras/${id}`, {method: 'DELETE'});
-        await checkOk(resp, 'Failed to delete camera.');
-        loadCameras();
-    } catch (e) { netFail('Failed to delete camera.'); }
-}
-
-// Account
-
-async function changePassword(e) {
-    e.preventDefault();
-    const current_password = document.getElementById('current-password').value;
-    const new_password = document.getElementById('new-password').value;
-    try {
-        const resp = await fetch('/api/account/password', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({current_password, new_password}),
-        });
-        if (await checkOk(resp, 'Failed to change password.')) {
-            document.getElementById('current-password').value = '';
-            document.getElementById('new-password').value = '';
-            alert('Password changed.');
-        }
-    } catch (e) { netFail('Failed to change password.'); }
-}
-
-// Users
-
-async function loadUsers() {
-    try {
-        const resp = await fetch('/api/users');
-        if (!resp.ok) return;
-        const users = await resp.json();
-        renderSettingsUserList(users || []);
-    } catch (e) {}
-}
-
-function renderSettingsUserList(users) {
-    const list = document.getElementById('settings-user-list');
-    list.innerHTML = users.map(u => `
-        <div class="settings-printer-row">
-            <div class="settings-printer-info">
-                <span class="settings-printer-name">${esc(u.username)}</span>
-            </div>
-            <div class="settings-printer-actions">
-                <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deleteUser(${u.id}))">Delete</button>
-            </div>
-        </div>`).join('');
-}
-
-async function addUser(e) {
-    e.preventDefault();
-    const username = document.getElementById('new-user-username').value;
-    const password = document.getElementById('new-user-password').value;
-    try {
-        const resp = await fetch('/api/users', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, password}),
-        });
-        if (await checkOk(resp, 'Failed to add user.')) {
-            document.getElementById('new-user-username').value = '';
-            document.getElementById('new-user-password').value = '';
-            loadUsers();
-        }
-    } catch (e) { netFail('Failed to add user.'); }
-}
-
-async function deleteUser(id) {
-    try {
-        const resp = await fetch(`/api/users/${id}`, {method: 'DELETE'});
-        if (await checkOk(resp, 'Failed to delete user.')) loadUsers();
-    } catch (e) { netFail('Failed to delete user.'); }
-}
-
-function renderSettingsPrinterList() {
-    const list = document.getElementById('settings-printer-list');
-    if (!printers || printers.length === 0) {
-        list.innerHTML = '<div class="settings-empty">No printers configured yet.</div>';
-        return;
-    }
-    list.innerHTML = printers.map((p, idx) => {
-        const cfg = p.config;
-        const isFirst = idx === 0;
-        const isLast = idx === printers.length - 1;
-        return `
-            <div class="settings-printer-row">
-                <div class="settings-printer-reorder">
-                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},-1)" ${isFirst ? 'disabled' : ''} title="Move up">&#9650;</button>
-                    <button class="reorder-btn" onclick="movePrinter(${cfg.id},1)" ${isLast ? 'disabled' : ''} title="Move down">&#9660;</button>
-                </div>
-                <div class="settings-printer-info">
-                    <span class="settings-printer-name">${esc(cfg.name)}</span>
-                    <span class="settings-printer-url">${esc(cfg.url)} (${esc(p.display_name)})</span>
-                </div>
-                <div class="settings-printer-actions">
-                    <button class="btn btn-sm" onclick="closeModal();openEditModal(${cfg.id})" title="Edit">&#9998; Edit</button>
-                    ${cfg.type === 'prusalink' ? `<button class="btn btn-sm" onclick="closeModal();openPrusalinkDebug(${cfg.id})" title="Raw API debug view">Raw API</button>` : ''}
-                    <a class="printer-link" href="${esc(safeUrl(cfg.url))}" target="_blank" rel="noopener" title="Open ${esc(p.display_name)}">${esc(p.display_name)} &#8599;</a>
-                    <button class="btn btn-sm btn-maintenance ${cfg.maintenance ? 'active' : ''}" onclick="toggleMaintenance(${cfg.id},${!cfg.maintenance})" title="${cfg.maintenance ? 'End maintenance' : 'Mark as in maintenance'}">Maintenance</button>
-                    <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => deletePrinter(${cfg.id}))">Delete</button>
-                </div>
-            </div>`;
-    }).join('');
-}
-
-async function toggleMaintenance(id, maintenance) {
-    try {
-        const resp = await fetch(`/api/printers/${id}/maintenance`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({maintenance}),
-        });
-        await checkOk(resp, 'Failed to change maintenance mode.');
-        await fetchPrinters();
-        renderSettingsPrinterList();
-    } catch (e) { netFail('Failed to change maintenance mode.'); }
-}
-
-// Printer reordering
-
-async function movePrinter(id, direction) {
-    const idx = printers.findIndex(p => p.config.id === id);
-    if (idx < 0) return;
-    const newIdx = idx + direction;
-    if (newIdx < 0 || newIdx >= printers.length) return;
-
-    [printers[idx], printers[newIdx]] = [printers[newIdx], printers[idx]];
-    const ids = printers.map(p => p.config.id);
-
-    prevPrinterIDs = [];
-    updateDashboard();
-    renderSettingsPrinterList();
-
-    // The optimistic swap above is only true if the server agrees - on any
-    // failure, reload the real order so the UI never shows an unsaved one.
-    try {
-        const resp = await fetch('/api/printers/reorder', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ids}),
-        });
-        if (await checkOk(resp, 'Failed to reorder printers.')) return;
-    } catch (e) { netFail('Failed to reorder printers.'); }
-    await fetchPrinters();
-    renderSettingsPrinterList();
-}
-
-// Add/Edit printer modals
-
-function onPrinterTypeChange() {
-    const type = document.getElementById('printer-type').value;
-    const isPrusalink = type === 'prusalink';
-    document.getElementById('username-group').style.display = isPrusalink ? '' : 'none';
-    document.getElementById('apikey-label').textContent = isPrusalink ? 'Password' : 'API Key';
-    document.getElementById('printer-apikey').placeholder = isPrusalink ? 'Your PrusaLink password' : 'Your OctoPrint API key';
-    if (isPrusalink && !document.getElementById('printer-username').value) {
-        document.getElementById('printer-username').value = 'maker';
-    }
-}
-
-function openAddModal() {
-    editModalReq++;
-    document.getElementById('modal-title').textContent = 'Add printer';
-    document.getElementById('printer-id').value = '';
-    document.getElementById('printer-name').value = '';
-    document.getElementById('printer-model').value = '';
-    document.getElementById('printer-hide-model').checked = false;
-    document.getElementById('printer-type').value = 'octoprint';
-    document.getElementById('printer-url').value = '';
-    document.getElementById('printer-username').value = 'maker';
-    document.getElementById('printer-apikey').value = '';
-    document.getElementById('printer-poll').value = '10';
-    document.getElementById('printer-idle-timeout').value = '0';
-    document.getElementById('printer-max-bed-temp').value = '0';
-    document.getElementById('printer-max-extruder-temp').value = '0';
-    document.getElementById('test-btn').style.display = 'inline-flex';
-    onPrinterTypeChange();
-    hideTestResult();
-    document.getElementById('printer-modal').classList.add('active');
-}
-
-let editModalReq = 0;
-
-async function openEditModal(id) {
-    const req = ++editModalReq;
-    const printer = printers.find(p => p.config.id === id);
-    if (!printer) return;
-    const cfg = printer.config;
-
-    document.getElementById('modal-title').textContent = 'Edit printer';
-    document.getElementById('printer-id').value = cfg.id;
-    document.getElementById('printer-name').value = cfg.name;
-    document.getElementById('printer-model').value = cfg.model || '';
-    document.getElementById('printer-hide-model').checked = !!cfg.hide_model;
-    document.getElementById('printer-type').value = cfg.type;
-    document.getElementById('printer-url').value = cfg.url;
-    document.getElementById('printer-apikey').value = '';
-    document.getElementById('printer-username').value = cfg.username || 'maker';
-    document.getElementById('printer-poll').value = cfg.poll_interval;
-    document.getElementById('printer-idle-timeout').value = cfg.idle_timeout_minutes || '0';
-    document.getElementById('printer-max-bed-temp').value = cfg.max_bed_temp || '0';
-    document.getElementById('printer-max-extruder-temp').value = cfg.max_extruder_temp || '0';
-    document.getElementById('test-btn').style.display = 'inline-flex';
-    onPrinterTypeChange();
-    hideTestResult();
-    document.getElementById('printer-modal').classList.add('active');
-
-    try {
-        const resp = await fetch(`/api/printers/${cfg.id}`);
-        if (resp.ok) {
-            const data = await resp.json();
-            // Modal may have been closed/reopened for another printer (or
-            // switched to Add) while this was in flight - writing the key
-            // now would plant this printer's credential in the wrong form.
-            if (req !== editModalReq) return;
-            document.getElementById('printer-apikey').value = data.api_key || '';
-            if (data.username) document.getElementById('printer-username').value = data.username;
-        }
-    } catch (e) {}
-}
-
-function closeModal() {
-    editModalReq++;
-    document.querySelectorAll('.modal-overlay').forEach(m => m.classList.remove('active'));
-    stopPrusalinkDebugPoll();
+function appAlert(title, message, list) {
+    return appDialog(title, `<p class="dialog-text">${esc(message)}</p>${list && list.length ? `<ul class="dialog-list">${list.map(i => `<li>${esc(i)}</li>`).join('')}</ul>` : ''}`,
+        [{label: 'OK', cls: 'btn-primary', value: true}]);
 }
 
 // Click once to arm, click again within the window to actually run - avoids
@@ -1781,325 +940,6 @@ function confirmAction(btn, action) {
         btn.textContent = btn.dataset.confirmOriginal;
         btn.dataset.armed = '0';
     }, 3000);
-}
-
-function openUploadModal() {
-    const select = document.getElementById('upload-printer');
-    select.innerHTML = '';
-
-    const groups = {};
-    const ungrouped = [];
-    for (const p of printers) {
-        if (p.config.type !== 'prusalink') continue;
-        if (p.config.model) {
-            (groups[p.config.model] = groups[p.config.model] || []).push(p);
-        } else {
-            ungrouped.push(p);
-        }
-    }
-
-    for (const p of ungrouped) {
-        const opt = document.createElement('option');
-        opt.value = p.config.id;
-        opt.textContent = p.config.name;
-        select.appendChild(opt);
-    }
-    for (const model of Object.keys(groups).sort()) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = model;
-        for (const p of groups[model]) {
-            const opt = document.createElement('option');
-            opt.value = p.config.id;
-            opt.textContent = p.config.name;
-            optgroup.appendChild(opt);
-        }
-        select.appendChild(optgroup);
-    }
-
-    if (!select.options.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'No PrusaLink printers configured';
-        select.appendChild(opt);
-    }
-
-    document.getElementById('upload-file').value = '';
-    document.getElementById('upload-print-now').checked = false;
-    const result = document.getElementById('upload-result');
-    result.style.display = 'none';
-    result.className = 'test-result';
-    result.textContent = '';
-
-    document.getElementById('upload-modal').classList.add('active');
-}
-
-async function submitUpload(e) {
-    e.preventDefault();
-    const id = document.getElementById('upload-printer').value;
-    const file = document.getElementById('upload-file').files[0];
-    const printNow = document.getElementById('upload-print-now').checked;
-    const result = document.getElementById('upload-result');
-
-    if (!id || !file) return;
-
-    result.style.display = 'block';
-    result.className = 'test-result';
-    result.textContent = 'Uploading...';
-
-    try {
-        const url = `/api/printers/${id}/upload?filename=${encodeURIComponent(file.name)}&print_now=${printNow}`;
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/octet-stream'},
-            body: file,
-        });
-        const data = await resp.json();
-        if (resp.ok && data.success) {
-            closeModal();
-            refreshFileManagerIfShowing(id);
-        } else {
-            result.className = 'test-result error';
-            result.textContent = `Upload failed: ${data.error || 'unknown error'}`;
-        }
-    } catch (e) {
-        result.className = 'test-result error';
-        result.textContent = 'Upload failed';
-    }
-}
-
-function hideTestResult() {
-    const el = document.getElementById('test-result');
-    el.style.display = 'none';
-    el.className = 'test-result';
-    el.textContent = '';
-}
-
-async function savePrinter(e) {
-    e.preventDefault();
-    const id = document.getElementById('printer-id').value;
-    const printerType = document.getElementById('printer-type').value;
-    const data = {
-        name: document.getElementById('printer-name').value,
-        type: printerType,
-        model: document.getElementById('printer-model').value,
-        hide_model: document.getElementById('printer-hide-model').checked,
-        url: document.getElementById('printer-url').value.replace(/\/+$/, ''),
-        api_key: document.getElementById('printer-apikey').value,
-        username: printerType === 'prusalink' ? document.getElementById('printer-username').value : '',
-        poll_interval: parseInt(document.getElementById('printer-poll').value) || 10,
-        idle_timeout_minutes: parseInt(document.getElementById('printer-idle-timeout').value) || 0,
-        max_bed_temp: parseFloat(document.getElementById('printer-max-bed-temp').value) || 0,
-        max_extruder_temp: parseFloat(document.getElementById('printer-max-extruder-temp').value) || 0,
-        enabled: true,
-    };
-
-    try {
-        let resp;
-        if (id) {
-            resp = await fetch(`/api/printers/${id}`, {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data),
-            });
-        } else {
-            resp = await fetch('/api/printers', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data),
-            });
-        }
-        if (await checkOk(resp, 'Failed to save printer.')) {
-            closeModal();
-            await fetchPrinters();
-            openSettings();
-        }
-    } catch (e) { netFail('Failed to save printer.'); }
-}
-
-async function deletePrinter(id) {
-    try {
-        const resp = await fetch(`/api/printers/${id}`, {method: 'DELETE'});
-        await checkOk(resp, 'Failed to delete printer.');
-        await fetchPrinters();
-        renderSettingsPrinterList();
-    } catch (e) { netFail('Failed to delete printer.'); }
-}
-
-async function testConnection() {
-    const printerURL = document.getElementById('printer-url').value.replace(/\/+$/, '');
-    const apiKey = document.getElementById('printer-apikey').value;
-    const printerType = document.getElementById('printer-type').value;
-
-    if (!printerURL || !apiKey) {
-        const el = document.getElementById('test-result');
-        el.style.display = 'block';
-        el.className = 'test-result error';
-        el.textContent = 'URL and API key are required';
-        return;
-    }
-
-    const el = document.getElementById('test-result');
-    el.style.display = 'block';
-    el.className = 'test-result';
-    el.textContent = 'Testing connection...';
-
-    try {
-        const testBody = {type: printerType, url: printerURL, api_key: apiKey};
-        if (printerType === 'prusalink') {
-            testBody.username = document.getElementById('printer-username').value;
-        }
-        const resp = await fetch('/api/test', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(testBody),
-        });
-        const data = await resp.json();
-        if (data.success) {
-            el.className = 'test-result success';
-            el.textContent = 'Connection successful!';
-            const nameField = document.getElementById('printer-name');
-            if (!nameField.value && data.name) {
-                nameField.value = data.name;
-            }
-        } else {
-            el.className = 'test-result error';
-            el.textContent = `Connection failed: ${data.error}`;
-        }
-    } catch (e) {
-        el.className = 'test-result error';
-        el.textContent = 'Connection test failed';
-    }
-}
-
-// General settings
-
-// PUTs settings and reports whether the server accepted them - a rejected
-// value (e.g. a bad MQTT URL) must not look like a successful save.
-async function putSettings(settings) {
-    try {
-        const resp = await fetch('/api/settings', {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(settings),
-        });
-        return await checkOk(resp, 'Failed to save settings.');
-    } catch (e) {
-        netFail('Failed to save settings.');
-        return false;
-    }
-}
-
-async function saveSettings(e) {
-    e.preventDefault();
-    const settings = {
-        snapshot_interval: document.getElementById('setting-snapshot-interval').value,
-        hide_webcam_when_unreachable: document.getElementById('setting-hide-webcam').checked ? '1' : '0',
-        history_retention_days: document.getElementById('setting-history-retention').value || '0',
-        print_control_timeout_secs: document.getElementById('setting-print-control-timeout').value || '15',
-        prusalink_ping_interval: document.getElementById('setting-prusalink-ping-interval').value || '0',
-        auto_off_idle_minutes: document.getElementById('setting-auto-off-idle').value || '0',
-        auto_off_cooldown_temp: document.getElementById('setting-auto-off-cooldown').value || '40',
-        thermal_max_bed_temp: document.getElementById('setting-thermal-max-bed').value || '0',
-        thermal_max_extruder_temp: document.getElementById('setting-thermal-max-extruder').value || '0',
-        debug_logging: document.getElementById('setting-debug-logging').checked ? '1' : '0',
-    };
-    const pollVal = document.getElementById('setting-poll-interval').value;
-    if (pollVal) settings.poll_interval = pollVal;
-    if (!await putSettings(settings)) return;
-    snapshotInterval = parseInt(settings.snapshot_interval) || 10;
-    restartSnapshotTimer();
-    hideWebcamWhenUnreachable = settings.hide_webcam_when_unreachable === '1';
-    prevPrinterIDs = [];
-    updateDashboard();
-    closeModal();
-}
-
-async function saveNotificationSettings(e) {
-    e.preventDefault();
-    const settings = {
-        pushover_user_key: document.getElementById('setting-pushover-user-key').value,
-        pushover_app_token: document.getElementById('setting-pushover-app-token').value,
-        notify_on_start: document.getElementById('setting-notify-start').checked ? '1' : '0',
-        notify_on_complete: document.getElementById('setting-notify-complete').checked ? '1' : '0',
-        notify_on_failed: document.getElementById('setting-notify-failed').checked ? '1' : '0',
-        notify_on_error: document.getElementById('setting-notify-error').checked ? '1' : '0',
-        notify_checkpoint1_enabled: document.getElementById('setting-notify-checkpoint1-enabled').checked ? '1' : '0',
-        notify_checkpoint1_percent: document.getElementById('setting-notify-checkpoint1-percent').value || '5',
-        notify_checkpoint2_enabled: document.getElementById('setting-notify-checkpoint2-enabled').checked ? '1' : '0',
-        notify_checkpoint2_percent: document.getElementById('setting-notify-checkpoint2-percent').value || '50',
-    };
-    NOTIFY_TYPES.forEach(t => {
-        settings[`notify_${t}_title`] = document.getElementById(`setting-notify-${t}-title`).value;
-        settings[`notify_${t}_message`] = document.getElementById(`setting-notify-${t}-message`).value;
-        settings[`notify_${t}_sound`] = document.getElementById(`setting-notify-${t}-sound`).value;
-        settings[`notify_${t}_image`] = document.getElementById(`setting-notify-${t}-image`).value;
-        settings[`notify_${t}_high_priority`] = document.getElementById(`setting-notify-${t}-high-priority`).checked ? '1' : '0';
-    });
-    if (!await putSettings(settings)) return;
-    closeModal();
-}
-
-async function sendTestNotification() {
-    const result = document.getElementById('notify-test-result');
-    result.textContent = 'Sending...';
-    try {
-        const resp = await fetch('/api/notify-test', {method: 'POST'});
-        const data = await resp.json();
-        result.textContent = data.success ? 'Test notification sent - check your device.' : `Failed: ${data.error}`;
-    } catch (e) {
-        result.textContent = `Failed: ${e.message}`;
-    }
-}
-
-async function putMQTTSettings() {
-    const hostPort = document.getElementById('setting-mqtt-broker-url').value;
-    const tls = document.getElementById('setting-mqtt-tls').checked;
-    const settings = {
-        mqtt_broker_url: hostPort ? (tls ? 'ssl://' : 'tcp://') + hostPort : '',
-        mqtt_username: document.getElementById('setting-mqtt-username').value,
-        mqtt_password: document.getElementById('setting-mqtt-password').value,
-        mqtt_publish_enabled: document.getElementById('setting-mqtt-publish-enabled').checked ? '1' : '0',
-        mqtt_publish_topic: document.getElementById('setting-mqtt-publish-topic').value,
-    };
-    return putSettings(settings);
-}
-
-async function saveMQTTSettings(e) {
-    e.preventDefault();
-    if (!await putMQTTSettings()) return;
-    closeModal();
-}
-
-function generateStatusAPIKey() {
-    document.getElementById('setting-status-api-key').value = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function saveStatusAPISettings(e) {
-    e.preventDefault();
-    if (!await putSettings({status_api_key: document.getElementById('setting-status-api-key').value.trim()})) return;
-    closeModal();
-}
-
-async function sendMQTTTest() {
-    const result = document.getElementById('mqtt-test-result');
-    result.textContent = 'Connecting...';
-    try {
-        const resp = await fetch('/api/mqtt-test', {method: 'POST'});
-        const data = await resp.json();
-        result.textContent = data.success ? 'Connected to broker successfully.' : `Failed: ${data.error}`;
-    } catch (e) {
-        result.textContent = `Failed: ${e.message}`;
-    }
-}
-
-async function saveAndTestMQTT() {
-    const result = document.getElementById('mqtt-test-result');
-    result.textContent = 'Saving...';
-    if (!await putMQTTSettings()) {
-        result.textContent = 'Failed to save settings.';
-        return;
-    }
-    await sendMQTTTest();
 }
 
 let snapshotTimer = null;
@@ -2170,7 +1010,7 @@ async function exportConfig() {
 async function importConfig(input) {
     const file = input.files[0];
     if (!file) return;
-    if (!confirm('Import will add printers and overwrite settings from this file. Continue?')) {
+    if (!await appConfirm('Import settings', 'Import will add printers and overwrite settings from this file. Continue?', 'Import')) {
         input.value = '';
         return;
     }
@@ -2183,31 +1023,18 @@ async function importConfig(input) {
         });
         if (resp.ok) {
             const data = await resp.json().catch(() => ({}));
-            let msg = `Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`;
-            if (data.skipped && data.skipped.length) {
-                msg += `\n\nSkipped ${data.skipped.length} item(s):\n- ` + data.skipped.join('\n- ');
-            }
-            alert(msg);
+            const msg = `Import complete: ${data.printers_added} printer(s), ${data.plugs_added} smart plug(s), ${data.cameras_added} camera(s), ${data.ingest_keys_added} ingest key(s) added.`;
+            const skipped = data.skipped && data.skipped.length ? data.skipped : [];
+            await appAlert('Import complete', skipped.length ? `${msg} Skipped ${skipped.length} item(s):` : msg, skipped);
             await fetchPrinters();
-            openSettings();
+            route();
         } else {
             const data = await resp.json().catch(() => ({}));
-            alert(data.error || 'Import failed.');
+            await appAlert('Import failed', data.error || 'Import failed.');
         }
     } catch (e) { netFail('Import failed.'); }
     input.value = '';
 }
-
-// Event listeners
-document.querySelectorAll('.modal-overlay').forEach(modal => {
-    modal.addEventListener('click', function(e) {
-        if (e.target === this) closeModal();
-    });
-});
-
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeModal();
-});
 
 // Slicer ingest jobs — files staged by a slicer, awaiting dispatch to a printer
 
@@ -2240,14 +1067,14 @@ function renderIngestBanners() {
 
         for (const job of jobs) {
             const banner = document.createElement('div');
-            banner.className = 'ingest-banner';
+            banner.className = job.error ? 'ingest-banner failed' : 'ingest-banner';
             banner.innerHTML = `
                 <span>&#128196; ${esc(job.filename)} ${job.error ? `failed to relay — <span class="msg-error">${esc(job.error)}</span>` : `waiting for ${esc(cfg.name)} to come online`}</span>
                 <div class="ingest-banner-actions">
                     ${job.error ? `<button class="btn btn-sm btn-primary" onclick="retryIngestJob(${job.id})">Retry</button>` : ''}
                     <button class="btn btn-sm btn-danger" onclick="confirmAction(this, () => discardIngestJob(${job.id}))">Discard</button>
                 </div>`;
-            card.appendChild(banner);
+            card.insertBefore(banner, card.querySelector('.printer-body'));
         }
     }
 }
@@ -2287,7 +1114,13 @@ fetch('/api/settings').then(r => r.json()).then(settings => {
 
 fetch('/api/version').then(r => r.json()).then(data => {
     const el = document.getElementById('app-version');
-    if (el && data.version) el.textContent = 'v' + data.version;
+    if (el && data.version) el.textContent = 'PrintSpy v' + data.version;
+}).catch(() => {});
+
+fetch('/api/me').then(r => r.ok ? r.json() : null).then(me => {
+    if (!me || !me.username) return;
+    document.getElementById('user-avatar').textContent = (Array.from(me.username)[0] || '?').toUpperCase();
+    document.getElementById('user-name').textContent = me.username;
 }).catch(() => {});
 
 connectSSE();

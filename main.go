@@ -95,7 +95,7 @@ func main() {
 	})
 
 	webDir := findWebDir()
-	mux.Handle("/", http.FileServer(http.Dir(webDir)))
+	mux.Handle("/", noCacheStatic(http.FileServer(http.Dir(webDir))))
 
 	addr := fmt.Sprintf(":%d", port)
 	// No ReadTimeout/WriteTimeout: SSE, webcam streams and large uploads are long-lived.
@@ -191,4 +191,13 @@ func findWebDir() string {
 	}
 	log.Println("warning: web directory not found, static files will not be served")
 	return "web"
+}
+
+// noCacheStatic makes browsers revalidate the web UI files on every load (a cheap
+// 304 via Last-Modified) so an upgrade never leaves old JS/CSS paired with a new page.
+func noCacheStatic(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		h.ServeHTTP(w, r)
+	})
 }

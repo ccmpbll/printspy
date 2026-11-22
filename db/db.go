@@ -766,12 +766,29 @@ func (db *DB) GetPrintHistoryThumbnail(id int64) ([]byte, string, error) {
 // simpler "capped-N or all" convention, print history can genuinely grow
 // into the hundreds/thousands over months and needs real pagination.
 func (db *DB) ListPrintHistory(printerID int64, limit, offset int) ([]models.PrintHistory, bool, error) {
+	return db.ListPrintHistoryFiltered(printerID, limit, offset, "", "")
+}
+
+// likeEscaper makes a user-typed search literal inside a LIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// ListPrintHistoryFiltered is ListPrintHistory narrowed to one result
+// ("completed", "failed", "cancelled"; empty = all) and/or a case-insensitive
+// substring of the filename (empty = all).
+func (db *DB) ListPrintHistoryFiltered(printerID int64, limit, offset int, result, query string) ([]models.PrintHistory, bool, error) {
+	like := ""
+	if query != "" {
+		like = "%" + likeEscaper.Replace(query) + "%"
+	}
 	rows, err := db.conn.Query(`
 		SELECT id, printer_id, filename, started_at, completed_at, duration_secs, result, filament_used_mm,
 			filament_used_g, layer_height, fill_density, printer_model, material, tool_index, filament_cost,
 			estimated_duration_secs, max_layer_z, object_names, tool_changes, tools_json, COALESCE(length(thumbnail), 0) > 0
-		FROM print_history WHERE printer_id = ? ORDER BY id DESC LIMIT ? OFFSET ?
-	`, printerID, limit+1, offset)
+		FROM print_history WHERE printer_id = ?
+			AND (? = '' OR result = ?)
+			AND (? = '' OR filename LIKE ? ESCAPE '\')
+		ORDER BY id DESC LIMIT ? OFFSET ?
+	`, printerID, result, result, like, like, limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}

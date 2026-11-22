@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func fromIP(r *http.Request, ip string) *http.Request {
@@ -143,5 +144,25 @@ func TestSessionCookieSecureOnlyOverHTTPS(t *testing.T) {
 		if len(ck) != 1 || ck[0].Secure != c.secure || !ck[0].HttpOnly {
 			t.Errorf("%s: cookie=%+v, want Secure=%v HttpOnly", c.name, ck, c.secure)
 		}
+	}
+}
+
+func TestMeReturnsSignedInUser(t *testing.T) {
+	h, d := newTestHandler(t)
+	if err := d.CreateSession("tok", "alice", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tok"})
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"username":"alice"`) {
+		t.Errorf("signed in: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := do(h.handleMe, "GET", "/api/me", ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no session = %d, want 401", rec.Code)
+	}
+	if rec := do(h.handleMe, "POST", "/api/me", ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", rec.Code)
 	}
 }

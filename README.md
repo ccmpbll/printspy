@@ -74,7 +74,7 @@ docker run -d \
   ccmpbll/printspy:latest
 ```
 
-Open `http://<docker host IP>:8080` — first run prompts you to create a login. Once in, click the settings gear and add your first printer. You'll need the printer's URL and OctoPrint API key or Prusalink user/pass.
+Open `http://<docker host IP>:8080` — first run prompts you to create a login. Once in, open Settings from the user menu (top right) and add your first printer. You'll need the printer's URL and OctoPrint API key or Prusalink user/pass.
 
 ### Docker Compose
 
@@ -98,25 +98,25 @@ All printer management is done through the web UI — open the settings page to 
 
 ### Login
 
-First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Users. No roles or permission tiers — every account has full access.
+First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Account & backup → Users. No roles or permission tiers — every account has full access.
 
 ### Smart plugs
 
-OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Smart Plugs and assign it to a printer. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
+OctoPrint printers with the Tasmota or PSU Control plugin installed get power control automatically — nothing to configure. For everything else (PrusaLink or an OctoPrint printer without the plugin), add a Tasmota device directly under Settings → Plugs & cameras → Smart plugs. Plugs are managed independently of printers, so deleting a printer unassigns its plug instead of deleting it.
 
 Each plug can use either connection mode:
 - **Direct HTTP** (default) — polled over the network on each printer's own poll interval, no extra setup
-- **MQTT** — push-based via a broker instead of polling; configure the broker under Settings → MQTT Broker (host:port, optional TLS/username/password), then set the plug's mode to MQTT and enter its Tasmota topic
+- **MQTT** — push-based via a broker instead of polling; configure the broker under Settings → Integrations → MQTT broker (host:port, optional TLS/username/password), then set the plug's mode to MQTT and enter its Tasmota topic
 
 Both modes can be mixed freely across plugs.
 
 ### Cameras
 
-Any printer type can get a webcam feed by assigning a [printspy-cam](https://github.com/ccmpbll/printspy-cam) device under Settings → Cameras — useful for PrusaLink, which has no webcam support of its own. Assigning a camera overrides whatever webcam a printer's own plugin would otherwise show. Cameras are managed independently of printers, so deleting a printer unassigns its camera instead of deleting it.
+Any printer type can get a webcam feed by assigning a [printspy-cam](https://github.com/ccmpbll/printspy-cam) device under Settings → Plugs & cameras — useful for PrusaLink, which has no webcam support of its own. Assigning a camera overrides whatever webcam a printer's own plugin would otherwise show. Cameras are managed independently of printers, so deleting a printer unassigns its camera instead of deleting it.
 
 ### Slicer print targets
 
-Create a target under Settings → Slicer print targets, pinned to one printer. In PrusaSlicer or OrcaSlicer, add a physical printer using the **PrusaLink** host type and set:
+Create a target under Settings → Plugs & cameras → Slicer targets, pinned to one printer. In PrusaSlicer or OrcaSlicer, add a physical printer using the **PrusaLink** host type and set:
 
 - **Host:** the URL shown on the target, `http://<printspy-host>:<port>/ingest/<label>` (the target's label or numeric id both work)
 - **API key / password:** the target's own API key, sent by the slicer as the `X-Api-Key` header. It is separate from your login and from the status API key, and this endpoint does not use the login session.

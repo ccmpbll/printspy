@@ -1,6 +1,7 @@
 package db
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ccmpbll/printspy/models"
@@ -144,5 +145,60 @@ func TestPrintHistoryWithoutThumbnail(t *testing.T) {
 	thumb, _, err := database.GetPrintHistoryThumbnail(entries[0].ID)
 	if err != nil || len(thumb) != 0 {
 		t.Errorf("GetPrintHistoryThumbnail = %v, %v; want empty, nil", thumb, err)
+	}
+}
+
+func TestListPrintHistoryFilteredByResultAndName(t *testing.T) {
+	database, err := Open(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	p := &models.PrinterConfig{Name: "P", Type: "prusalink", URL: "http://10.0.0.1", APIKey: "k", PollInterval: 10, Enabled: true}
+	if err := database.CreatePrinter(p); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []struct{ name, result string }{
+		{"benchy.bgcode", "completed"},
+		{"Gear_Set.bgcode", "failed"},
+		{"gear100%.bgcode", "completed"},
+		{"vase.bgcode", "cancelled"},
+	} {
+		if err := database.InsertPrintHistory(&models.PrintHistory{PrinterID: p.ID, FileName: e.name, Result: e.result}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names := func(result, q string) string {
+		rows, _, err := database.ListPrintHistoryFiltered(p.ID, 10, 0, result, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.FileName)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := names("", ""); got != "vase.bgcode,gear100%.bgcode,Gear_Set.bgcode,benchy.bgcode" {
+		t.Errorf("no filter = %q", got)
+	}
+	if got := names("failed", ""); got != "Gear_Set.bgcode" {
+		t.Errorf("failed = %q", got)
+	}
+	if got := names("", "GEAR"); got != "gear100%.bgcode,Gear_Set.bgcode" {
+		t.Errorf("case-insensitive search = %q", got)
+	}
+	if got := names("completed", "gear"); got != "gear100%.bgcode" {
+		t.Errorf("result and search = %q", got)
+	}
+	// % and _ typed by the user are literal, not wildcards.
+	if got := names("", "100%"); got != "gear100%.bgcode" {
+		t.Errorf("literal %% = %q", got)
+	}
+	if got := names("", "_"); got != "Gear_Set.bgcode" {
+		t.Errorf("literal _ = %q", got)
+	}
+	if got := names("", "%"); got != "gear100%.bgcode" {
+		t.Errorf("lone %% = %q", got)
 	}
 }

@@ -343,6 +343,20 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
+// handleMe tells the page who is signed in, for the header's user menu.
+func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := h.currentUser(r)
+	if !ok {
+		jsonError(w, "not signed in", http.StatusUnauthorized)
+		return
+	}
+	jsonResponse(w, map[string]string{"username": username})
+}
+
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -489,11 +503,14 @@ const authPageHead = `<!DOCTYPE html>
 <link rel="icon" href="/logo.png">
 <link rel="stylesheet" href="/style.css">
 <style>
-.auth-page { display:flex; align-items:center; justify-content:center; min-height:100vh; }
-.auth-card { width:100%; max-width:360px; background:var(--bg-primary); border:1px solid var(--border); border-radius:var(--radius-lg); padding:2rem; }
-.auth-card .logo { display:block; width:100%; max-width:280px; height:auto; margin:0 auto 1.5rem; }
-.auth-card h1 { font-size:1.25rem; margin-bottom:1.5rem; }
-.auth-error { background:var(--error-bg); color:var(--error); padding:0.5rem 0.75rem; border-radius:var(--radius); font-size:0.875rem; margin-bottom:1rem; display:none; }
+.auth-page { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:1rem; }
+.auth-card { width:100%; max-width:380px; background:var(--bg-primary); border:1px solid var(--border); border-radius:var(--radius-lg); padding:2rem; }
+.auth-card .logo { display:block; width:100%; max-width:160px; height:auto; margin:0 auto 1.25rem; }
+.auth-card h1 { font-size:1.5rem; font-weight:600; text-align:center; margin-bottom:1.4rem; }
+.auth-card .fld + .fld { margin-top:1rem; }
+.auth-card .auth-btn { width:100%; height:36px; margin-top:1.4rem; font-size:0.9rem; }
+.auth-sub { color:var(--text-secondary); font-size:0.875rem; text-align:center; margin:-0.6rem 0 1.2rem; }
+.auth-error { background:var(--error-bg); color:var(--error); padding:0.55rem 0.8rem; border-radius:10px; font-size:0.875rem; margin-bottom:1rem; display:none; }
 </style>
 </head>
 <body>
@@ -520,31 +537,28 @@ if (params.get('error')) {
 
 const loginPageHTML = authPageHead + `
 <form method="POST" action="/login">
-    <div class="form-group">
+    <div class="fld">
         <label for="username">Username</label>
-        <input type="text" id="username" name="username" autofocus required>
+        <div class="inp"><input type="text" id="username" name="username" autofocus required></div>
     </div>
-    <div class="form-group">
+    <div class="fld">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required>
+        <div class="inp"><input type="password" id="password" name="password" required></div>
     </div>
-    <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Log in</button>
-    </div>
+    <button type="submit" class="btn btn-primary auth-btn">Log in</button>
 </form>` + authPageFoot
 
 const setupPageHTML = authPageHead + `
-<p style="color:var(--text-secondary);font-size:0.875rem;margin-bottom:1rem">Create the first account to secure this PrintSpy instance.</p>
+<p class="auth-sub">Create the first account to secure this PrintSpy instance.</p>
 <form method="POST" action="/setup">
-    <div class="form-group">
+    <div class="fld">
         <label for="username">Username</label>
-        <input type="text" id="username" name="username" autofocus required>
+        <div class="inp"><input type="text" id="username" name="username" autofocus required></div>
     </div>
-    <div class="form-group">
+    <div class="fld">
         <label for="password">Password</label>
-        <input type="password" id="password" name="password" required minlength="8">
+        <div class="inp"><input type="password" id="password" name="password" required minlength="8"></div>
+        <small>At least 8 characters.</small>
     </div>
-    <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Create account</button>
-    </div>
+    <button type="submit" class="btn btn-primary auth-btn">Create account</button>
 </form>` + authPageFoot

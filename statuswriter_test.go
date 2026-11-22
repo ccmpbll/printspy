@@ -25,3 +25,12 @@ func TestStatusWriterImplementsFlusher(t *testing.T) {
 		t.Error("Flush() did not reach the underlying ResponseWriter")
 	}
 }
+
+func TestNoCacheStaticSetsHeader(t *testing.T) {
+	h := noCacheStatic(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/app.js", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("Cache-Control = %q, want no-cache", got)
+	}
+}

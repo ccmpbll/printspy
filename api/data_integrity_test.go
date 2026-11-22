@@ -95,3 +95,30 @@ func TestConfigImportRejectsOversizeBody(t *testing.T) {
 		t.Errorf("oversize import = %d, want 400", rec.Code)
 	}
 }
+
+func TestHistoryListFilterParams(t *testing.T) {
+	h, d := newTestHandler(t)
+	p := models.PrinterConfig{Name: "P", Type: "prusalink", URL: "http://10.0.0.1", APIKey: "k", PollInterval: 10, Enabled: true}
+	if err := d.CreatePrinter(&p); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range [][2]string{{"a.bgcode", "completed"}, {"b.bgcode", "failed"}} {
+		if err := d.InsertPrintHistory(&models.PrintHistory{PrinterID: p.ID, FileName: e[0], Result: e[1]}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(query string) (int, string) {
+		rec := httptest.NewRecorder()
+		h.getPrintHistoryList(rec, httptest.NewRequest("GET", "/api/printers/1/history/list"+query, nil), p.ID)
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := get("?result=failed"); code != 200 || !strings.Contains(body, "b.bgcode") || strings.Contains(body, "a.bgcode") {
+		t.Errorf("result=failed: %d %s", code, body)
+	}
+	if code, body := get("?q=A.BG"); code != 200 || !strings.Contains(body, "a.bgcode") || strings.Contains(body, "b.bgcode") {
+		t.Errorf("q=A.BG: %d %s", code, body)
+	}
+	if code, _ := get("?result=bogus"); code != http.StatusBadRequest {
+		t.Errorf("result=bogus = %d, want 400", code)
+	}
+}
