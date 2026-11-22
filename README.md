@@ -86,7 +86,7 @@ All printer management is done through the web UI — open the settings page to 
 
 ### Login
 
-First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Account & backup → Users. No roles or permission tiers — every account has full access.
+First run redirects to a setup page to create the first account. Add or remove additional users from Settings → Account & backup → Users. No roles or permission tiers — every account has full access. Each user can also pick a page background pattern (strength and fade) under Settings → Account & backup → Appearance; it follows the user across devices.
 
 ### Smart plugs
 

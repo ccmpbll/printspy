@@ -1140,6 +1140,10 @@ fetch('/api/me').then(r => r.ok ? r.json() : null).then(me => {
     if (!me || !me.username) return;
     document.getElementById('user-avatar').textContent = (Array.from(me.username)[0] || '?').toUpperCase();
     document.getElementById('user-name').textContent = me.username;
+    // The server's copy wins over the cached one (the choice follows the user across devices).
+    const bg = me.preferences && me.preferences.background;
+    cacheBackground(bg || BG_DEFAULT);
+    applyBackground(bg || BG_DEFAULT);
 }).catch(() => {});
 
 connectSSE();

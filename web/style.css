@@ -983,3 +983,15 @@ header.topbar h1 {
     .h-dur { flex-direction: row; align-items: baseline; gap: 0.5rem; width: 100%; padding-left: 112px; min-width: 0; }
 }
 @media (max-width: 480px) { .btn-dash { display: none; } }
+
+/* ---------- Per-user page background (web/background.js) ---------- */
+#bg-layer { position: fixed; inset: 0; z-index: -1; pointer-events: none; }
+#bg-layer.fade {
+    -webkit-mask-image: linear-gradient(#000 35%, transparent 100%);
+    mask-image: linear-gradient(#000 35%, transparent 100%);
+}
+.seg.wide { max-width: none; }
+.seg.wide .seg-btn { flex: 0 0 auto; white-space: nowrap; padding: 0 0.9rem; }
+.bg-strength { display: flex; align-items: center; gap: 0.75rem; }
+.bg-strength .range { max-width: 16rem; }
+.bg-strength output { min-width: 2.2rem; color: var(--text-secondary); font-size: 0.85rem; }

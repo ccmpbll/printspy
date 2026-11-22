@@ -604,11 +604,63 @@ async function saveStatusAPISettings(btn) {
 
 // ---------- tab: account & backup ----------
 
+// --- appearance (per user) ---
+
+function appearanceCard(saved) {
+    const p = bgSanitize(saved || BG_DEFAULT);
+    return setCard('Appearance', 'Just for you: other users keep their own. Changes show right away and save automatically.', `
+        <div class="fld"><label>Page background</label>
+            <div class="seg wide" id="bg-pattern">${BG_PATTERNS.map(([k, l]) => `<button class="seg-btn ${p.pattern === k ? 'active' : ''}" data-value="${k}" onclick="segPick('bg-pattern','${k}',bgChanged)">${l}</button>`).join('')}</div>
+        </div>
+        <div class="fld" style="margin-top:1rem"><label for="bg-strength">Strength</label>
+            <div class="bg-strength"><input class="range" id="bg-strength" type="range" min="${BG_MIN}" max="${BG_MAX}" step="1" value="${p.strength}"${p.pattern === 'none' ? ' disabled' : ''} oninput="bgChanged()"><output id="bg-strength-val">${p.strength}</output></div>
+        </div>
+        ${swrow('bg-fade', p.fade, 'Fade out toward the bottom', 'The pattern is strongest at the top of the screen and eases away down the page.', 'bgChanged')}`,
+        '<span class="test-line" id="bg-status" role="status"></span><button class="btn" onclick="bgReset()">Reset</button>');
+}
+
+function bgFromControls() {
+    return {pattern: segValue('bg-pattern') || 'none', strength: parseInt(val('bg-strength'), 10), fade: isOn('bg-fade')};
+}
+
+let bgSaveTimer = null;
+function bgChanged() {
+    const pref = bgFromControls();
+    $('bg-strength-val').textContent = pref.strength;
+    $('bg-strength').disabled = pref.pattern === 'none';
+    applyBackground(pref);
+    cacheBackground(pref);
+    $('bg-status').textContent = '';
+    clearTimeout(bgSaveTimer);
+    bgSaveTimer = setTimeout(() => bgSave(pref), 500);
+}
+
+async function bgSave(pref) {
+    try {
+        const resp = await fetch('/api/me/preferences', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({background: pref})});
+        const el = $('bg-status');
+        if (el) el.textContent = resp.ok ? 'Saved ✓' : 'Could not save this choice.';
+    } catch (e) {
+        const el = $('bg-status');
+        if (el) el.textContent = 'Could not save this choice.';
+    }
+}
+
+function bgReset() {
+    segPick('bg-pattern', BG_DEFAULT.pattern);
+    $('bg-strength').value = BG_DEFAULT.strength;
+    const sw = $('bg-fade');
+    sw.classList.toggle('on', BG_DEFAULT.fade);
+    sw.setAttribute('aria-checked', BG_DEFAULT.fade);
+    bgChanged();
+}
+
 async function accountTab() {
     const [users, me] = await Promise.all([getJSON('/api/users'), fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null)]);
     const userRows = (users || []).map(u => `<div class="set-row"><div class="set-row-info"><span class="set-row-name">${esc(u.username)}${me && me.username === u.username ? '<span class="chip">you</span>' : ''}</span></div>
         <div class="set-row-actions"><button class="btn btn-danger" onclick="confirmAction(this, () => deleteUser(${u.id}))">Delete</button></div></div>`).join('');
-    return setCard('Your account', '', `<div class="grid2">
+    return appearanceCard(me && me.preferences && me.preferences.background)
+        + setCard('Your account', '', `<div class="grid2">
             ${fld('Current password', 'a-current', '', {type: 'password'})}
             ${fld('New password', 'a-new', '', {type: 'password'})}
         </div>`, '<button class="btn btn-primary" onclick="changePassword(this)">Change password</button>')

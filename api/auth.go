@@ -344,6 +344,44 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMe tells the page who is signed in, for the header's user menu.
+// Per-user page background. The patterns are drawn by the web UI (web/background.js);
+// the server only stores and validates the choice.
+var backgroundPatterns = map[string]bool{
+	"none": true, "dots": true, "grid": true, "grid2": true, "layers": true,
+	"hatch": true, "hex": true, "tri": true, "plus": true,
+}
+
+const (
+	minBackgroundStrength = 2
+	maxBackgroundStrength = 16
+)
+
+type backgroundPref struct {
+	Pattern  string `json:"pattern"`
+	Strength int    `json:"strength"`
+	Fade     bool   `json:"fade"`
+}
+
+type userPrefs struct {
+	Background *backgroundPref `json:"background,omitempty"`
+}
+
+func (b *backgroundPref) valid() bool {
+	return backgroundPatterns[b.Pattern] && b.Strength >= minBackgroundStrength && b.Strength <= maxBackgroundStrength
+}
+
+// loadPrefs decodes stored preferences; anything unreadable counts as defaults.
+func loadPrefs(raw string) userPrefs {
+	var p userPrefs
+	if raw != "" && json.Unmarshal([]byte(raw), &p) != nil {
+		return userPrefs{}
+	}
+	if p.Background != nil && !p.Background.valid() {
+		p.Background = nil
+	}
+	return p
+}
+
 func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -354,7 +392,48 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not signed in", http.StatusUnauthorized)
 		return
 	}
-	jsonResponse(w, map[string]string{"username": username})
+	raw, err := h.db.GetUserPreferences(username)
+	if err != nil {
+		jsonError(w, "database error", http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]any{"username": username, "preferences": loadPrefs(raw)})
+}
+
+// handleMePreferences replaces the signed-in user's preferences.
+func (h *Handler) handleMePreferences(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, ok := h.currentUser(r)
+	if !ok {
+		jsonError(w, "not signed in", http.StatusUnauthorized)
+		return
+	}
+	var req userPrefs
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Background != nil && !req.Background.valid() {
+		jsonError(w, "invalid background", http.StatusBadRequest)
+		return
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := h.db.SetUserPreferences(username, string(data)); err != nil {
+		if errors.Is(err, db.ErrNotFound) {
+			jsonError(w, "user not found", http.StatusNotFound)
+		} else {
+			jsonError(w, "database error", http.StatusInternalServerError)
+		}
+		return
+	}
+	jsonResponse(w, req)
 }
 
 func (h *Handler) handleUsers(w http.ResponseWriter, r *http.Request) {

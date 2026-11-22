@@ -233,6 +233,10 @@ func (db *DB) migrate() error {
 	// Migration: multi-tool support - a print using 2+ tools (MMU
 	// multi-material, or a real tool changer) previously only recorded the
 	// first tool's data.
+	// Migration: per-user UI preferences (a JSON object, '' = defaults).
+	if err := db.addColumn("users", "preferences", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
 	if err := db.addColumn("print_history", "tool_changes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
@@ -1030,6 +1034,22 @@ func (db *DB) DeleteUser(id int64) error {
 func (db *DB) UpdateUserPassword(username, passwordHash string) error {
 	_, err := db.conn.Exec(`UPDATE users SET password_hash = ? WHERE username = ?`, passwordHash, username)
 	return err
+}
+
+// GetUserPreferences returns the user's stored preferences JSON, or "" for
+// defaults (including when the user does not exist).
+func (db *DB) GetUserPreferences(username string) (string, error) {
+	var prefs string
+	err := db.conn.QueryRow(`SELECT preferences FROM users WHERE username = ?`, username).Scan(&prefs)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return prefs, err
+}
+
+// SetUserPreferences stores the user's preferences JSON. Unknown users are an error.
+func (db *DB) SetUserPreferences(username, prefs string) error {
+	return affected(db.conn.Exec(`UPDATE users SET preferences = ? WHERE username = ?`, prefs, username))
 }
 
 func (db *DB) GetUser(id int64) (*models.User, error) {

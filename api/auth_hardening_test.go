@@ -166,3 +166,108 @@ func TestMeReturnsSignedInUser(t *testing.T) {
 		t.Errorf("POST = %d, want 405", rec.Code)
 	}
 }
+
+// signedIn makes a user row plus a session cookie and returns a request builder.
+func signedIn(t *testing.T, d interface {
+	CreateUser(string, string) (int64, error)
+	CreateSession(string, string, time.Time) error
+}, name string) func(method, path, body string) *http.Request {
+	t.Helper()
+	if _, err := d.CreateUser(name, "hash"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.CreateSession("tok-"+name, name, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	return func(method, path, body string) *http.Request {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tok-" + name})
+		return req
+	}
+}
+
+func TestPreferencesRejectBadInput(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	for name, body := range map[string]string{
+		"unknown pattern":   `{"background":{"pattern":"glow","strength":6,"fade":true}}`,
+		"strength too low":  `{"background":{"pattern":"grid","strength":1,"fade":true}}`,
+		"strength too high": `{"background":{"pattern":"grid","strength":17,"fade":true}}`,
+		"no pattern":        `{"background":{"strength":6}}`,
+		"not json":          `nope`,
+	} {
+		rec := httptest.NewRecorder()
+		h.handleMePreferences(rec, as("PUT", "/api/me/preferences", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, rec.Code)
+		}
+	}
+	// nothing bad was stored
+	rec := httptest.NewRecorder()
+	h.handleMe(rec, as("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "background") {
+		t.Errorf("rejected input was stored: %s", rec.Body.String())
+	}
+	// auth and method
+	if rec := do(h.handleMePreferences, "PUT", "/api/me/preferences", `{}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("no session = %d, want 401", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.handleMePreferences(rec, as("POST", "/api/me/preferences", `{}`))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", rec.Code)
+	}
+}
+
+func TestPreferencesPerUser(t *testing.T) {
+	h, d := newTestHandler(t)
+	alice := signedIn(t, d, "alice")
+	bob := signedIn(t, d, "bob")
+
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, alice("PUT", "/api/me/preferences", `{"background":{"pattern":"hex","strength":9,"fade":false}}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, alice("GET", "/api/me", ""))
+	if !strings.Contains(rec.Body.String(), `"pattern":"hex"`) || !strings.Contains(rec.Body.String(), `"strength":9`) || !strings.Contains(rec.Body.String(), `"fade":false`) {
+		t.Errorf("alice did not get her choice back: %s", rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	h.handleMe(rec, bob("GET", "/api/me", ""))
+	if strings.Contains(rec.Body.String(), "hex") || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+		t.Errorf("bob must keep the defaults: %s", rec.Body.String())
+	}
+}
+
+func TestPreferencesUnreadableStoredValueMeansDefaults(t *testing.T) {
+	h, d := newTestHandler(t)
+	as := signedIn(t, d, "alice")
+	for _, stored := range []string{`{broken`, `{"background":{"pattern":"glow","strength":6,"fade":true}}`} {
+		if err := d.SetUserPreferences("alice", stored); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		h.handleMe(rec, as("GET", "/api/me", ""))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"preferences":{}`) {
+			t.Errorf("stored %q: %d %s", stored, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestPreferencesForMissingUserIs404(t *testing.T) {
+	h, d := newTestHandler(t)
+	// a session for a name that has no users row (deleted account)
+	if err := d.CreateSession("tok", "ghost", time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("PUT", "/api/me/preferences", strings.NewReader(`{"background":{"pattern":"grid","strength":6,"fade":true}}`))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "tok"})
+	rec := httptest.NewRecorder()
+	h.handleMePreferences(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing user = %d, want 404", rec.Code)
+	}
+}
