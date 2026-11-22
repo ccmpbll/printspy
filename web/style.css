@@ -646,6 +646,7 @@ header.topbar h1 {
     font-size: 0.9rem;
 }
 .ingest-banner .msg-error { color: var(--error); font-weight: 600; }
+.ingest-banner.failed { background: var(--error-bg); color: var(--error); }
 .ingest-banner-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
 
 /* ---------- Empty state ---------- */
@@ -662,6 +663,7 @@ header.topbar h1 {
 
 /* Maintenance card has no body controls */
 .printer-card.card-maintenance .printer-body { padding-top: 0; }
+.printer-card.card-maintenance .idle-message { flex: 1; }
 
 .form-group {
     margin-bottom: 1rem;
