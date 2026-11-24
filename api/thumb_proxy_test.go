@@ -40,7 +40,9 @@ func TestThumbProxyRejectsOtherPaths(t *testing.T) {
 // is not escaped twice.
 func TestThumbPathEscapes(t *testing.T) {
 	for ref, want := range map[string]string{
-		"/thumb/s/usb/COREON~1.BGC":                       "/thumb/s/usb/COREON~1.BGC",
+		"/thumb/s/usb/COREON~1.BGC": "/thumb/s/usb/COREON~1.BGC",
+		// Real ref from a Core One (2026-11-24): raw "%" in the 8.3 name.
+		"/thumb/l/usb/APPLE%~7.BGC":                       "/thumb/l/usb/APPLE%25~7.BGC",
 		"plugin/p/thumbnail/PLA 100% infill.png?20261124": "/plugin/p/thumbnail/PLA%20100%25%20infill.png?20261124",
 		"plugin/p/thumbnail/My%20Part.png":                "/plugin/p/thumbnail/My%20Part.png",
 	} {
