@@ -1890,7 +1890,8 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 
 	thumbRef := r.URL.Query().Get("thumb")
-	if thumbRef != "" && !validThumbRef(thumbRef) {
+	thumbRel, ok := thumbPath(thumbRef)
+	if thumbRef != "" && !ok {
 		http.Error(w, "invalid thumb", http.StatusBadRequest)
 		return
 	}
@@ -1912,7 +1913,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	thumbURL := strings.TrimRight(printer.URL, "/") + "/" + strings.TrimLeft(thumbRef, "/")
+	thumbURL := strings.TrimRight(printer.URL, "/") + thumbRel
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
@@ -1943,18 +1944,36 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	w.Write(data)
 }
 
-// validThumbRef accepts only the thumbnail refs the plugins produce -
-// PrusaLink "/thumb/..." and OctoPrint "plugin/<name>/thumbnail/..." - with
-// no "..", also once percent-decoded. It is joined onto the printer's URL and
-// fetched with the printer's credentials, so anything else would let a
-// logged-in user read other paths on the printer.
-func validThumbRef(ref string) bool {
-	dec, err := url.PathUnescape(ref)
-	if err != nil || strings.Contains(dec, "..") {
-		return false
+// thumbPath checks a thumbnail ref and returns it as an escaped path (plus
+// its query) to join onto the printer's URL. Only the routes the plugins
+// produce pass - PrusaLink "/thumb/..." and OctoPrint
+// "plugin/<name>/thumbnail/..." - with no ".." segment, also once
+// percent-decoded: the ref is fetched with the printer's credentials, so
+// anything else would let a logged-in user read other printer paths (an
+// OctoPrint backup download, say). Each segment is decoded when it is a
+// valid escape and kept raw otherwise (OctoPrint puts raw filenames in its
+// refs, "%" included), then re-escaped, so neither form breaks the request.
+func thumbPath(ref string) (string, bool) {
+	pathPart, query, hasQuery := strings.Cut(ref, "?")
+	segs := strings.Split(strings.TrimPrefix(pathPart, "/"), "/")
+	for i, seg := range segs {
+		if dec, err := url.PathUnescape(seg); err == nil {
+			segs[i] = dec
+		}
+		if segs[i] == ".." {
+			return "", false
+		}
 	}
-	p := strings.TrimPrefix(ref, "/")
-	return strings.HasPrefix(p, "thumb/") || strings.HasPrefix(p, "plugin/")
+	thumb := segs[0] == "thumb"
+	plugin := len(segs) > 2 && segs[0] == "plugin" && segs[2] == "thumbnail"
+	if !thumb && !plugin {
+		return "", false
+	}
+	out := (&url.URL{Path: "/" + strings.Join(segs, "/")}).EscapedPath()
+	if hasQuery {
+		out += "?" + query
+	}
+	return out, true
 }
 
 // safeImageType passes through image content types (and the MJPEG multipart
