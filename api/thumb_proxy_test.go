@@ -19,7 +19,7 @@ func TestThumbProxyRejectsOtherPaths(t *testing.T) {
 		"plugin/prusaslicerthumbnails/thumbnail/PLA 100% infill.png": false,
 		"/api/v1/status":                     true,
 		"/thumb/../api/v1/status":            true,
-		"/thumb/%2e%2e/api/v1/status":        true,
+		"/thumb/%2e%2e/api/v1/status":        false, // sent as %252e%252e: a literal name
 		"//evil.example/thumb/x":             true,
 		"plugin/../api/printer":              true,
 		"plugin/backup/download/backup.zip":  true,
@@ -35,16 +35,17 @@ func TestThumbProxyRejectsOtherPaths(t *testing.T) {
 	}
 }
 
-// The ref's path is sent escaped: raw characters from a filename (a space,
-// a "%") must reach the printer as themselves, and an already-escaped ref
-// is not escaped twice.
+// Refs are raw text (PrusaLink sends APPLE%~7.BGC unescaped): every
+// character, "%" included, reaches the printer as itself.
 func TestThumbPathEscapes(t *testing.T) {
 	for ref, want := range map[string]string{
 		"/thumb/s/usb/COREON~1.BGC": "/thumb/s/usb/COREON~1.BGC",
 		// Real ref from a Core One (2026-11-24): raw "%" in the 8.3 name.
 		"/thumb/l/usb/APPLE%~7.BGC":                       "/thumb/l/usb/APPLE%25~7.BGC",
 		"plugin/p/thumbnail/PLA 100% infill.png?20261124": "/plugin/p/thumbnail/PLA%20100%25%20infill.png?20261124",
-		"plugin/p/thumbnail/My%20Part.png":                "/plugin/p/thumbnail/My%20Part.png",
+		"plugin/p/thumbnail/My%20Part.png":                "/plugin/p/thumbnail/My%2520Part.png",
+		"/thumb/l/usb/50%AB~1.BGC":                        "/thumb/l/usb/50%25AB~1.BGC",
+		"/thumb/%2e%2e/api/v1/status":                     "/thumb/%252e%252e/api/v1/status",
 	} {
 		if got, ok := thumbPath(ref); !ok || got != want {
 			t.Errorf("thumbPath(%q) = %q, %v; want %q", ref, got, ok, want)
