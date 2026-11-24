@@ -288,7 +288,16 @@ func TestKeepaliveFollowsIntervalSetting(t *testing.T) {
 		t.Fatalf("only %d pings after the setting was turned on", n)
 	}
 	on.Store(false)
-	time.Sleep(20 * time.Millisecond)
+	// Let the loop see the change: wait until no ping lands for 30 ms
+	// (an iteration that read the old value may still ping once).
+	for deadline, last := time.Now().Add(2*time.Second), int32(-1); time.Now().Before(deadline); {
+		n := pings.Load()
+		if n == last {
+			break
+		}
+		last = n
+		time.Sleep(30 * time.Millisecond)
+	}
 	before := pings.Load()
 	time.Sleep(50 * time.Millisecond)
 	if n := pings.Load() - before; n != 0 {

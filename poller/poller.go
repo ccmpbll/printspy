@@ -394,8 +394,8 @@ func (p *Poller) pingInterval() time.Duration {
 const offlineProbeEvery = time.Minute
 
 // keepaliveRecheck is how often a keepalive loop with the ping setting off
-// looks at the setting again.
-var keepaliveRecheck = time.Minute
+// looks at the setting again, so turning it on applies within seconds.
+var keepaliveRecheck = 10 * time.Second
 
 // keepaliveLoop pings a printer's IP so its wifi does not drop when idle. Not
 // while every assigned plug is off, an offline printer only every
