@@ -73,3 +73,30 @@ func TestBuildHeaderNoQop(t *testing.T) {
 		t.Errorf("header %s\nwant the RFC 2069 response and no nc", got)
 	}
 }
+
+// The nonce count is sent as given, and the response covers it.
+func TestBuildHeaderNC(t *testing.T) {
+	defer fixedCNonce("c")()
+	ch := `Digest realm="r", nonce="n", qop="auth"`
+	one, two := BuildHeaderNC("u", "p", "GET", "/", ch, 1), BuildHeaderNC("u", "p", "GET", "/", ch, 2)
+	if !strings.Contains(two, "nc=00000002") || one == strings.Replace(two, "nc=00000002", "nc=00000001", 1) {
+		t.Errorf("nc 2 not sent or not hashed:\n%s\n%s", one, two)
+	}
+}
+
+// The scheme name is case-insensitive (RFC 7235).
+func TestBuildHeaderLowerCaseScheme(t *testing.T) {
+	got := BuildHeader("Mufasa", "Circle Of Life", "GET", "/dir/index.html",
+		`digest realm="testrealm@host.com", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093"`)
+	if !strings.Contains(got, `response="670fd8c2df070c60b045671b8b24ff02"`) {
+		t.Errorf("lower-case scheme not parsed: %s", got)
+	}
+}
+
+// An algorithm PrintSpy cannot do is not claimed in the answer.
+func TestBuildHeaderUnknownAlgorithm(t *testing.T) {
+	got := BuildHeader("u", "p", "GET", "/", `Digest realm="r", nonce="n", algorithm=MD5-sess`)
+	if strings.Contains(got, "algorithm=") {
+		t.Errorf("claimed an unsupported algorithm: %s", got)
+	}
+}

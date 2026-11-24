@@ -47,6 +47,9 @@ type Plugin struct {
 	// its nonce again (checked on both printers 2026-11-24), so requests
 	// are signed up front and a poll needs one round trip per call.
 	challenge string
+	// nc counts requests signed with challenge (qop=auth needs a new
+	// count for each reuse of a nonce); reset when the challenge changes.
+	nc int
 	// noSnapUntil: cameras/snap answered 404 (no camera), so
 	// GetSnapshotURL offers nothing until then.
 	noSnapUntil time.Time
@@ -84,7 +87,10 @@ func buildURL(base, path string) string {
 	return u.String()
 }
 
-// snapNoCameraFor is how long a cameras/snap 404 is remembered.
+// snapNoCameraFor is how long a cameras/snap 404 is remembered. A camera
+// plugged in meanwhile shows up once it runs out (or when the printer is
+// edited, which makes a new plugin): accepted, against one wasted request
+// per snapshot refresh on the printers without a camera.
 const snapNoCameraFor = 10 * time.Minute
 
 // AuthenticatedDo sends req with the printer's Digest auth (see do), so
@@ -112,32 +118,43 @@ func (p *Plugin) do(client *http.Client, newReq func() (*http.Request, error)) (
 	if err != nil {
 		return nil, err
 	}
-	p.mu.RLock()
-	ch := p.challenge
-	p.mu.RUnlock()
-	if ch != "" {
-		p.sign(req, ch)
+	if ch, nc := p.nextNC(""); ch != "" {
+		p.sign(req, ch, nc)
 	}
 	resp, err := client.Do(req)
 	if err != nil || resp.StatusCode != http.StatusUnauthorized {
 		return resp, err
 	}
-	ch = digestauth.Challenge(resp.Header)
+	fresh := digestauth.Challenge(resp.Header)
 	readBody(resp.Body)
 	resp.Body.Close()
-	p.mu.Lock()
-	p.challenge = ch
-	p.mu.Unlock()
 
 	if req, err = newReq(); err != nil {
 		return nil, err
 	}
-	p.sign(req, ch)
+	ch, nc := p.nextNC(fresh)
+	p.sign(req, ch, nc)
 	return client.Do(req)
 }
 
-func (p *Plugin) sign(req *http.Request, challenge string) {
-	req.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.RequestURI(), challenge))
+// nextNC returns the saved challenge and the next nonce count for it. A
+// non-empty fresh challenge (from a 401) replaces the saved one first, and
+// its count starts again at 1; an empty one leaves the saved one in use.
+func (p *Plugin) nextNC(fresh string) (string, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if fresh != "" || p.challenge == "" {
+		if fresh != p.challenge {
+			p.nc = 0
+		}
+		p.challenge = fresh
+	}
+	p.nc++
+	return p.challenge, p.nc
+}
+
+func (p *Plugin) sign(req *http.Request, challenge string, nc int) {
+	req.Header.Set("Authorization", digestauth.BuildHeaderNC(p.config.Username, p.config.APIKey, req.Method, req.URL.RequestURI(), challenge, nc))
 }
 
 // KeepaliveHost implements plugin.Keepalive - some PrusaLink printers' wifi

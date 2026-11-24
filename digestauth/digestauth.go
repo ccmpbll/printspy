@@ -27,27 +27,38 @@ func Challenge(h http.Header) string {
 	return ""
 }
 
-// BuildHeader answers a Digest challenge (RFC 7616: MD5 or SHA-256, not
-// the -sess variants, which PrusaLink does not use; qop=auth, or the RFC 2069 form when the server offers
+// BuildHeader answers a Digest challenge with nonce count 1 (RFC 7616: MD5
+// or SHA-256, not the -sess variants, which PrusaLink does not use; qop=auth, or the RFC 2069 form when the server offers
 // no qop PrintSpy can do - auth-int needs the body, which callers do not
 // pass).
 func BuildHeader(username, password, method, uri, wwwAuth string) string {
+	return BuildHeaderNC(username, password, method, uri, wwwAuth, 1)
+}
+
+// BuildHeaderNC is BuildHeader with the nonce count to send under
+// qop=auth: a client reusing one nonce counts up from 1 (RFC 7616 3.4).
+func BuildHeaderNC(username, password, method, uri, wwwAuth string, ncount int) string {
 	params := parseChallenge(wwwAuth)
 	realm := params["realm"]
 	nonce := params["nonce"]
-	alg, hasAlg := params["algorithm"]
+	alg := params["algorithm"]
 	qopAuth := slices.ContainsFunc(strings.Split(params["qop"], ","), func(q string) bool {
 		return strings.TrimSpace(q) == "auth"
 	})
 
-	newHash := md5.New
-	if strings.HasPrefix(strings.ToUpper(alg), "SHA-256") {
-		newHash = sha256.New
+	// Unsupported algorithms (the -sess variants, SHA-512-256) fall back
+	// to MD5 and are not claimed in the answer.
+	newHash, algEcho := md5.New, ""
+	switch strings.ToUpper(alg) {
+	case "MD5":
+		algEcho = "MD5"
+	case "SHA-256":
+		newHash, algEcho = sha256.New, "SHA-256"
 	}
 	h := func(s string) string { return hashHex(newHash, s) }
 
 	cnonce := newCNonce()
-	nc := "00000001"
+	nc := fmt.Sprintf("%08x", ncount)
 	ha1 := h(username + ":" + realm + ":" + password)
 	ha2 := h(method + ":" + uri)
 
@@ -60,8 +71,8 @@ func BuildHeader(username, password, method, uri, wwwAuth string) string {
 
 	auth := fmt.Sprintf(`Digest username="%s", realm="%s", nonce="%s", uri="%s", response="%s"`,
 		username, realm, nonce, uri, response)
-	if hasAlg {
-		auth += ", algorithm=" + alg
+	if algEcho != "" {
+		auth += ", algorithm=" + algEcho
 	}
 	if qopAuth {
 		auth += fmt.Sprintf(`, qop=auth, nc=%s, cnonce="%s"`, nc, cnonce)
@@ -74,7 +85,9 @@ func BuildHeader(username, password, method, uri, wwwAuth string) string {
 
 func parseChallenge(header string) map[string]string {
 	params := make(map[string]string)
-	header = strings.TrimPrefix(header, "Digest ")
+	if len(header) >= 7 && strings.EqualFold(header[:7], "Digest ") { // scheme is case-insensitive
+		header = header[7:]
+	}
 
 	inQuote := false
 	start := 0

@@ -21,6 +21,8 @@ type fakePrinter struct {
 	puts     int
 	basic    bool
 	snap404  bool
+	qop      bool // offer qop=auth and record each nc sent
+	ncs      []string
 }
 
 func (f *fakePrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -31,9 +33,16 @@ func (f *fakePrinter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(auth, "Basic") {
 		f.basic = true
 	}
+	if i := strings.Index(auth, "nc="); i >= 0 {
+		f.ncs = append(f.ncs, auth[i+3:i+11])
+	}
 	if !strings.Contains(auth, `nonce="`+f.nonce+`"`) {
 		io.Copy(io.Discard, r.Body)
-		w.Header().Set("WWW-Authenticate", `Digest realm="Printer API", nonce="`+f.nonce+`"`)
+		qop := ""
+		if f.qop {
+			qop = `, qop="auth"`
+		}
+		w.Header().Set("WWW-Authenticate", `Digest realm="Printer API", nonce="`+f.nonce+`"`+qop)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -133,5 +142,23 @@ func TestAuthenticatedDoAndSnapshot404(t *testing.T) {
 	}
 	if u := p.GetSnapshotURL(); u != "" {
 		t.Errorf("GetSnapshotURL after a 404 = %q, want empty", u)
+	}
+}
+
+// With qop=auth, each reuse of a nonce counts up (a repeated nc is a
+// replay to a strict server), and a new nonce starts again at 1.
+func TestDigestNonceCount(t *testing.T) {
+	p, f := newFake(t)
+	f.qop = true
+	for i := 0; i < 3; i++ {
+		p.doGetRaw(context.Background(), "/api/v1/status")
+	}
+	f.mu.Lock()
+	f.nonce = "n2"
+	f.mu.Unlock()
+	p.doGetRaw(context.Background(), "/api/v1/status")
+	want := "00000001 00000002 00000003 00000004 00000001"
+	if got := strings.Join(f.ncs, " "); got != want {
+		t.Errorf("nc sent: %s, want %s", got, want)
 	}
 }
