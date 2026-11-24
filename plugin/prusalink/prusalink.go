@@ -126,6 +126,11 @@ func (p *Plugin) do(client *http.Client, newReq func() (*http.Request, error)) (
 		return resp, err
 	}
 	fresh := digestauth.Challenge(resp.Header)
+	if fresh == "" {
+		// No Digest challenge to answer: a retry would be signed with an
+		// empty or stale one and fail the same way.
+		return resp, nil
+	}
 	readBody(resp.Body)
 	resp.Body.Close()
 

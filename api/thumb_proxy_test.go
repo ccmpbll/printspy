@@ -46,6 +46,9 @@ func TestThumbPathEscapes(t *testing.T) {
 		"plugin/p/thumbnail/My%20Part.png":                "/plugin/p/thumbnail/My%2520Part.png",
 		"/thumb/l/usb/50%AB~1.BGC":                        "/thumb/l/usb/50%25AB~1.BGC",
 		"/thumb/%2e%2e/api/v1/status":                     "/thumb/%252e%252e/api/v1/status",
+		// '?' in a PrusaLink name is the name; '#' in an OctoPrint query is escaped.
+		"/thumb/l/usb/WHAT?~1.BGC":       "/thumb/l/usb/WHAT%3F~1.BGC",
+		"plugin/p/thumbnail/a.png?1#2 3": "/plugin/p/thumbnail/a.png?1%232%203",
 	} {
 		if got, ok := thumbPath(ref); !ok || got != want {
 			t.Errorf("thumbPath(%q) = %q, %v; want %q", ref, got, ok, want)

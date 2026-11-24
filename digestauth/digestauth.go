@@ -7,10 +7,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 )
+
+// warnedAlg holds the unsupported algorithms already logged, so each is
+// logged once, not on every request.
+var warnedAlg sync.Map
 
 // newCNonce makes the client nonce; swappable in tests.
 var newCNonce = rand.Text
@@ -54,6 +60,11 @@ func BuildHeaderNC(username, password, method, uri, wwwAuth string, ncount int) 
 		algEcho = "MD5"
 	case "SHA-256":
 		newHash, algEcho = sha256.New, "SHA-256"
+	case "":
+	default:
+		if _, seen := warnedAlg.LoadOrStore(alg, true); !seen {
+			log.Printf("digestauth: server asked for unsupported algorithm %q, answering with MD5 (expect 401s)", alg)
+		}
 	}
 	h := func(s string) string { return hashHex(newHash, s) }
 

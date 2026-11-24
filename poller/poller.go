@@ -73,6 +73,13 @@ type polledPrinter struct {
 // known progress is too stale to say how the print ended.
 const maxOfflineGap = 10 * time.Minute
 
+// interruptedAfter is how long a printer must have been unreachable right
+// before a print's ending tick for a PRINTING/PAUSED job to count as cut
+// off (power loss, plug cut-off) rather than finished during a WiFi blip.
+// A power cycle and PrusaLink boot take longer than this; a missed poll or
+// two does not.
+const interruptedAfter = 2 * time.Minute
+
 // advance folds a new poll result into the online latch and returns the
 // last-answering state from before this poll, plus how long the printer had
 // been unreachable. Caller holds Poller.mu.
@@ -121,12 +128,24 @@ func (pp *polledPrinter) trackPrint(status *models.PrinterStatus, resuming bool)
 	case was != nil:
 		// Same print, under a dialog or not: keep its latest numbers.
 		pp.printStatus = keepElapsed(status, was)
-	case printing || (resuming && status.State != models.StateBusy):
+	case printing || (resuming && resumable(status)):
 		// Busy with a job is not a print yet (preheat before the start),
 		// but a dialog found at startup is the print PrintSpy missed.
 		pp.printStatus = status
 	}
 	return was, nil
+}
+
+// resumable reports whether a non-printing tick found at startup is a print
+// PrintSpy missed: not busy (preheat before a start), and a job state, when
+// the plugin has one, that is still running - a dialog left over after a
+// finished print is not one.
+func resumable(status *models.PrinterStatus) bool {
+	if status.State == models.StateBusy || status.Job == nil {
+		return false
+	}
+	js := status.Job.JobState
+	return js == "" || js == "PRINTING" || js == "PAUSED"
 }
 
 // newPrint reports whether cur is a different print from old: another job
@@ -1199,7 +1218,7 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	wasPrint, replaced := pp.trackPrint(status, resuming)
 	// seed: a print found under way when PrintSpy started watching (busy
 	// with a job is a print about to start, which should still announce).
-	seed := resuming && status.Job != nil && !printDone(status.State) && status.State != models.StateBusy
+	seed := resuming && !printDone(status.State) && (status.State == models.StatePrinting || resumable(status)) && status.Job != nil
 	announced := pp.announced
 	if seed || (status.State == models.StatePrinting && status.Job != nil) {
 		pp.announced = true
@@ -1891,6 +1910,9 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 		return
 	}
 
+	if prev.Job.FileName == "" {
+		return // job data without a file: nothing to name the row by
+	}
 	fileName := prev.Job.FileName
 	filePath := prev.Job.FilePath
 	elapsed := prev.Job.ElapsedSecs
@@ -1911,7 +1933,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 	if status.Job != nil {
 		jobState = status.Job.JobState
 	}
-	result := printResult(jobState, status.State == models.StateError, offlineFor > 0, prev.Job.Progress)
+	result := printResult(jobState, status.State == models.StateError, offlineFor >= interruptedAfter, prev.Job.Progress)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	h := &models.PrintHistory{

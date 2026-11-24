@@ -162,3 +162,20 @@ func TestDigestNonceCount(t *testing.T) {
 		t.Errorf("nc sent: %s, want %s", got, want)
 	}
 }
+
+// A 401 with no Digest challenge is returned as-is, not retried with an
+// empty signature.
+func TestNoDigestChallengeNoRetry(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("WWW-Authenticate", `Basic realm="x"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+	p := New(models.PrinterConfig{URL: srv.URL, APIKey: "pw"})
+	p.client = srv.Client()
+	if _, code, _ := p.doGetRaw(context.Background(), "/api/v1/status"); code != http.StatusUnauthorized || n != 1 {
+		t.Errorf("code=%d requests=%d; want 401 after 1 request", code, n)
+	}
+}
