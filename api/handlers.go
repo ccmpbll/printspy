@@ -1223,7 +1223,8 @@ func (h *Handler) startPrint(w http.ResponseWriter, r *http.Request, id int64) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, currentState(status))})
+	st, changed := h.waitForStateChange(r.Context(), id, currentState(status))
+	jsonResponse(w, map[string]any{"success": true, "changed": changed, "status": st})
 }
 
 // currentState returns status.State, or StateIdle if status is nil (printer
@@ -1259,17 +1260,23 @@ func (h *Handler) printControlTimeout() time.Duration {
 // before the card had anything new to show. This gives the real printer a
 // bounded window to settle before the response (and so the button/card
 // update) goes out, without risking hanging the request indefinitely.
-func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState models.PrinterState) *models.PrinterStatus {
+func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState models.PrinterState) (status *models.PrinterStatus, changed bool) {
 	deadline := time.Now().Add(h.printControlTimeout())
 	for {
-		h.poller.Repoll(ctx, id)
-		status := h.poller.GetStatus(id)
-		if status == nil || status.State != prevState || time.Now().After(deadline) {
-			return status
+		// The app's context, not the request's: this poll can record a
+		// finished print and start its metadata download in the
+		// background, which must outlive the request.
+		h.poller.Repoll(h.ctx, id)
+		status = h.poller.GetStatus(id)
+		if status == nil || status.State != prevState {
+			return status, true
+		}
+		if time.Now().After(deadline) {
+			return status, false
 		}
 		select {
 		case <-ctx.Done(): // client gone: nobody is waiting for the answer
-			return status
+			return status, false
 		case <-time.After(time.Second):
 		}
 	}
@@ -1329,7 +1336,8 @@ func (h *Handler) controlPrint(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 	// See waitForStateChange for why this waits rather than repolling once.
-	jsonResponse(w, map[string]any{"success": true, "status": h.waitForStateChange(r.Context(), id, prevState)})
+	st, changed := h.waitForStateChange(r.Context(), id, prevState)
+	jsonResponse(w, map[string]any{"success": true, "changed": changed, "status": st})
 }
 
 // Config export/import
