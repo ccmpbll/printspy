@@ -547,7 +547,7 @@ async function integrationsTab() {
             ${fld('Username', 'm-user', s.mqtt_username || '', {ph: 'optional'})}
             ${fld('Password', 'm-pass', s.mqtt_password || '', {type: 'password', ph: 'optional'})}
         </div>
-        ${swrow('m-publish', s.mqtt_publish_enabled === '1', 'Publish printer status', 'Publishes each printer\'s full status (state, progress, temps, job) as a retained MQTT message on every poll tick.')}
+        ${swrow('m-publish', s.mqtt_publish_enabled === '1', 'Publish printer status', 'Publishes each printer\'s full status (state, progress, temps, job) as a retained MQTT message whenever its state changes, and on every poll while it prints.')}
         <div class="grid2">${fld('Publish topic', 'm-topic', s.mqtt_publish_topic || '', {ph: 'printspy/printer/{id}/state', wide: true, hint: 'Use <code>{id}</code> and <code>{name}</code> as placeholders.'})}</div>`,
         '<button class="btn btn-primary" onclick="saveMQTTSettings(this)">Save</button><button class="btn" onclick="sendMQTTTest()">Test connection</button><button class="btn" onclick="saveAndTestMQTT()">Save and test</button>')
         + resultLine('mqtt-test-result')
