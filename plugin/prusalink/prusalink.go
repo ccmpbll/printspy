@@ -762,6 +762,10 @@ func parseUploadResponse(body []byte) (string, int64) {
 
 // State mapping
 
+// unknownStates holds the unmapped states already logged, so each is
+// logged once, not every poll.
+var unknownStates sync.Map
+
 func mapState(state string) models.PrinterState {
 	s := strings.ToUpper(state)
 	switch {
@@ -782,7 +786,12 @@ func mapState(state string) models.PrinterState {
 		// job, must stay distinct from StatePrinting (see models.StateBusy).
 		return models.StateBusy
 	default:
-		return models.StateIdle
+		// A state newer than this mapping: busy, not idle, so it neither
+		// starts the auto-off clock nor ends a print in progress.
+		if _, seen := unknownStates.LoadOrStore(s, true); !seen {
+			log.Printf("prusalink: unknown printer state %q, treating as busy", state)
+		}
+		return models.StateBusy
 	}
 }
 
