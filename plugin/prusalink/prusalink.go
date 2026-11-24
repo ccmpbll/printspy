@@ -43,6 +43,13 @@ type Plugin struct {
 	// lastUnknownState is the last unmapped printer.state logged, so a
 	// new one is logged once per change, not every poll.
 	lastUnknownState string
+	// challenge is the printer's last Digest challenge. PrusaLink accepts
+	// its nonce again (checked on both printers 2026-11-24), so requests
+	// are signed up front and a poll needs one round trip per call.
+	challenge string
+	// noSnapUntil: cameras/snap answered 404 (no camera), so
+	// GetSnapshotURL offers nothing until then.
+	noSnapUntil time.Time
 }
 
 func New(config models.PrinterConfig) *Plugin {
@@ -77,29 +84,60 @@ func buildURL(base, path string) string {
 	return u.String()
 }
 
-// AuthenticatedDo tries HTTP Basic first (fast path for callers that don't
-// care which scheme wins) and falls back to Digest if the printer demands
-// it via a 401 challenge - the same dance doGetRaw/doMutate do internally,
-// exposed generically so callers outside this package (proxy handlers) can
-// fetch arbitrary printer resources without knowing PrusaLink's auth
-// scheme at all.
+// snapNoCameraFor is how long a cameras/snap 404 is remembered.
+const snapNoCameraFor = 10 * time.Minute
+
+// AuthenticatedDo sends req with the printer's Digest auth (see do), so
+// callers outside this package (proxy handlers) can fetch printer resources
+// without knowing PrusaLink's auth scheme. req must have no body: a retry
+// after a 401 re-sends a clone. A 404 from cameras/snap is remembered (see
+// GetSnapshotURL).
 func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.Response, error) {
-	req.SetBasicAuth(p.config.Username, p.config.APIKey)
-	resp, err := client.Do(req)
+	resp, err := p.do(client, func() (*http.Request, error) { return req.Clone(req.Context()), nil })
+	if err == nil && resp.StatusCode == http.StatusNotFound && strings.HasSuffix(req.URL.Path, "/api/v1/cameras/snap") {
+		p.mu.Lock()
+		p.noSnapUntil = time.Now().Add(snapNoCameraFor)
+		p.mu.Unlock()
+	}
+	return resp, err
+}
+
+// do sends the request newReq builds, signed with the saved Digest
+// challenge when there is one. A 401 saves the new challenge and retries
+// once with a fresh request (newReq is called again, so a body is re-sent
+// only then). Without a saved challenge the first request goes unsigned,
+// which is also how a printer without auth works.
+func (p *Plugin) do(client *http.Client, newReq func() (*http.Request, error)) (*http.Response, error) {
+	req, err := newReq()
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusUnauthorized {
-		return resp, nil
+	p.mu.RLock()
+	ch := p.challenge
+	p.mu.RUnlock()
+	if ch != "" {
+		p.sign(req, ch)
 	}
-
-	authHeader := digestauth.Challenge(resp.Header)
-	io.Copy(io.Discard, resp.Body)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized {
+		return resp, err
+	}
+	ch = digestauth.Challenge(resp.Header)
+	readBody(resp.Body)
 	resp.Body.Close()
+	p.mu.Lock()
+	p.challenge = ch
+	p.mu.Unlock()
 
-	req2 := req.Clone(req.Context())
-	req2.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.RequestURI(), authHeader))
-	return client.Do(req2)
+	if req, err = newReq(); err != nil {
+		return nil, err
+	}
+	p.sign(req, ch)
+	return client.Do(req)
+}
+
+func (p *Plugin) sign(req *http.Request, challenge string) {
+	req.Header.Set("Authorization", digestauth.BuildHeader(p.config.Username, p.config.APIKey, req.Method, req.URL.RequestURI(), challenge))
 }
 
 // KeepaliveHost implements plugin.Keepalive - some PrusaLink printers' wifi
@@ -281,6 +319,12 @@ func (p *Plugin) GetWebcamURL() string {
 }
 
 func (p *Plugin) GetSnapshotURL() string {
+	p.mu.RLock()
+	noSnap := time.Now().Before(p.noSnapUntil)
+	p.mu.RUnlock()
+	if noSnap {
+		return "" // cameras/snap said 404 recently: no camera (see AuthenticatedDo)
+	}
 	base := strings.TrimRight(p.config.URL, "/")
 	return base + "/api/v1/cameras/snap"
 }
@@ -553,42 +597,13 @@ func (p *Plugin) doGet(ctx context.Context, path string) ([]byte, error) {
 
 func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error) {
 	url := buildURL(strings.TrimRight(p.config.URL, "/"), path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	resp, err := p.client.Do(req)
+	resp, err := p.do(p.client, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	})
 	if err != nil {
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := digestauth.Challenge(resp.Header)
-		readBody(resp.Body)
-		resp.Body.Close()
-
-		req2, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, 0, err
-		}
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodGet, req2.URL.RequestURI(), authHeader)
-		req2.Header.Set("Authorization", digestAuth)
-
-		resp2, err := p.client.Do(req2)
-		if err != nil {
-			return nil, 0, err
-		}
-		defer resp2.Body.Close()
-
-		data, err := readBody(resp2.Body)
-		if err != nil {
-			return nil, resp2.StatusCode, err
-		}
-		return data, resp2.StatusCode, nil
-	}
-
 	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, err
@@ -612,67 +627,28 @@ func (p *Plugin) doDelete(ctx context.Context, path string) error {
 
 func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([]byte, error) {
 	url := buildURL(strings.TrimRight(p.config.URL, "/"), path)
-
-	var bodyReader io.Reader
+	var jsonBody []byte
 	if body != nil {
-		jsonBody, err := json.Marshal(body)
-		if err != nil {
+		var err error
+		if jsonBody, err = json.Marshal(body); err != nil {
 			return nil, err
 		}
-		bodyReader = strings.NewReader(string(jsonBody))
 	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return nil, err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := p.client.Do(req)
+	resp, err := p.do(p.client, func() (*http.Request, error) {
+		var bodyReader io.Reader
+		if body != nil {
+			bodyReader = bytes.NewReader(jsonBody)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
+		if err == nil && body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		return req, err
+	})
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := digestauth.Challenge(resp.Header)
-		readBody(resp.Body)
-		resp.Body.Close()
-
-		var bodyReader2 io.Reader
-		if body != nil {
-			jsonBody, _ := json.Marshal(body)
-			bodyReader2 = strings.NewReader(string(jsonBody))
-		}
-
-		req2, err := http.NewRequestWithContext(ctx, method, url, bodyReader2)
-		if err != nil {
-			return nil, err
-		}
-		if body != nil {
-			req2.Header.Set("Content-Type", "application/json")
-		}
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, method, req2.URL.RequestURI(), authHeader)
-		req2.Header.Set("Authorization", digestAuth)
-
-		resp2, err := p.client.Do(req2)
-		if err != nil {
-			return nil, err
-		}
-		defer resp2.Body.Close()
-
-		data, err := readBody(resp2.Body)
-		if err != nil {
-			return nil, err
-		}
-		if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
-			return nil, fmt.Errorf("prusalink API returned %d: %s", resp2.StatusCode, string(data))
-		}
-		return data, nil
-	}
-
 	data, err := readBody(resp.Body)
 	if err != nil {
 		return nil, err
@@ -717,49 +693,21 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 		req.Header.Set("Referer", base+"/")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
-	if err != nil {
-		return "", 0, err
-	}
-	setHeaders(req)
-
-	resp, err := p.uploadClient.Do(req)
+	resp, err := p.do(p.uploadClient, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
+		if err == nil {
+			setHeaders(req)
+		}
+		return req, err
+	})
 	if err != nil {
 		return "", 0, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := digestauth.Challenge(resp.Header)
-		readBody(resp.Body)
-		resp.Body.Close()
-
-		req2, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(data))
-		if err != nil {
-			return "", 0, err
-		}
-		setHeaders(req2)
-		digestAuth := digestauth.BuildHeader(p.config.Username, p.config.APIKey, http.MethodPut, req2.URL.RequestURI(), authHeader)
-		req2.Header.Set("Authorization", digestAuth)
-
-		resp2, err := p.uploadClient.Do(req2)
-		if err != nil {
-			return "", 0, err
-		}
-		defer resp2.Body.Close()
-
-		body, err := readBody(resp2.Body)
-		if err != nil {
-			return "", 0, err
-		}
-		if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
-			return "", 0, fmt.Errorf("prusalink API returned %d: %s", resp2.StatusCode, string(body))
-		}
-		name, mtime := parseUploadResponse(body)
-		return name, mtime, nil
+	body, err := readBody(resp.Body)
+	if err != nil {
+		return "", 0, err
 	}
-
-	body, _ := readBody(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", 0, fmt.Errorf("prusalink API returned %d: %s", resp.StatusCode, string(body))
 	}
