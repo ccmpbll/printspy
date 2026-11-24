@@ -12,6 +12,10 @@ const STATE_META = {
     offline:      {cardClass: 'card-offline', msgClass: 'msg-offline', defaultMsg: 'Unable to reach printer'},
     disconnected: {cardClass: 'card-disconnected', msgClass: 'msg-disconnected', defaultMsg: 'Printer disconnected', ignoreDetail: true},
     busy:         {cardClass: 'card-busy', msgClass: 'msg-busy', defaultMsg: 'Printer busy', ignoreDetail: true},
+    // Printing/paused with no job data yet (PrusaLink's job endpoint can
+    // lag the state at print start): not "Ready for next job".
+    printing:     {cardClass: '', msgClass: '', defaultMsg: 'Waiting for job details…', ignoreDetail: true},
+    paused:       {cardClass: '', msgClass: '', defaultMsg: 'Print paused', ignoreDetail: true},
 };
 
 function stateCardClass(state) {

@@ -1267,7 +1267,11 @@ func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState mo
 		if status == nil || status.State != prevState || time.Now().After(deadline) {
 			return status
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done(): // client gone: nobody is waiting for the answer
+			return status
+		case <-time.After(time.Second):
+		}
 	}
 }
 
