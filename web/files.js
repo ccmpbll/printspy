@@ -169,6 +169,7 @@ async function startReprint(btn) {
         const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
             if (data.status) applyStatusUpdate(parseInt(printerId), data.status);
+            if (data.changed === false) alert('Print sent, but the printer has not started yet. The card will update when it does.');
             if (filesState.printerId === parseInt(printerId) && location.hash.startsWith('#/files/')) renderFilesBody();
         } else {
             alert(data.error || 'Failed to start print.');

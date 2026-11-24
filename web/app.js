@@ -12,6 +12,10 @@ const STATE_META = {
     offline:      {cardClass: 'card-offline', msgClass: 'msg-offline', defaultMsg: 'Unable to reach printer'},
     disconnected: {cardClass: 'card-disconnected', msgClass: 'msg-disconnected', defaultMsg: 'Printer disconnected', ignoreDetail: true},
     busy:         {cardClass: 'card-busy', msgClass: 'msg-busy', defaultMsg: 'Printer busy', ignoreDetail: true},
+    // Printing/paused with no job data yet (PrusaLink's job endpoint can
+    // lag the state at print start): not "Ready for next job".
+    printing:     {cardClass: '', msgClass: '', defaultMsg: 'Waiting for job details…', ignoreDetail: true},
+    paused:       {cardClass: '', msgClass: '', defaultMsg: 'Print paused', ignoreDetail: true},
 };
 
 function stateCardClass(state) {
@@ -202,6 +206,8 @@ async function controlPrint(printerId, action) {
         const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
             if (data.status) applyStatusUpdate(printerId, data.status);
+            // A resume often reheats past the timeout: no alert for that.
+            if (data.changed === false && action !== 'resume') alert('Command sent, but the printer has not changed state yet. The card will update when it does.');
         } else {
             alert(data.error || 'Print command failed.');
         }
@@ -659,7 +665,10 @@ function updateCard(card, printer) {
     // attribute string built below (${isPrinting} interpolated an object as
     // literal "[object Object]", invalid JS, silently killing the handler).
     const isPrinting = !!((state === 'printing' || state === 'paused') && status && status.job);
-    const wasPrinting = (prevState === 'printing' || prevState === 'paused');
+    // What the card shows, not just its last state: printing without job
+    // data renders the idle stats, and comparing states alone would rebuild
+    // the card (and reload its camera) on every update until a job appears.
+    const wasPrinting = !!card.querySelector('[data-field="progress-bar"]');
 
     const wasDown = prevState === 'offline' || prevState === 'disconnected';
     const isDown = state === 'offline' || state === 'disconnected';
