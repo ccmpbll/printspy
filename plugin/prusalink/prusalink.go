@@ -93,7 +93,7 @@ func (p *Plugin) AuthenticatedDo(client *http.Client, req *http.Request) (*http.
 		return resp, nil
 	}
 
-	authHeader := resp.Header.Get("WWW-Authenticate")
+	authHeader := digestauth.Challenge(resp.Header)
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
@@ -565,7 +565,7 @@ func (p *Plugin) doGetRaw(ctx context.Context, path string) ([]byte, int, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := resp.Header.Get("WWW-Authenticate")
+		authHeader := digestauth.Challenge(resp.Header)
 		readBody(resp.Body)
 		resp.Body.Close()
 
@@ -637,7 +637,7 @@ func (p *Plugin) doMutate(ctx context.Context, method, path string, body any) ([
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := resp.Header.Get("WWW-Authenticate")
+		authHeader := digestauth.Challenge(resp.Header)
 		readBody(resp.Body)
 		resp.Body.Close()
 
@@ -730,7 +730,7 @@ func (p *Plugin) doUpload(ctx context.Context, path string, data []byte, printAf
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := resp.Header.Get("WWW-Authenticate")
+		authHeader := digestauth.Challenge(resp.Header)
 		readBody(resp.Body)
 		resp.Body.Close()
 

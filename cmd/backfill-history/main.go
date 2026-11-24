@@ -283,7 +283,7 @@ func digestGet(pr printerRow, path string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		authHeader := resp.Header.Get("WWW-Authenticate")
+		authHeader := digestauth.Challenge(resp.Header)
 		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
