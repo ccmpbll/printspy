@@ -96,10 +96,23 @@ func (pp *polledPrinter) trackPrint(status *models.PrinterStatus) (was *models.P
 		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
 	case status.Job == nil:
 		// Offline, or a tick without job data: keep the last known print.
+	case was != nil && newPrint(was.Job, status.Job):
+		// A different print started before an ending tick was seen (e.g.
+		// power loss, then a new print within one offline probe). The old
+		// print's outcome is unknown, so treat this as a fresh start.
+		pp.printStatus = status
+		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
+		return nil
 	case status.State == models.StatePrinting || was != nil:
 		pp.printStatus = status
 	}
 	return was
+}
+
+// newPrint reports whether cur is a different print from old: another
+// file, or the same file with less elapsed time (restarted).
+func newPrint(old, cur *models.JobInfo) bool {
+	return cur.FileName != old.FileName || cur.ElapsedSecs < old.ElapsedSecs
 }
 
 type SSEMessage struct {
