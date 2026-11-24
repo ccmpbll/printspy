@@ -63,3 +63,13 @@ func TestChallengePicksDigest(t *testing.T) {
 		t.Errorf("Challenge without Digest = %q, want empty", got)
 	}
 }
+
+// No qop offered (what PrusaLink sends, checked 2026-11-24): the RFC 2069
+// form, response = H(HA1:nonce:HA2), no qop/nc/cnonce.
+func TestBuildHeaderNoQop(t *testing.T) {
+	got := BuildHeader("Mufasa", "Circle Of Life", "GET", "/dir/index.html",
+		`Digest realm="testrealm@host.com", nonce="dcd98b7102dd2f0e8b11d0f600bfb0c093"`)
+	if !strings.Contains(got, `response="670fd8c2df070c60b045671b8b24ff02"`) || strings.Contains(got, "nc=") {
+		t.Errorf("header %s\nwant the RFC 2069 response and no nc", got)
+	}
+}
