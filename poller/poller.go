@@ -364,13 +364,13 @@ func (p *Poller) AddPrinter(parentCtx context.Context, config models.PrinterConf
 
 	if kp, ok := pl.(plugin.Keepalive); ok {
 		if host, enabled := kp.KeepaliveHost(); enabled {
-			if pingInterval := p.pingInterval(); pingInterval > 0 {
-				p.wg.Add(1)
-				go func() {
-					defer p.wg.Done()
-					p.keepaliveLoop(ctx, config.ID, config.Name, host, pingInterval)
-				}()
-			}
+			// Runs even with the ping setting off: the loop re-reads it,
+			// so changing it in Settings needs no restart.
+			p.wg.Add(1)
+			go func() {
+				defer p.wg.Done()
+				p.keepaliveLoop(ctx, config.ID, config.Name, host, p.pingInterval)
+			}()
 		}
 	}
 }
@@ -393,22 +393,40 @@ func (p *Poller) pingInterval() time.Duration {
 // (not never, in case its wifi sleeps and needs the traffic to wake).
 const offlineProbeEvery = time.Minute
 
+// keepaliveRecheck is how often a keepalive loop with the ping setting off
+// looks at the setting again, so turning it on applies within seconds.
+var keepaliveRecheck = 10 * time.Second
+
 // keepaliveLoop pings a printer's IP so its wifi does not drop when idle. Not
 // while every assigned plug is off, an offline printer only every
 // offlineProbeEvery, and a failing ping is logged once until it answers.
-func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string, interval time.Duration) {
-	log.Printf("starting keepalive ping for printer %d (%s) -> %s every %s", id, name, host, interval)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
+// interval is read before every wait, like poll_interval, so the setting
+// applies at runtime (0 = off, looked at again after keepaliveRecheck).
+func (p *Poller) keepaliveLoop(ctx context.Context, id int64, name, host string, interval func() time.Duration) {
 	var lastPing time.Time
 	failing := false
+	current := time.Duration(-1)
 	for {
+		iv := interval()
+		if iv != current {
+			if iv > 0 {
+				log.Printf("keepalive ping for printer %d (%s) -> %s every %s", id, name, host, iv)
+			} else if current > 0 {
+				log.Printf("keepalive ping for printer %d (%s) turned off", id, name)
+			}
+			current = iv
+		}
+		wait := iv
+		if iv <= 0 {
+			wait = keepaliveRecheck
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(wait):
+			if iv <= 0 {
+				continue
+			}
 			st := p.GetStatus(id)
 			if plugs, err := p.db.ListSmartPlugs(id); err == nil && plugsAllOff(plugs, st) {
 				slog.Debug("keepalive: skipping ping, all assigned plugs off", "printer", id, "host", host)

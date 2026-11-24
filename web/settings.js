@@ -316,7 +316,7 @@ async function generalTab() {
         + setCard('Polling & control', '', `<div class="grid2">
             ${fld('Poll interval (seconds)', 's-poll-interval', s.poll_interval || '', {type: 'number', min: 3, max: 60, ph: 'Per-printer default', unit: 'seconds', hint: 'Global override for how often printers are polled. Leave empty to use per-printer settings.'})}
             ${fld('Print control timeout (seconds)', 's-print-control-timeout', s.print_control_timeout_secs || '15', {type: 'number', min: 5, max: 60, unit: 'seconds', hint: 'After clicking Print/Pause/Resume/Cancel, how long to wait for the printer to actually confirm the new state before giving up and falling back to the next regular poll. Longer covers a slow reheat-before-resume; shorter keeps the button responsive.'})}
-            ${fld('PrusaLink keepalive ping interval (seconds)', 's-ping-interval', s.prusalink_ping_interval || '', {type: 'number', min: 0, max: 60, ph: '0 = disabled', unit: 'seconds', hint: 'Pings each PrusaLink printer\'s IP over ICMP on this interval, to stop its wifi interface from dropping off the network when idle. 0 disables.'})}
+            ${fld('PrusaLink keepalive ping interval (seconds)', 's-ping-interval', s.prusalink_ping_interval || '', {type: 'number', min: 0, max: 60, ph: '0 = disabled', unit: 'seconds', hint: 'Pings each PrusaLink printer\'s IP over ICMP on this interval, to stop its wifi interface from dropping off the network when idle. 0 disables. A change applies within a minute, no restart needed.'})}
         </div>`, saveBtn('savePollingSettings'))
         + setCard('Power safety', 'Applies to printers with a directly-assigned smart plug.', `<div class="grid2">
             ${fld('Auto-off after idle (minutes)', 's-auto-off-idle', s.auto_off_idle_minutes || '', {type: 'number', min: 0, max: 1440, ph: '0 = disabled, per-printer default', unit: 'minutes', hint: 'Global override for how long a printer with an assigned smart plug can sit idle before its power is cut. Leave empty to use per-printer settings. Only applies to printers with a directly-assigned smart plug.'})}
@@ -547,7 +547,7 @@ async function integrationsTab() {
             ${fld('Username', 'm-user', s.mqtt_username || '', {ph: 'optional'})}
             ${fld('Password', 'm-pass', s.mqtt_password || '', {type: 'password', ph: 'optional'})}
         </div>
-        ${swrow('m-publish', s.mqtt_publish_enabled === '1', 'Publish printer status', 'Publishes each printer\'s full status (state, progress, temps, job) as a retained MQTT message on every poll tick.')}
+        ${swrow('m-publish', s.mqtt_publish_enabled === '1', 'Publish printer status', 'Publishes each printer\'s full status (state, progress, temps, job) as a retained MQTT message whenever its state changes, and on every poll while it prints.')}
         <div class="grid2">${fld('Publish topic', 'm-topic', s.mqtt_publish_topic || '', {ph: 'printspy/printer/{id}/state', wide: true, hint: 'Use <code>{id}</code> and <code>{name}</code> as placeholders.'})}</div>`,
         '<button class="btn btn-primary" onclick="saveMQTTSettings(this)">Save</button><button class="btn" onclick="sendMQTTTest()">Test connection</button><button class="btn" onclick="saveAndTestMQTT()">Save and test</button>')
         + resultLine('mqtt-test-result')

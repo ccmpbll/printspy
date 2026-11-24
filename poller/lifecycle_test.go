@@ -109,6 +109,8 @@ func TestGoTrackedWaitsAndDropsAfterClose(t *testing.T) {
 	}
 }
 
+func fixedInterval() time.Duration { return 5 * time.Millisecond }
+
 // runKeepalive runs the keepalive loop for a printer in the given state (empty
 // = nothing polled yet) with ping standing in for the ICMP call, until stop
 // returns true or two seconds pass.
@@ -126,7 +128,7 @@ func runKeepalive(t *testing.T, state models.PrinterState, ping func(string, tim
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", 5*time.Millisecond); close(done) }()
+	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", fixedInterval); close(done) }()
 	for deadline := time.Now().Add(2 * time.Second); !stop() && time.Now().Before(deadline); {
 		time.Sleep(2 * time.Millisecond)
 	}
@@ -249,5 +251,56 @@ func TestKeepaliveLogsANewFailureAfterAPlugOffPeriod(t *testing.T) {
 
 	if got := strings.Count(buf.String(), "failed: i/o timeout"); got != 2 {
 		t.Errorf("failure logged %d times across two episodes, want 2:\n%s", got, buf.String())
+	}
+}
+
+// Item 20: the ping interval is read while the loop runs, so turning the
+// setting on (or off) in Settings applies without restarting the printer.
+func TestKeepaliveFollowsIntervalSetting(t *testing.T) {
+	old := keepaliveRecheck
+	keepaliveRecheck = 5 * time.Millisecond
+	t.Cleanup(func() { keepaliveRecheck = old })
+
+	p, _, id := newLifecyclePoller(t)
+	var pings atomic.Int32
+	p.ping = func(string, time.Duration) error { pings.Add(1); return nil }
+	var on atomic.Bool
+	interval := func() time.Duration {
+		if on.Load() {
+			return 5 * time.Millisecond
+		}
+		return 0
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { p.keepaliveLoop(ctx, id, "p", "10.0.0.1", interval); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	time.Sleep(50 * time.Millisecond)
+	if n := pings.Load(); n != 0 {
+		t.Fatalf("pinged %d times while the setting was off", n)
+	}
+	on.Store(true)
+	for deadline := time.Now().Add(2 * time.Second); pings.Load() < 3 && time.Now().Before(deadline); {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if n := pings.Load(); n < 3 {
+		t.Fatalf("only %d pings after the setting was turned on", n)
+	}
+	on.Store(false)
+	// Let the loop see the change: wait until no ping lands for 30 ms
+	// (an iteration that read the old value may still ping once).
+	for deadline, last := time.Now().Add(2*time.Second), int32(-1); time.Now().Before(deadline); {
+		n := pings.Load()
+		if n == last {
+			break
+		}
+		last = n
+		time.Sleep(30 * time.Millisecond)
+	}
+	before := pings.Load()
+	time.Sleep(50 * time.Millisecond)
+	if n := pings.Load() - before; n != 0 {
+		t.Errorf("pinged %d times after the setting was turned off", n)
 	}
 }
