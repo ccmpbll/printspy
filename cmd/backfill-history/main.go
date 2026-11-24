@@ -1,7 +1,7 @@
 // Backfill printmeta (material, filament, layer height, tool usage, path/
 // uploaded_at, and a file_meta_cache row) onto print_history rows that
 // predate the print-history feature or the later file-metadata-caching
-// feature. Only touches rows missing material (the pre-feature
+// feature. Only touches rows missing material or a thumbnail (the pre-feature
 // defaults) and only if the matching file is still on the printer's
 // storage - never overwrites already-populated rows, safe to re-run.
 //
@@ -153,11 +153,13 @@ func backfillPrinter(db *sql.DB, pr printerRow) error {
 	return nil
 }
 
-// listCandidateRows returns rows still missing their metadata. An empty path
-// does not count: the app never writes that legacy column (History keeps its own
-// thumbnail now), so every row would be re-processed on every run.
+// listCandidateRows returns rows still missing their metadata: no material,
+// or no thumbnail and no path (rows from before History kept its own
+// thumbnail; setting path lets the startup migration copy the cached one
+// in). An empty path alone does not count - the app no longer writes it, so
+// every row would be re-processed on every run.
 func listCandidateRows(db *sql.DB, printerID int64) ([]historyRow, error) {
-	rows, err := db.Query(`SELECT id, filename FROM print_history WHERE printer_id=? AND material=''`, printerID)
+	rows, err := db.Query(`SELECT id, filename FROM print_history WHERE printer_id=? AND (material='' OR (path='' AND thumbnail IS NULL))`, printerID)
 	if err != nil {
 		return nil, err
 	}

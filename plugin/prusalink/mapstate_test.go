@@ -15,8 +15,9 @@ func TestMapState(t *testing.T) {
 		"ATTENTION": models.StateAttention, "ERROR": models.StateError, "BUSY": models.StateBusy,
 		"idle": models.StateIdle, "SOMETHING_NEW": models.StateBusy, "": models.StateBusy,
 	} {
-		if got := mapState(in); got != want {
-			t.Errorf("mapState(%q) = %s, want %s", in, got, want)
+		got, known := mapState(in)
+		if got != want || known != (in != "SOMETHING_NEW" && in != "") {
+			t.Errorf("mapState(%q) = %s, %v; want %s", in, got, known, want)
 		}
 	}
 }

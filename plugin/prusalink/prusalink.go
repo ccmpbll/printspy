@@ -40,6 +40,9 @@ type Plugin struct {
 	mu         sync.RWMutex
 	cachedName string
 	lastJobID  int
+	// lastUnknownState is the last unmapped printer.state logged, so a
+	// new one is logged once per change, not every poll.
+	lastUnknownState string
 }
 
 func New(config models.PrinterConfig) *Plugin {
@@ -165,7 +168,19 @@ func (p *Plugin) GetStatus(ctx context.Context) (*models.PrinterStatus, error) {
 		return status, nil
 	}
 
-	status.State = mapState(sr.Printer.State)
+	st, known := mapState(sr.Printer.State)
+	status.State = st
+	if !known {
+		// Shown on the card: busy blocks start and power-off, so say why.
+		status.StateMessage = "Unknown printer state: " + sr.Printer.State
+		p.mu.Lock()
+		first := p.lastUnknownState != sr.Printer.State
+		p.lastUnknownState = sr.Printer.State
+		p.mu.Unlock()
+		if first {
+			log.Printf("prusalink %s: unknown printer state %q, treating as busy", p.config.URL, sr.Printer.State)
+		}
+	}
 	if status.State == models.StateError || status.State == models.StateAttention {
 		status.StateMessage = sr.Printer.State
 	}
@@ -762,36 +777,31 @@ func parseUploadResponse(body []byte) (string, int64) {
 
 // State mapping
 
-// unknownStates holds the unmapped states already logged, so each is
-// logged once, not every poll.
-var unknownStates sync.Map
-
-func mapState(state string) models.PrinterState {
+// mapState maps PrusaLink's printer.state; known is false for a state
+// newer than this mapping.
+func mapState(state string) (st models.PrinterState, known bool) {
 	s := strings.ToUpper(state)
 	switch {
 	case s == "PRINTING":
-		return models.StatePrinting
+		return models.StatePrinting, true
 	case s == "PAUSED":
-		return models.StatePaused
+		return models.StatePaused, true
 	case s == "FINISHED", s == "STOPPED", s == "IDLE", s == "READY":
-		return models.StateIdle
+		return models.StateIdle, true
 	case strings.Contains(s, "ATTENTION"):
 		// ATTENTION covers non-fatal, needs-user-input conditions (filament
 		// runout, MMU prompts, etc) - distinct from a real ERROR state.
-		return models.StateAttention
+		return models.StateAttention, true
 	case strings.Contains(s, "ERROR"):
-		return models.StateError
+		return models.StateError, true
 	case s == "BUSY":
 		// Filament load/unload, preheat, homing, self-test - not a print
 		// job, must stay distinct from StatePrinting (see models.StateBusy).
-		return models.StateBusy
+		return models.StateBusy, true
 	default:
-		// A state newer than this mapping: busy, not idle, so it neither
-		// starts the auto-off clock nor ends a print in progress.
-		if _, seen := unknownStates.LoadOrStore(s, true); !seen {
-			log.Printf("prusalink: unknown printer state %q, treating as busy", state)
-		}
-		return models.StateBusy
+		// Busy, not idle, so it neither starts the auto-off clock nor
+		// ends a print in progress.
+		return models.StateBusy, false
 	}
 }
 

@@ -23,8 +23,12 @@ func TestListCandidateRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, h := range []*models.PrintHistory{
-		{PrinterID: p.ID, FileName: "done.bgcode", Material: "PLA", Result: "completed"},
+		{PrinterID: p.ID, FileName: "done.bgcode", Material: "PLA", Thumbnail: []byte{1}, Result: "completed"},
 		{PrinterID: p.ID, FileName: "bare.bgcode", Result: "completed"},
+		// Before History kept its own thumbnail: material, no path, no
+		// thumbnail. Backfill sets path so the startup migration copies the
+		// cached thumbnail in.
+		{PrinterID: p.ID, FileName: "legacy.bgcode", Material: "PLA", Result: "completed"},
 	} {
 		if err := d.InsertPrintHistory(h); err != nil {
 			t.Fatal(err)
@@ -41,7 +45,7 @@ func TestListCandidateRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Filename != "bare.bgcode" {
-		t.Errorf("candidates = %+v, want only bare.bgcode", rows)
+	if len(rows) != 2 || rows[0].Filename != "bare.bgcode" || rows[1].Filename != "legacy.bgcode" {
+		t.Errorf("candidates = %+v, want bare.bgcode and legacy.bgcode", rows)
 	}
 }
