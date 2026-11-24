@@ -1990,10 +1990,11 @@ func printResult(jobState string, printerErrored bool, haveLastProgress bool, la
 		return "failed"
 	case jobState == "FINISHED":
 		return "completed"
-	// No terminal job state (none reported, or the last one seen was
-	// PRINTING/PAUSED because the job was gone by the ending tick): guess
-	// from the last progress sample.
-	case haveLastProgress && lastProgress < 99:
+	// No job state, or the last one seen was PAUSED (interrupted, e.g. a
+	// runout then cancel, job gone by the ending tick): guess from the last
+	// progress sample. PRINTING stays "completed": a short print can finish
+	// between polls with a low last sample.
+	case (jobState == "" || jobState == "PAUSED") && haveLastProgress && lastProgress < 99:
 		return "cancelled"
 	default:
 		return "completed"

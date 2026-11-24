@@ -125,7 +125,7 @@ func TestPrintResult(t *testing.T) {
 		{"no job state, high progress falls back to completed", "", false, true, 99.5, "completed"},
 		{"no job state, no progress sample at all", "", false, false, 0, "completed"},
 		{"non-terminal job state uses progress", "PAUSED", false, true, 40, "cancelled"},
-		{"PRINTING job state uses progress", "PRINTING", false, true, 40, "cancelled"},
+		{"PRINTING job state is a finish seen late", "PRINTING", false, true, 95, "completed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
