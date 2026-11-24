@@ -162,6 +162,8 @@ func TestPrintLatchAcrossInterruptions(t *testing.T) {
 		// under a dialog drops the old print, and the job id wins over
 		// elapsed time.
 		{"restart first seen without elapsed", []tick{pr(60), {state: O}, {state: P, job: true, pct: 1, noElapsed: true}, pr(20)}, 0, 2, 3, 0},
+		{"printing tick without job before start", []tick{{state: P}, pr(5)}, 0, 1, 0, 0},
+		{"first seen paused then resumed", []tick{{state: models.StatePaused, job: true, pct: 1}, pr(2)}, 0, 1, 0, 0},
 		{"first seen paused then cancelled", []tick{{state: models.StatePaused, job: true, pct: 5}, {state: I}}, 1, 0, 0, 0},
 		{"new file under dialog then cancelled", []tick{pr(60), {state: O}, {state: A, job: true, pct: 1, file: "b.gcode"}, {state: I}}, 0, 1, 2, 1},
 		{"same job id, elapsed reset", []tick{{state: P, job: true, pct: 60, id: 7}, {state: O}, {state: P, job: true, pct: 61, id: 7, elapsed: 5}}, 0, 1, 2, 0},

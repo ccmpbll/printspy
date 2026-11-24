@@ -54,6 +54,10 @@ type polledPrinter struct {
 	// print found in progress is one PrintSpy did not see start (restart,
 	// printer just added, first polls offline or without job data).
 	settled bool
+	// announced is set once the print in progress has sent (or, found
+	// under way at startup, skipped) its Print started alert; cleared with
+	// printStatus.
+	announced bool
 
 	// lastOnline is the state of the most recent poll where the printer
 	// answered (any state except Offline). A transient HTTP failure reports
@@ -100,7 +104,7 @@ func (pp *polledPrinter) trackPrint(status *models.PrinterStatus, resuming bool)
 	printing := status.State == models.StatePrinting || status.State == models.StatePaused
 	switch {
 	case printDone(status.State):
-		pp.printStatus = nil
+		pp.printStatus, pp.announced = nil, false
 		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
 	case status.Job == nil:
 		// Offline, or a tick without job data: keep the last known print.
@@ -108,7 +112,7 @@ func (pp *polledPrinter) trackPrint(status *models.PrinterStatus, resuming bool)
 		// A different print started before an ending tick was seen (e.g.
 		// power loss, then a new print within one offline probe): the old
 		// one's outcome is unknown.
-		pp.printStatus = nil
+		pp.printStatus, pp.announced = nil, false
 		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
 		if printing {
 			pp.printStatus = status
@@ -1175,6 +1179,13 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 		pp.settled = true
 	}
 	wasPrint, replaced := pp.trackPrint(status, resuming)
+	// seed: a print found under way when PrintSpy started watching (busy
+	// with a job is a print about to start, which should still announce).
+	seed := resuming && status.Job != nil && !printDone(status.State) && status.State != models.StateBusy
+	announced := pp.announced
+	if seed || (status.State == models.StatePrinting && status.Job != nil) {
+		pp.announced = true
+	}
 	p.mu.Unlock()
 	if replaced != nil {
 		log.Printf("[printer:%d] %s replaced by %s before it was seen ending - outcome unknown, not recording",
@@ -1218,11 +1229,11 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	// normal checks, so a restart mid-print (printing, paused or under a
 	// dialog) doesn't fire a spurious "Print Started" or re-fire a
 	// checkpoint that already passed before printspy came back up.
-	if resuming && status.Job != nil && !printDone(status.State) {
+	if seed {
 		p.seedPrintingState(id, status)
 	} else {
 		p.checkCheckpoints(ctx, id, status)
-		p.checkPrintStartNotify(ctx, id, wasPrint != nil, status)
+		p.checkPrintStartNotify(ctx, id, announced, status)
 	}
 	// Last answering state, so error -> offline -> error is not a new error
 	// - unless the printer was gone long enough (power cycle) to make it one.
@@ -1602,14 +1613,13 @@ func (p *Poller) checkErrorNotify(ctx context.Context, id int64, prevState model
 	p.sendNotification(ctx, id, "error", fmt.Sprintf("%s: error", printerName), message, placeholders, "")
 }
 
-// checkPrintStartNotify fires the Print Started notification when a print
-// begins: wasPrinting is whether a print was already in progress (see
-// polledPrinter.trackPrint), so resuming after a runout, a busy tick or a
-// WiFi blip does not count. A print already under way when PrintSpy starts
-// watching goes through the caller's seedPrintingState path instead.
-func (p *Poller) checkPrintStartNotify(ctx context.Context, id int64, wasPrinting bool, status *models.PrinterStatus) {
-	nowPrinting := status.State == models.StatePrinting
-	if wasPrinting || !nowPrinting || status.Job == nil {
+// checkPrintStartNotify fires the Print Started notification on the first
+// printing tick of a print: announced is whether this print already had it
+// (see polledPrinter.announced), so resuming after a pause, runout, busy
+// tick or WiFi blip does not count, while a print first seen paused still
+// announces when it starts printing.
+func (p *Poller) checkPrintStartNotify(ctx context.Context, id int64, announced bool, status *models.PrinterStatus) {
+	if announced || status.State != models.StatePrinting || status.Job == nil {
 		return
 	}
 	if !p.notifySettingBool("notify_on_start") {
@@ -1883,7 +1893,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 	if status.Job != nil {
 		jobState = status.Job.JobState
 	}
-	result := printResult(jobState, status.State == models.StateError, offlineFor > 0, true, prev.Job.Progress)
+	result := printResult(jobState, status.State == models.StateError, offlineFor > 0, prev.Job.Progress)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	h := &models.PrintHistory{
@@ -1980,7 +1990,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 // plugin JobState is available (OctoPrint) - that guess is wrong for a
 // print that finishes between poll ticks, since a short print can easily
 // have its last sample sitting well under 100% despite completing cleanly.
-func printResult(jobState string, printerErrored, interrupted bool, haveLastProgress bool, lastProgress float64) string {
+func printResult(jobState string, printerErrored, interrupted bool, lastProgress float64) string {
 	switch {
 	case jobState == "STOPPED":
 		return "cancelled"
@@ -1989,14 +1999,16 @@ func printResult(jobState string, printerErrored, interrupted bool, haveLastProg
 	case jobState == "FINISHED":
 		return "completed"
 	// Unreachable right before the ending tick (power cut, thermal-runaway
-	// plug cut-off) with no terminal job state: the print did not finish.
-	case interrupted && haveLastProgress && lastProgress < 99:
+	// plug cut-off) while PrusaLink last said the job was running: the print
+	// did not finish. OctoPrint has no job state, so a WiFi blip before a
+	// cancel there stays a cancel.
+	case interrupted && (jobState == "PRINTING" || jobState == "PAUSED") && lastProgress < 99:
 		return "failed"
 	// No job state, or the last one seen was PAUSED (interrupted, e.g. a
 	// runout then cancel, job gone by the ending tick): guess from the last
 	// progress sample. PRINTING stays "completed": a short print can finish
 	// between polls with a low last sample.
-	case (jobState == "" || jobState == "PAUSED") && haveLastProgress && lastProgress < 99:
+	case (jobState == "" || jobState == "PAUSED") && lastProgress < 99:
 		return "cancelled"
 	default:
 		return "completed"
