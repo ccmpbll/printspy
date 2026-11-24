@@ -97,45 +97,60 @@ func printDone(s models.PrinterState) bool {
 // polledPrinter.settled). Caller holds Poller.mu.
 func (pp *polledPrinter) trackPrint(status *models.PrinterStatus, resuming bool) (was, replaced *models.PrinterStatus) {
 	was = pp.printStatus
+	printing := status.State == models.StatePrinting || status.State == models.StatePaused
 	switch {
 	case printDone(status.State):
 		pp.printStatus = nil
 		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
 	case status.Job == nil:
 		// Offline, or a tick without job data: keep the last known print.
-	case status.State == models.StatePrinting:
-		if was != nil && newPrint(was.Job, status.Job) {
-			// A different print started before an ending tick was seen
-			// (e.g. power loss, then a new print within one offline probe).
-			pp.printStatus = status
-			pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
-			return nil, was
-		}
-		pp.printStatus = status
-	case was == nil:
-		// Paused/attention/busy with a job but no print latched: only a
-		// print already under way when PrintSpy started watching counts
-		// (a busy tick with a job before a print starts must not).
-		if resuming {
+	case was != nil && newPrint(was.Job, status.Job):
+		// A different print started before an ending tick was seen (e.g.
+		// power loss, then a new print within one offline probe): the old
+		// one's outcome is unknown.
+		pp.printStatus = nil
+		pp.notifiedCheckpoint1, pp.notifiedCheckpoint2 = false, false
+		if printing {
 			pp.printStatus = status
 		}
-	case status.Job.FileName == was.Job.FileName:
-		// Same print under a dialog or pause: keep its latest numbers.
-		// A different file here is left for the next printing tick to
-		// detect as a new print.
+		return nil, was
+	case was != nil:
+		// Same print, under a dialog or not: keep its latest numbers.
+		pp.printStatus = keepElapsed(status, was)
+	case printing || (resuming && status.State != models.StateBusy):
+		// Busy with a job is not a print yet (preheat before the start),
+		// but a dialog found at startup is the print PrintSpy missed.
 		pp.printStatus = status
 	}
 	return was, nil
 }
 
-// newPrint reports whether cur, a printing tick, is a different print from
-// old: another file, or the same file with less elapsed time (restarted).
-// A tick reporting no elapsed time (0) is not taken as a restart.
+// newPrint reports whether cur is a different print from old: another job
+// id when the plugin has one, else another file or the same file with less
+// elapsed time (restarted). A tick reporting no elapsed time (0) is not
+// taken as a restart.
 func newPrint(old, cur *models.JobInfo) bool {
+	if old.JobID != 0 && cur.JobID != 0 {
+		return cur.JobID != old.JobID
+	}
 	if cur.FileName != old.FileName {
 		return true
 	}
 	return cur.ElapsedSecs > 0 && cur.ElapsedSecs < old.ElapsedSecs
+}
+
+// keepElapsed returns status, carrying was's elapsed time when status
+// reports none (a dialog tick, or the first seconds of an OctoPrint job),
+// so the history duration and the restart check keep a real value. status
+// itself is shared with the cache, so it is copied, not changed.
+func keepElapsed(status, was *models.PrinterStatus) *models.PrinterStatus {
+	if status.Job.ElapsedSecs > 0 || was.Job.ElapsedSecs == 0 {
+		return status
+	}
+	s, j := *status, *status.Job
+	j.ElapsedSecs = was.Job.ElapsedSecs
+	s.Job = &j
+	return &s
 }
 
 type SSEMessage struct {
@@ -1153,7 +1168,10 @@ func (p *Poller) poll(ctx context.Context, id int64, pl plugin.PrinterPlugin) {
 	p.cache[id] = status
 	histPrevState, offlineFor := pp.advance(status, time.Now())
 	resuming := !pp.settled
-	if status.State != models.StateOffline && (status.Job != nil || printDone(status.State)) {
+	// Printing/paused without job data says nothing yet; any other
+	// answering tick does.
+	if status.State != models.StateOffline && (status.Job != nil ||
+		(status.State != models.StatePrinting && status.State != models.StatePaused)) {
 		pp.settled = true
 	}
 	wasPrint, replaced := pp.trackPrint(status, resuming)
@@ -1428,8 +1446,9 @@ func (p *Poller) notifySettingPercent(key string, def float64) float64 {
 	return n
 }
 
-// seedPrintingState runs once, on the very first poll after a restart,
-// when a printer's discovered already mid-print. Marks any checkpoint
+// seedPrintingState runs on the first answering tick with job data after
+// PrintSpy starts watching a printer (see polledPrinter.settled), when a
+// print is already under way - printing, paused or under a dialog. Marks any checkpoint
 // whose threshold the print has already passed as fired, so it won't
 // notify for progress that happened before printspy came back up - a
 // checkpoint whose threshold hasn't been reached yet is left alone and
@@ -1844,28 +1863,15 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 		return
 	}
 
-	fileName := ""
-	filePath := ""
-	elapsed := 0
-	filament := 0.0
-	fileMTimestamp := int64(0)
-	if prev != nil && prev.Job != nil {
-		fileName = prev.Job.FileName
-		filePath = prev.Job.FilePath
-		elapsed = prev.Job.ElapsedSecs
-		filament = prev.Job.FilamentUsedMM
-		fileMTimestamp = prev.Job.FileMTimestamp
-	}
-	if fileName == "" {
-		return
-	}
+	fileName := prev.Job.FileName
+	filePath := prev.Job.FilePath
+	elapsed := prev.Job.ElapsedSecs
+	filament := prev.Job.FilamentUsedMM
+	fileMTimestamp := prev.Job.FileMTimestamp
 	// Grabbed from prev, not the live cache - by the time the completion
 	// notification sends, this poll's status has already cleared Job (and
 	// with it ThumbnailURL), so a live lookup would always come back empty.
-	thumbnailURL := ""
-	if prev != nil {
-		thumbnailURL = prev.ThumbnailURL
-	}
+	thumbnailURL := prev.ThumbnailURL
 
 	// Prefers the plugin's own job-lifecycle state when it has one over
 	// guessing from the last polled progress percentage - checks the
@@ -1873,19 +1879,11 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 	// with the terminal state on the very tick printer.state flips to
 	// Idle), falling back to prev's if the current tick already cleared
 	// Job.
-	jobState := ""
-	lastProgress := 0.0
-	haveLastProgress := false
+	jobState := prev.Job.JobState
 	if status.Job != nil {
 		jobState = status.Job.JobState
-	} else if prev != nil && prev.Job != nil {
-		jobState = prev.Job.JobState
 	}
-	if prev != nil && prev.Job != nil {
-		lastProgress = prev.Job.Progress
-		haveLastProgress = true
-	}
-	result := printResult(jobState, status.State == models.StateError, haveLastProgress, lastProgress)
+	result := printResult(jobState, status.State == models.StateError, offlineFor > 0, true, prev.Job.Progress)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	h := &models.PrintHistory{
@@ -1982,7 +1980,7 @@ func (p *Poller) trackPrintHistory(ctx context.Context, id int64, status *models
 // plugin JobState is available (OctoPrint) - that guess is wrong for a
 // print that finishes between poll ticks, since a short print can easily
 // have its last sample sitting well under 100% despite completing cleanly.
-func printResult(jobState string, printerErrored bool, haveLastProgress bool, lastProgress float64) string {
+func printResult(jobState string, printerErrored, interrupted bool, haveLastProgress bool, lastProgress float64) string {
 	switch {
 	case jobState == "STOPPED":
 		return "cancelled"
@@ -1990,6 +1988,10 @@ func printResult(jobState string, printerErrored bool, haveLastProgress bool, la
 		return "failed"
 	case jobState == "FINISHED":
 		return "completed"
+	// Unreachable right before the ending tick (power cut, thermal-runaway
+	// plug cut-off) with no terminal job state: the print did not finish.
+	case interrupted && haveLastProgress && lastProgress < 99:
+		return "failed"
 	// No job state, or the last one seen was PAUSED (interrupted, e.g. a
 	// runout then cancel, job gone by the ending tick): guess from the last
 	// progress sample. PRINTING stays "completed": a short print can finish

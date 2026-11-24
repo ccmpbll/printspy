@@ -22,6 +22,8 @@ type tick struct {
 	jobState  string
 	noElapsed bool // job reports no elapsed time (default pct*10 s)
 	gap       bool // printer was unreachable for an hour before this tick
+	elapsed   int  // overrides the default elapsed time
+	id        int  // job id (PrusaLink), 0 for none
 }
 
 type tickPlugin struct {
@@ -39,9 +41,13 @@ func (s *tickPlugin) GetStatus(ctx context.Context) (*models.PrinterStatus, erro
 			t.file = "a.gcode"
 		}
 		st.Job = &models.JobInfo{FileName: t.file, Progress: t.pct, ElapsedSecs: int(t.pct) * 10, JobState: t.jobState}
+		if t.elapsed > 0 {
+			st.Job.ElapsedSecs = t.elapsed
+		}
 		if t.noElapsed {
 			st.Job.ElapsedSecs = 0
 		}
+		st.Job.JobID = t.id
 	}
 	return st, nil
 }
@@ -151,6 +157,15 @@ func TestPrintLatchAcrossInterruptions(t *testing.T) {
 		{"new file first seen busy", []tick{pr(60), {state: O}, {state: B, job: true, pct: 1, file: "b.gcode"}, {state: P, job: true, pct: 2, file: "b.gcode"}}, 0, 2, 2, 0},
 		{"error after long outage", []tick{{state: E}, {state: O}, {state: E, gap: true}}, 0, 0, 0, 2},
 		{"same file restarted after outage", []tick{pr(60), {state: O}, pr(1), pr(20)}, 0, 2, 3, 0},
+		// Second review: a restart whose first tick has no elapsed time is
+		// still caught, a print first seen paused is recorded, a new file
+		// under a dialog drops the old print, and the job id wins over
+		// elapsed time.
+		{"restart first seen without elapsed", []tick{pr(60), {state: O}, {state: P, job: true, pct: 1, noElapsed: true}, pr(20)}, 0, 2, 3, 0},
+		{"first seen paused then cancelled", []tick{{state: models.StatePaused, job: true, pct: 5}, {state: I}}, 1, 0, 0, 0},
+		{"new file under dialog then cancelled", []tick{pr(60), {state: O}, {state: A, job: true, pct: 1, file: "b.gcode"}, {state: I}}, 0, 1, 2, 1},
+		{"same job id, elapsed reset", []tick{{state: P, job: true, pct: 60, id: 7}, {state: O}, {state: P, job: true, pct: 61, id: 7, elapsed: 5}}, 0, 1, 2, 0},
+		{"new job id, same file", []tick{{state: P, job: true, pct: 60, id: 7}, {state: O}, {state: P, job: true, pct: 70, id: 8}}, 0, 2, 4, 0},
 	}
 	for _, c := range cases {
 		rows, _, sent := runTicks(t, c.ticks...)
@@ -168,6 +183,40 @@ func TestHistoryUsesLatestPrintTick(t *testing.T) {
 	_, dur, _ := runTicks(t, tick{state: models.StatePrinting, job: true, pct: 20}, tick{state: models.StateAttention, job: true, pct: 30}, tick{state: models.StateIdle})
 	if dur != 300 {
 		t.Errorf("duration %d, want 300 (from the attention tick)", dur)
+	}
+}
+
+// A dialog tick without elapsed time keeps the print's duration.
+func TestHistoryKeepsElapsedOverDialog(t *testing.T) {
+	_, dur, _ := runTicks(t, tick{state: models.StatePrinting, job: true, pct: 60}, tick{state: models.StateAttention, job: true, pct: 60, noElapsed: true}, tick{state: models.StateIdle})
+	if dur != 600 {
+		t.Errorf("duration %d, want 600", dur)
+	}
+}
+
+// A print started after a restart from a busy state, with or without a
+// job on the busy tick, still sends Print started.
+func TestRestartThenStart(t *testing.T) {
+	B, P := models.StateBusy, models.StatePrinting
+	for name, ticks := range map[string][]tick{
+		"busy without job":      {{state: B}, {state: P, job: true, pct: 1}},
+		"busy with job":         {{state: B, job: true}, {state: P, job: true, pct: 1}},
+		"attention without job": {{state: models.StateAttention}, {state: P, job: true, pct: 1}},
+	} {
+		_, _, sent := runFrom(t, ticks...)
+		if count(sent, "Print started") != 1 {
+			t.Errorf("%s: sent=%q; want 1 Print started", name, sent)
+		}
+	}
+}
+
+// Power lost mid-print and back within the gap: the print failed.
+func TestPowerCutIsFailed(t *testing.T) {
+	_, _, result, _ := runResult(t, tick{state: models.StateIdle},
+		tick{state: models.StatePrinting, job: true, pct: 40, jobState: "PRINTING"},
+		tick{state: models.StateOffline}, tick{state: models.StateIdle})
+	if result != "failed" {
+		t.Errorf("result %q, want failed", result)
 	}
 }
 

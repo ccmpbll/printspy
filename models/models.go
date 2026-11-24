@@ -102,6 +102,10 @@ type JobInfo struct {
 	// guess when available. Empty for plugins with no such field
 	// (OctoPrint) - falls back to the guess there.
 	JobState string `json:"job_state,omitempty"`
+	// JobID is the plugin's own id for this print job (PrusaLink's
+	// job.id), 0 when it has none (OctoPrint). The poller uses it to tell
+	// a new print from the same one resumed.
+	JobID int `json:"job_id,omitempty"`
 	// FileMTimestamp is the printer's own real modification timestamp for
 	// FilePath (PrusaLink's job.file.m_timestamp - confirmed byte-identical
 	// to the same file's timestamp from the file-listing endpoint), used by

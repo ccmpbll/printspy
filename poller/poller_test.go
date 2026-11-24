@@ -129,10 +129,22 @@ func TestPrintResult(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := printResult(c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress); got != c.want {
+			if got := printResult(c.jobState, c.printerErrored, false, c.haveLastProgress, c.lastProgress); got != c.want {
 				t.Errorf("printResult(%q, %v, %v, %v) = %q, want %q",
 					c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress, got, c.want)
 			}
 		})
+	}
+	// Unreachable just before the ending tick (power cut): a low last
+	// sample is a failure, a print at 99%+ still counts as completed, and
+	// a terminal job state still wins.
+	for _, c := range []struct {
+		jobState string
+		pct      float64
+		want     string
+	}{{"PRINTING", 40, "failed"}, {"", 40, "failed"}, {"PRINTING", 99.5, "completed"}, {"STOPPED", 40, "cancelled"}} {
+		if got := printResult(c.jobState, false, true, true, c.pct); got != c.want {
+			t.Errorf("interrupted printResult(%q, %v) = %q, want %q", c.jobState, c.pct, got, c.want)
+		}
 	}
 }
