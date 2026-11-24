@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -1889,6 +1890,10 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 
 	thumbRef := r.URL.Query().Get("thumb")
+	if thumbRef != "" && !validThumbRef(thumbRef) {
+		http.Error(w, "invalid thumb", http.StatusBadRequest)
+		return
+	}
 	if thumbRef == "" {
 		// Explicitly uncacheable - unlike the 200 response above (whose URL
 		// is only ever reused once the same uploaded_at value is truly
@@ -1936,6 +1941,20 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Cache-Control", "max-age=3600")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(data)
+}
+
+// validThumbRef accepts only the thumbnail refs the plugins produce -
+// PrusaLink "/thumb/..." and OctoPrint "plugin/<name>/thumbnail/..." - with
+// no "..", also once percent-decoded. It is joined onto the printer's URL and
+// fetched with the printer's credentials, so anything else would let a
+// logged-in user read other paths on the printer.
+func validThumbRef(ref string) bool {
+	dec, err := url.PathUnescape(ref)
+	if err != nil || strings.Contains(dec, "..") {
+		return false
+	}
+	p := strings.TrimPrefix(ref, "/")
+	return strings.HasPrefix(p, "thumb/") || strings.HasPrefix(p, "plugin/")
 }
 
 // safeImageType passes through image content types (and the MJPEG multipart
