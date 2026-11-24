@@ -206,7 +206,8 @@ async function controlPrint(printerId, action) {
         const data = await resp.json().catch(() => ({}));
         if (resp.ok) {
             if (data.status) applyStatusUpdate(printerId, data.status);
-            if (data.changed === false) alert('Command sent, but the printer has not changed state yet. The card will update when it does.');
+            // A resume often reheats past the timeout: no alert for that.
+            if (data.changed === false && action !== 'resume') alert('Command sent, but the printer has not changed state yet. The card will update when it does.');
         } else {
             alert(data.error || 'Print command failed.');
         }
