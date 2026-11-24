@@ -20,10 +20,12 @@ type tick struct {
 	pct       float64
 	file      string // default "a.gcode"
 	jobState  string
-	noElapsed bool // job reports no elapsed time (default pct*10 s)
-	gap       bool // printer was unreachable for an hour before this tick
-	elapsed   int  // overrides the default elapsed time
-	id        int  // job id (PrusaLink), 0 for none
+	noElapsed bool          // job reports no elapsed time (default pct*10 s)
+	gap       bool          // printer was unreachable for an hour before this tick
+	elapsed   int           // overrides the default elapsed time
+	id        int           // job id (PrusaLink), 0 for none
+	offline   time.Duration // printer was unreachable this long before this tick
+	noFile    bool          // job reports no file name
 }
 
 type tickPlugin struct {
@@ -48,6 +50,9 @@ func (s *tickPlugin) GetStatus(ctx context.Context) (*models.PrinterStatus, erro
 			st.Job.ElapsedSecs = 0
 		}
 		st.Job.JobID = t.id
+		if t.noFile {
+			st.Job.FileName = ""
+		}
 	}
 	return st, nil
 }
@@ -106,6 +111,9 @@ func runResult(t *testing.T, ticks ...tick) (rows, dur int, result string, sent 
 	for _, tk := range tp.ticks {
 		if tk.gap {
 			p.printers[cfg.ID].offlineSince = time.Now().Add(-time.Hour)
+		}
+		if tk.offline > 0 {
+			p.printers[cfg.ID].offlineSince = time.Now().Add(-tk.offline)
 		}
 		p.poll(context.Background(), cfg.ID, tp)
 	}
@@ -216,9 +224,38 @@ func TestRestartThenStart(t *testing.T) {
 func TestPowerCutIsFailed(t *testing.T) {
 	_, _, result, _ := runResult(t, tick{state: models.StateIdle},
 		tick{state: models.StatePrinting, job: true, pct: 40, jobState: "PRINTING"},
-		tick{state: models.StateOffline}, tick{state: models.StateIdle})
+		tick{state: models.StateOffline}, tick{state: models.StateIdle, offline: 5 * time.Minute})
 	if result != "failed" {
 		t.Errorf("result %q, want failed", result)
+	}
+}
+
+// A short print that finishes during one missed poll is not a power cut.
+func TestBlipBeforeFinishIsCompleted(t *testing.T) {
+	_, _, result, _ := runResult(t, tick{state: models.StateIdle},
+		tick{state: models.StatePrinting, job: true, pct: 40, jobState: "PRINTING"},
+		tick{state: models.StateOffline}, tick{state: models.StateIdle, offline: 10 * time.Second})
+	if result != "completed" {
+		t.Errorf("result %q, want completed", result)
+	}
+}
+
+// Job data with no file name gives nothing to record.
+func TestNoFileNameNotRecorded(t *testing.T) {
+	rows, _, _ := runTicks(t, tick{state: models.StatePrinting, job: true, pct: 40, noFile: true}, tick{state: models.StateIdle})
+	if rows != 0 {
+		t.Errorf("rows=%d, want 0", rows)
+	}
+}
+
+// A dialog left over after a finished print, seen at startup, is not the
+// print in progress: dismissing it records nothing.
+func TestRestartOnFinishedDialog(t *testing.T) {
+	A, I := models.StateAttention, models.StateIdle
+	rows, _, sent := runFrom(t, tick{state: A, job: true, pct: 100, jobState: "FINISHED"}, tick{state: I},
+		tick{state: models.StatePrinting, job: true, pct: 1, file: "b.gcode"})
+	if rows != 0 || count(sent, "Print started") != 1 {
+		t.Errorf("rows=%d sent=%q; want 0 rows, 1 Print started", rows, sent)
 	}
 }
 

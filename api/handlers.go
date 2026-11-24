@@ -1266,8 +1266,16 @@ func (h *Handler) waitForStateChange(ctx context.Context, id int64, prevState mo
 	for {
 		// The app's context, not the request's: this poll can record a
 		// finished print and start its metadata download in the
-		// background, which must outlive the request.
-		h.poller.Repoll(h.ctx, id)
+		// background, which must outlive the request. It runs on a
+		// tracked goroutine so a client that leaves mid-poll (printer slow
+		// to answer) is let go at once; the poll still finishes.
+		done := make(chan struct{})
+		h.poller.Go(func() { defer close(done); h.poller.Repoll(h.ctx, id) })
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return h.poller.GetStatus(id), false
+		}
 		status = h.poller.GetStatus(id)
 		if status == nil || status.State != prevState {
 			return status, true
@@ -1954,7 +1962,12 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 // character is escaped as itself; "%2e%2e" reaches the printer as a literal
 // name, never as "..".
 func thumbPath(ref string) (string, bool) {
-	pathPart, query, hasQuery := strings.Cut(ref, "?")
+	// PrusaLink refs are file paths with no query, and a '?' in one is part
+	// of the file name; OctoPrint's carry a real "?<cache-buster>" query.
+	pathPart, query, hasQuery := ref, "", false
+	if !strings.HasPrefix(strings.TrimPrefix(ref, "/"), "thumb/") {
+		pathPart, query, hasQuery = strings.Cut(ref, "?")
+	}
 	segs := strings.Split(strings.TrimPrefix(pathPart, "/"), "/")
 	if slices.Contains(segs, "..") {
 		return "", false
@@ -1966,7 +1979,8 @@ func thumbPath(ref string) (string, bool) {
 	}
 	out := (&url.URL{Path: "/" + strings.Join(segs, "/")}).EscapedPath()
 	if hasQuery {
-		out += "?" + query
+		// Re-encoded so a raw '#' or space cannot cut the query short.
+		out += "?" + strings.NewReplacer("#", "%23", " ", "%20").Replace(query)
 	}
 	return out, true
 }
