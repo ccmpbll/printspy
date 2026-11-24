@@ -10,6 +10,7 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -1889,6 +1890,11 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	}
 
 	thumbRef := r.URL.Query().Get("thumb")
+	thumbRel, ok := thumbPath(thumbRef)
+	if thumbRef != "" && !ok {
+		http.Error(w, "invalid thumb", http.StatusBadRequest)
+		return
+	}
 	if thumbRef == "" {
 		// Explicitly uncacheable - unlike the 200 response above (whose URL
 		// is only ever reused once the same uploaded_at value is truly
@@ -1907,7 +1913,7 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	thumbURL := strings.TrimRight(printer.URL, "/") + "/" + strings.TrimLeft(thumbRef, "/")
+	thumbURL := strings.TrimRight(printer.URL, "/") + thumbRel
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, thumbURL, nil)
 	if err != nil {
 		http.Error(w, "failed to create request", http.StatusInternalServerError)
@@ -1936,6 +1942,33 @@ func (h *Handler) handleFileThumbnailProxy(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Cache-Control", "max-age=3600")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(data)
+}
+
+// thumbPath checks a thumbnail ref and returns it as an escaped path (plus
+// its query) to join onto the printer's URL. Only the routes the plugins
+// produce pass - PrusaLink "/thumb/..." and OctoPrint
+// "plugin/<name>/thumbnail/..." - with no ".." segment: the ref is fetched
+// with the printer's credentials, so anything else would let a logged-in
+// user read other printer paths (an OctoPrint backup download, say). Refs
+// are raw text (PrusaLink sends "APPLE%~7.BGC" unescaped), so every
+// character is escaped as itself; "%2e%2e" reaches the printer as a literal
+// name, never as "..".
+func thumbPath(ref string) (string, bool) {
+	pathPart, query, hasQuery := strings.Cut(ref, "?")
+	segs := strings.Split(strings.TrimPrefix(pathPart, "/"), "/")
+	if slices.Contains(segs, "..") {
+		return "", false
+	}
+	thumb := segs[0] == "thumb"
+	plugin := len(segs) > 2 && segs[0] == "plugin" && segs[2] == "thumbnail"
+	if !thumb && !plugin {
+		return "", false
+	}
+	out := (&url.URL{Path: "/" + strings.Join(segs, "/")}).EscapedPath()
+	if hasQuery {
+		out += "?" + query
+	}
+	return out, true
 }
 
 // safeImageType passes through image content types (and the MJPEG multipart
