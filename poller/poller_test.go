@@ -110,27 +110,39 @@ func TestPrintResult(t *testing.T) {
 	// cleanly - PrusaLink's own job.state (when available) is authoritative
 	// and must win over that guess.
 	cases := []struct {
-		name             string
-		jobState         string
-		printerErrored   bool
-		haveLastProgress bool
-		lastProgress     float64
-		want             string
+		name           string
+		jobState       string
+		printerErrored bool
+		lastProgress   float64
+		want           string
 	}{
-		{"FINISHED wins even with low last progress", "FINISHED", false, true, 40, "completed"},
-		{"STOPPED wins even with high last progress", "STOPPED", false, true, 98, "cancelled"},
-		{"job ERROR", "ERROR", false, false, 0, "failed"},
-		{"printer errored with no job state", "", true, false, 0, "failed"},
-		{"no job state, low progress falls back to cancelled", "", false, true, 40, "cancelled"},
-		{"no job state, high progress falls back to completed", "", false, true, 99.5, "completed"},
-		{"no job state, no progress sample at all", "", false, false, 0, "completed"},
+		{"FINISHED wins even with low last progress", "FINISHED", false, 40, "completed"},
+		{"STOPPED wins even with high last progress", "STOPPED", false, 98, "cancelled"},
+		{"job ERROR", "ERROR", false, 0, "failed"},
+		{"printer errored with no job state", "", true, 0, "failed"},
+		{"no job state, low progress falls back to cancelled", "", false, 40, "cancelled"},
+		{"no job state, high progress falls back to completed", "", false, 99.5, "completed"},
+		{"non-terminal job state uses progress", "PAUSED", false, 40, "cancelled"},
+		{"PRINTING job state is a finish seen late", "PRINTING", false, 95, "completed"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := printResult(c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress); got != c.want {
-				t.Errorf("printResult(%q, %v, %v, %v) = %q, want %q",
-					c.jobState, c.printerErrored, c.haveLastProgress, c.lastProgress, got, c.want)
+			if got := printResult(c.jobState, c.printerErrored, false, c.lastProgress); got != c.want {
+				t.Errorf("printResult(%q, %v, %v) = %q, want %q",
+					c.jobState, c.printerErrored, c.lastProgress, got, c.want)
 			}
 		})
+	}
+	// Unreachable just before the ending tick (power cut): a low last
+	// sample is a failure, a print at 99%+ still counts as completed, and
+	// a terminal job state still wins.
+	for _, c := range []struct {
+		jobState string
+		pct      float64
+		want     string
+	}{{"PRINTING", 40, "failed"}, {"", 40, "cancelled"}, {"PAUSED", 40, "failed"}, {"PRINTING", 99.5, "completed"}, {"STOPPED", 40, "cancelled"}} {
+		if got := printResult(c.jobState, false, true, c.pct); got != c.want {
+			t.Errorf("interrupted printResult(%q, %v) = %q, want %q", c.jobState, c.pct, got, c.want)
+		}
 	}
 }
